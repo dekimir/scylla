@@ -57,6 +57,7 @@ enum class cause {
     SCHEMA_CHANGE,
     MIXED_CF,
     SSTABLE_FORMAT_M,
+    GROUP_BY,
 };
 
 [[noreturn]] void fail(cause what);

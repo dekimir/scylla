@@ -59,6 +59,7 @@
 #include "db/consistency_level_validations.hh"
 #include "database.hh"
 #include <boost/algorithm/cxx11/any_of.hpp>
+#include "unimplemented.hh"
 
 namespace cql3 {
 
@@ -1107,13 +1108,15 @@ select_statement::select_statement(::shared_ptr<cf_name> cf_name,
                                    std::vector<::shared_ptr<selection::raw_selector>> select_clause,
                                    std::vector<::shared_ptr<relation>> where_clause,
                                    ::shared_ptr<term::raw> limit,
-                                   ::shared_ptr<term::raw> per_partition_limit)
+                                   ::shared_ptr<term::raw> per_partition_limit,
+                                   std::vector<::shared_ptr<cql3::column_identifier::raw>> group_by_columns)
     : cf_statement(std::move(cf_name))
     , _parameters(std::move(parameters))
     , _select_clause(std::move(select_clause))
     , _where_clause(std::move(where_clause))
     , _limit(std::move(limit))
     , _per_partition_limit(std::move(per_partition_limit))
+    , _group_by_columns(std::move(group_by_columns))
 { }
 
 void select_statement::maybe_jsonize_select_clause(database& db, schema_ptr schema) {
@@ -1182,6 +1185,10 @@ std::unique_ptr<prepared_statement> select_statement::prepare(database& db, cql_
 
     check_needs_filtering(restrictions);
     ensure_filtering_columns_retrieval(db, selection, restrictions);
+    if (!_group_by_columns.empty()) {
+        validate_group_by(schema);
+        warn(unimplemented::cause::GROUP_BY);
+    }
 
     ::shared_ptr<cql3::statements::select_statement> stmt;
     if (restrictions->uses_secondary_indexing()) {
@@ -1431,6 +1438,60 @@ bool select_statement::contains_alias(::shared_ptr<column_identifier> name) {
     sstring name = per_partition ? "[per_partition_limit]" : "[limit]";
     return ::make_shared<column_specification>(keyspace(), column_family(), ::make_shared<column_identifier>(name, true),
         int32_type);
+}
+
+namespace {
+
+/// Returns names of all columns involved in an equality relation.
+std::vector<bytes> columns_restricted_by_equality(
+        schema_ptr schema, std::vector<::shared_ptr<relation>> relations) {
+    std::vector<bytes> equality_restricted;
+    for (const auto& relation : relations) {
+        if (const auto sc_rel = dynamic_pointer_cast<single_column_relation>(relation)) {
+            if (sc_rel->is_EQ()) {
+                equality_restricted.push_back(
+                        sc_rel->get_entity()->prepare_column_identifier(schema)->name());
+            }
+        }
+    }
+    return equality_restricted;
+}
+
+} // anonymous namespace
+
+void select_statement::validate_group_by(schema_ptr schema) const {
+    // We compare GROUP BY columns to the primary-key columns (in their primary-key order).  If a
+    // primary-key column is equality-restricted by the WHERE clause, it can be skipped in GROUP BY.
+    // It's OK if GROUP BY columns list ends before the primary key is exhausted.
+
+    const auto key_size = schema->partition_key_size() + schema->clustering_key_size();
+    const auto restricted_columns = columns_restricted_by_equality(schema, _where_clause);
+    const auto all_columns = schema->all_columns_in_select_order();
+    uint32_t expected_index = 0; // Index of the next column we expect to encounter.
+
+    /// Returns true iff the currently expected column may be skipped in GROUP BY.
+    auto may_skip = [&] {
+        return boost::algorithm::any_of_equal(restricted_columns, all_columns[expected_index].name());
+    };
+
+    for (const auto& col : _group_by_columns) {
+        auto def = schema->get_column_definition(col->prepare_column_identifier(schema)->name());
+        if (!def) {
+            throw exceptions::invalid_request_exception(format("Group by unknown column {}", *col));
+        }
+        if (!def->is_primary_key()) {
+            throw exceptions::invalid_request_exception(format("Group by non-primary-key column {}", *col));
+        }
+        while (*def != all_columns[expected_index] && may_skip()) {
+            if (++expected_index >= key_size) {
+                throw exceptions::invalid_request_exception(format("Group by column {} is out of order", *col));
+            }
+        }
+        if (*def != all_columns[expected_index]) {
+            throw exceptions::invalid_request_exception(format("Group by column {} is out of order", *col));
+        }
+        ++expected_index;
+    }
 }
 
 }

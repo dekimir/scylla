@@ -62,6 +62,7 @@ std::ostream& operator<<(std::ostream& out, cause c) {
         case cause::SCHEMA_CHANGE: return out << "SCHEMA_CHANGE";
         case cause::MIXED_CF: return out << "MIXED_CF";
         case cause::SSTABLE_FORMAT_M: return out << "SSTABLE_FORMAT_M";
+        case cause::GROUP_BY: return out << "GROUP_BY";
     }
     abort();
 }

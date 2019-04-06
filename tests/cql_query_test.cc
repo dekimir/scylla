@@ -3397,3 +3397,68 @@ SEASTAR_TEST_CASE(test_describe_varchar) {
                 });
    });
 }
+
+namespace {
+
+// TODO: leverage tests/util.hh, after it lands.
+
+/// Returns a predicate that checks whether a cassandra_exception's message contains fragment \c frag.
+auto make_predicate_for_exception_message_fragment(const char* frag) {
+    return [frag](const exceptions::cassandra_exception& e) {
+        return e.get_message().find(frag) != sstring::npos;
+    };
+}
+
+} // anonymous namespace
+
+SEASTAR_TEST_CASE(test_group_by) {
+    return do_with_cql_env([] (cql_test_env& e) {
+        /// Executes qstr as CQL and waits for the execution to complete.
+        auto query = [&e](const char* qstr) { e.execute_cql(qstr).get(); };
+
+        // Must parse correctly:
+        query("create table t1 (p1 int, p2 int, c1 int, c2 int, npk int, primary key((p1, p2), c1, c2))");
+        query("select * from t1 group by p1");
+        query("select * from t1 group by \"p1\"");
+        query("select * from t1 group by p1, p2, c1, c2");
+        query("select * from t1 where p1=1 and p2=2 group by c1, c2 order by c1 allow filtering");
+        query("select * from t1 where p2=2 group by p1, c1 allow filtering");
+        query("select * from t1 where p2=2 group by p1, p2, c1 allow filtering");
+        query("create table t2 (p1 int, p2 int, p3 int, npk int, primary key((p1, p2, p3)))");
+        query("select * from t2 group by p1, p2, p3");
+        query("select * from t2 where p1=1 group by p1, p2, p3 allow filtering");
+        query("select * from t2 where p1=1 group by p2 allow filtering");
+        query("select * from t2 where p1=1 and p2=2 and p3=3 group by p1, p2, p3 allow filtering");
+        query("select * from t2 where p1=1 and p2=2 and p3=3 group by p3 allow filtering");
+
+        using ire = exceptions::invalid_request_exception;
+        auto contains = make_predicate_for_exception_message_fragment;
+
+        // Must report errors:
+        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by xyz"), ire, contains("unknown column"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by p1, xyz"), ire, contains("unknown column"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by npk"), ire, contains("non-primary-key"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by p1, npk"), ire, contains("non-primary-key"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by p2, p1"), ire, contains("order"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t1 where p1=1 group by p2, c2 allow filtering"), ire,
+                                contains("order"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by p1, p2, c1, c2, foo"), ire,
+                                contains("unknown column"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by p1, p2, c1, c2, npk"), ire,
+                                contains("non-primary-key"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t2 where p1=1 group by p3 allow filtering"), ire,
+                                contains("order"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t2 where p1=1 group by p2, p1 allow filtering"), ire,
+                                contains("order"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t2 group by p1, p2, p2, p3"), ire, contains("order"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t2 group by p1, p2, p3, p1"), ire, contains("order"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t2 where p2=2 group by p1, p3, p2 allow filtering"), ire,
+                                contains("order"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t2 where p1=1 and p2=2 and p3=3 group by npk allow filtering"),
+                                ire, contains("non-primary-key"));
+        BOOST_REQUIRE_EXCEPTION(query("select * from t2 where p1=1 and p2=2 and p3=3 group by p2, p1 allow filtering"),
+                                ire, contains("order"));
+
+        return make_ready_future<>();
+    });
+}
