@@ -51,6 +51,7 @@
 #include "encoding_stats.hh"
 #include "sstables/mc/writer.hh"
 #include "simple_schema.hh"
+#include "util.hh"
 
 using namespace sstables;
 
@@ -1275,11 +1276,8 @@ SEASTAR_THREAD_TEST_CASE(test_uncompressed_random_partitioner) {
 
     sstable_assertions sst(uncompressed_random_partitioner_schema,
                            uncompressed_random_partitioner_path);
-    auto check = [] (const std::runtime_error& e) {
-        using namespace std::string_literals;
-        return e.what() == "SSTable tests/sstables/3.x/uncompressed/random_partitioner/mc-1-big-Data.db uses org.apache.cassandra.dht.RandomPartitioner partitioner which is different than org.apache.cassandra.dht.Murmur3Partitioner partitioner used by the database"s;
-    };
-    BOOST_REQUIRE_EXCEPTION(sst.load(), std::runtime_error, check);
+    using namespace std::string_literals;
+    REQUIRE_EXCEPTION(sst.load(), std::runtime_error, "SSTable tests/sstables/3.x/uncompressed/random_partitioner/mc-1-big-Data.db uses org.apache.cassandra.dht.RandomPartitioner partitioner which is different than org.apache.cassandra.dht.Murmur3Partitioner partitioner used by the database"s);
 }
 // Following tests run on files in tests/sstables/3.x/uncompressed/compound_static_row
 // They were created using following CQL statements:
@@ -4985,7 +4983,7 @@ SEASTAR_THREAD_TEST_CASE(test_sstable_reader_on_unknown_column) {
         sst->write_components(mt->make_flat_reader(write_schema), 1, write_schema, cfg, mt->get_encoding_stats()).get();
         sst->load().get();
 
-        BOOST_REQUIRE_EXCEPTION(
+        REQUIRE_EXCEPTION(
             assert_that(sst->read_rows_flat(read_schema))
                 .produces_partition_start(dk)
                 .produces_row(to_ck(0), {{val2_cdef, int32_type->decompose(int32_t(200))}})
@@ -4994,9 +4992,7 @@ SEASTAR_THREAD_TEST_CASE(test_sstable_reader_on_unknown_column) {
                 .produces_partition_end()
                 .produces_end_of_stream(),
             std::exception,
-            [&] (const std::exception& e) {
-                return e.what() == "Column val1 missing in current schema in sstable " + sst->get_filename();
-            });
+            "Column val1 missing in current schema in sstable " + sst->get_filename());
     }
 }
 

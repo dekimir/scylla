@@ -43,6 +43,7 @@
 #include "types/set.hh"
 #include "db/config.hh"
 #include "sstables/compaction_manager.hh"
+#include "util.hh"
 
 using namespace std::literals::chrono_literals;
 
@@ -1395,12 +1396,7 @@ SEASTAR_TEST_CASE(test_user_type) {
 SEASTAR_TEST_CASE(test_duration_restrictions) {
     auto validate_request_failure = [] (cql_test_env& env, const sstring& request, const sstring& expected_message) {
         return futurize_apply([&] { return env.execute_cql(request); }).then_wrapped([expected_message] (future<shared_ptr<cql_transport::messages::result_message>> f) {
-            BOOST_REQUIRE_EXCEPTION(f.get(),
-                exceptions::invalid_request_exception,
-                [&expected_message](const exceptions::invalid_request_exception& ire) {
-                    BOOST_REQUIRE_EQUAL(expected_message, ire.what());
-                    return true;
-                });
+            REQUIRE_EXCEPTION(f.get(), exceptions::invalid_request_exception, expected_message);
         });
     };
 
