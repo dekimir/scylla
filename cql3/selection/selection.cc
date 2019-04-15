@@ -263,9 +263,11 @@ selection::collect_metadata(schema_ptr schema, const std::vector<::shared_ptr<ra
     return r;
 }
 
-result_set_builder::result_set_builder(const selection& s, gc_clock::time_point now, cql_serialization_format sf)
+result_set_builder::result_set_builder(const selection& s, gc_clock::time_point now, cql_serialization_format sf,
+                                       std::vector<size_t> group_by_cell_indices)
     : _result_set(std::make_unique<result_set>(::make_shared<metadata>(*(s.get_result_metadata()))))
     , _selectors(s.new_selectors())
+    , _group_by_cell_indices(group_by_cell_indices)
     , _now(now)
     , _cql_serialization_format(sf)
 {
@@ -311,29 +313,73 @@ void result_set_builder::add_collection(const column_definition& def, bytes_view
     // timestamps, ttls meaningless for collections
 }
 
-void result_set_builder::new_row() {
-    if (current) {
-        _selectors->add_input_row(_cql_serialization_format, *this);
-        if (!_selectors->is_aggregate()) {
-            _result_set->add_row(_selectors->get_output_row(_cql_serialization_format));
-            _selectors->reset();
+namespace {
+
+/// Returns a concatenation of bytes in \p current[i] for each i in \p indices.
+std::vector<int8_t> get_group(const std::vector<bytes_opt>& current,
+                              const std::vector<size_t>& indices) {
+    std::vector<int8_t> concat;
+    for (auto i : indices) {
+        // Assuming current[i] can't be null -- that would be an internal error.
+        concat.insert(concat.end(), current[i]->cbegin(), current[i]->cend());
+    }
+    return concat;
+}
+
+} // anonymous namespace
+
+void result_set_builder::update_last_group() {
+    if (_group_by_cell_indices.empty()) {
+        if (_last_group.empty()) {
+            _last_group = {!_selectors->is_aggregate()};
         }
-        current->clear();
     } else {
-        // FIXME: we use optional<> here because we don't have an end_row() signal
-        //        instead, !current means that new_row has never been called, so this
-        //        call to new_row() does not end a previous row.
-        current.emplace();
+        _last_group = get_group(*current, _group_by_cell_indices);
     }
 }
 
-std::unique_ptr<result_set> result_set_builder::build() {
-    if (current) {
-        _selectors->add_input_row(_cql_serialization_format, *this);
-        _result_set->add_row(_selectors->get_output_row(_cql_serialization_format));
-        _selectors->reset();
-        current = std::nullopt;
+bool result_set_builder::last_group_ended() {
+    if (_last_group.empty()) {
+        return false; // The group never began.
     }
+    if (_group_by_cell_indices.empty()) {
+        return _last_group[0];
+    } else {
+        return _last_group != get_group(*current, _group_by_cell_indices);
+    }
+}
+
+void result_set_builder::flush_selectors() {
+    _result_set->add_row(_selectors->get_output_row(_cql_serialization_format));
+    _selectors->reset();
+}
+
+void result_set_builder::process_current_row(bool more_rows_coming) {
+    if (!current) {
+        return;
+    }
+    if (last_group_ended()) {
+        flush_selectors();
+    }
+    update_last_group();
+    _selectors->add_input_row(_cql_serialization_format, *this);
+    if (more_rows_coming) {
+        current->clear();
+    } else {
+        flush_selectors();
+    }
+}
+
+void result_set_builder::new_row() {
+    process_current_row(/*more_rows_coming=*/true);
+    // FIXME: we use optional<> here because we don't have an end_row() signal
+    //        instead, !current means that new_row has never been called, so this
+    //        call to new_row() does not end a previous row.
+    current.emplace();
+}
+
+std::unique_ptr<result_set> result_set_builder::build() {
+    process_current_row(/*more_rows_coming=*/false);
     if (_result_set->empty() && _selectors->is_aggregate()) {
         _result_set->add_row(_selectors->get_output_row(_cql_serialization_format));
     }

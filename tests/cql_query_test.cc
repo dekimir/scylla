@@ -25,6 +25,7 @@
 #include <boost/range/algorithm.hpp>
 #include <boost/test/unit_test.hpp>
 #include <boost/multiprecision/cpp_int.hpp>
+#include <experimental/source_location>
 
 #include <seastar/net/inet_address.hh>
 
@@ -3409,56 +3410,175 @@ auto make_predicate_for_exception_message_fragment(const char* frag) {
     };
 }
 
+using std::experimental::source_location;
+
+// Can't name it `query` -- clashes with namespace query.
+shared_ptr<cql_transport::messages::result_message> equery(
+        cql_test_env& e, const char* qstr, const source_location& loc = source_location::current()) {
+    try {
+        return e.execute_cql(qstr).get0();
+    } catch (const std::exception& e) {
+        BOOST_FAIL(format("query '{}' failed: {}\n{}:{}: originally from here",
+                          qstr, e.what(), loc.file_name(), loc.line()));
+    }
+    return shared_ptr<cql_transport::messages::result_message>(nullptr);
+}
+
 } // anonymous namespace
 
-SEASTAR_TEST_CASE(test_group_by) {
+SEASTAR_TEST_CASE(test_group_by_syntax) {
     return do_with_cql_env([] (cql_test_env& e) {
-        /// Executes qstr as CQL and waits for the execution to complete.
-        auto query = [&e](const char* qstr) { e.execute_cql(qstr).get(); };
+        equery(e, "create table t1 (p1 int, p2 int, c1 int, c2 int, npk int, primary key((p1, p2), c1, c2))");
+        equery(e, "create table t2 (p1 int, p2 int, p3 int, npk int, primary key((p1, p2, p3)))");
 
         // Must parse correctly:
-        query("create table t1 (p1 int, p2 int, c1 int, c2 int, npk int, primary key((p1, p2), c1, c2))");
-        query("select * from t1 group by p1");
-        query("select * from t1 group by \"p1\"");
-        query("select * from t1 group by p1, p2, c1, c2");
-        query("select * from t1 where p1=1 and p2=2 group by c1, c2 order by c1 allow filtering");
-        query("select * from t1 where p2=2 group by p1, c1 allow filtering");
-        query("select * from t1 where p2=2 group by p1, p2, c1 allow filtering");
-        query("create table t2 (p1 int, p2 int, p3 int, npk int, primary key((p1, p2, p3)))");
-        query("select * from t2 group by p1, p2, p3");
-        query("select * from t2 where p1=1 group by p1, p2, p3 allow filtering");
-        query("select * from t2 where p1=1 group by p2 allow filtering");
-        query("select * from t2 where p1=1 and p2=2 and p3=3 group by p1, p2, p3 allow filtering");
-        query("select * from t2 where p1=1 and p2=2 and p3=3 group by p3 allow filtering");
+        equery(e, "select count(c1) from t1 group by p1, p2");
+        equery(e, "select count(c1) from t1 group by p1, p2, c1");
+        equery(e, "select sum(c2) from t1 group by p1, p2");
+        equery(e, "select avg(npk) from t1 group by \"p1\", \"p2\"");
+        equery(e, "select sum(p2) from t1 group by p1, p2, c1, c2");
+        equery(e, "select count(npk) from t1 where p1=1 and p2=1 group by c1, c2 order by c1 allow filtering");
+        equery(e, "select c2 from t1 where p2=2 group by p1, c1 allow filtering");
+        equery(e, "select npk from t1 where p2=2 group by p1, p2, c1 allow filtering");
+        equery(e, "select p1 from t2 group by p1, p2, p3");
+        equery(e, "select * from t2 where p1=1 group by p1, p2, p3 allow filtering");
+        equery(e, "select * from t2 where p1=1 group by p2, p3 allow filtering");
+        equery(e, "select * from t2 where p1=1 and p2=2 and p3=3 group by p1, p2, p3 allow filtering");
+        equery(e, "select * from t2 where p1=1 and p2=2 and p3=3 group by p3 allow filtering");
 
         using ire = exceptions::invalid_request_exception;
-        auto contains = make_predicate_for_exception_message_fragment;
+        const auto unknown = make_predicate_for_exception_message_fragment("unknown column");
+        const auto non_primary = make_predicate_for_exception_message_fragment("non-primary-key");
+        const auto order = make_predicate_for_exception_message_fragment("order");
+        const auto partition = make_predicate_for_exception_message_fragment("partition key");
 
         // Must report errors:
-        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by xyz"), ire, contains("unknown column"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by p1, xyz"), ire, contains("unknown column"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by npk"), ire, contains("non-primary-key"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by p1, npk"), ire, contains("non-primary-key"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by p2, p1"), ire, contains("order"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t1 where p1=1 group by p2, c2 allow filtering"), ire,
-                                contains("order"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by p1, p2, c1, c2, foo"), ire,
-                                contains("unknown column"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t1 group by p1, p2, c1, c2, npk"), ire,
-                                contains("non-primary-key"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t2 where p1=1 group by p3 allow filtering"), ire,
-                                contains("order"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t2 where p1=1 group by p2, p1 allow filtering"), ire,
-                                contains("order"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t2 group by p1, p2, p2, p3"), ire, contains("order"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t2 group by p1, p2, p3, p1"), ire, contains("order"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t2 where p2=2 group by p1, p3, p2 allow filtering"), ire,
-                                contains("order"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t2 where p1=1 and p2=2 and p3=3 group by npk allow filtering"),
-                                ire, contains("non-primary-key"));
-        BOOST_REQUIRE_EXCEPTION(query("select * from t2 where p1=1 and p2=2 and p3=3 group by p2, p1 allow filtering"),
-                                ire, contains("order"));
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by xyz").get(), ire, unknown);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1, xyz").get(), ire, unknown);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by npk").get(), ire, non_primary);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1, npk").get(), ire, non_primary);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p2, p1").get(), ire, order);
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t1 where p1=1 group by p2, c2 allow filtering").get(), ire, order);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1, p2, c1, c2, foo").get(), ire, unknown);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1, p2, c1, c2, npk").get(), ire, non_primary);
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t2 where p1=1 group by p3 allow filtering").get(), ire, order);
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t2 where p1=1 group by p2, p1 allow filtering").get(), ire, order);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1, p2, p2, p3").get(), ire, order);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1, p2, p3, p1").get(), ire, order);
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t2 where p2=2 group by p1, p3, p2 allow filtering").get(), ire, order);
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t2 where p1=1 and p2=2 and p3=3 group by npk allow filtering").get(),
+                ire, non_primary);
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t2 where p1=1 and p2=2 and p3=3 group by p2, p1 allow filtering").get(),
+                ire, order);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1, p2").get(), ire, partition);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1").get(), ire, partition);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1").get(), ire, partition);
 
+        return make_ready_future<>();
+    });
+}
+
+namespace {
+
+/// Asserts that equery(e, qstr) result contains expected rows, in any order.
+void require_rows(cql_test_env& e,
+                  const char* qstr,
+                  const std::vector<std::vector<bytes_opt>>& expected,
+                  const source_location& loc = source_location::current()) {
+    try {
+        assert_that(equery(e, qstr)).is_rows().with_rows_ignore_order(expected);
+    }
+    catch (const std::exception& e) {
+        BOOST_FAIL(format("query '{}' failed: {}\n{}:{}: originally from here",
+                          qstr, e.what(), loc.file_name(), loc.line()));
+    }
+}
+
+auto I(int32_t x) { return int32_type->decompose(x); }
+
+auto L(int64_t x) { return long_type->decompose(x); }
+
+auto T(const char* t) { return utf8_type->decompose(t); }
+
+} // anonymous namespace
+
+SEASTAR_TEST_CASE(test_group_by_aggregate_single_key) {
+    return do_with_cql_env([] (cql_test_env& e) {
+        equery(e, "create table t (p int primary key, n int)");
+        equery(e, "insert into t (p, n) values (1, 10)");
+        // Rows contain GROUP BY column values (later filtered in cql_server::connection).
+        require_rows(e, "select sum(n) from t group by p", {{I(10), I(1)}});
+        require_rows(e, "select avg(n) from t group by p", {{I(10), I(1)}});
+        require_rows(e, "select count(n) from t group by p", {{L(1), I(1)}});
+        equery(e, "insert into t (p, n) values (2, 20)");
+        require_rows(e, "select sum(n) from t group by p", {{I(10), I(1)}, {I(20), I(2)}});
+        require_rows(e, "select avg(n) from t group by p", {{I(20), I(2)}, {I(10), I(1)}});
+        require_rows(e, "select count(n) from t group by p", {{L(1), I(2)}, {L(1), I(1)}});
+        return make_ready_future<>();
+    });
+}
+
+SEASTAR_TEST_CASE(test_group_by_aggregate_partition_only) {
+    return do_with_cql_env([] (cql_test_env& e) {
+        equery(e, "create table t (p1 int, p2 int, p3 int, v int, primary key((p1, p2, p3)))");
+        equery(e, "insert into t (p1, p2, p3, v) values (1, 1, 1, 100)");
+        // Rows contain GROUP BY column values (later filtered in cql_server::connection).
+        require_rows(e, "select sum(v) from t group by p1, p2, p3", {{I(100), I(1), I(1), I(1)}});
+        equery(e, "insert into t (p1, p2, p3, v) values (1, 2, 1, 100)");
+        require_rows(e, "select sum(v) from t group by p1, p2, p3",
+                     {{I(100), I(1), I(1), I(1)}, {I(100), I(1), I(2), I(1)}});
+        require_rows(e, "select sum(v) from t where p2=2 group by p1, p3 allow filtering",
+                     {{I(100), I(2), I(1), I(1)}});
+        equery(e, "insert into t (p1, p2, p3, v) values (1, 2, 2, 100)");
+        require_rows(e, "select sum(v) from t group by p1, p2, p3",
+                     {{I(100), I(1), I(1), I(1)}, {I(100), I(1), I(2), I(1)}, {I(100), I(1), I(2), I(2)}});
+        equery(e, "delete from t where p1=1 and p2=1 and p3=1");
+        require_rows(e, "select sum(v) from t group by p1, p2, p3",
+                     {{I(100), I(1), I(2), I(1)}, {I(100), I(1), I(2), I(2)}});
+        return make_ready_future<>();
+    });
+}
+
+SEASTAR_TEST_CASE(test_group_by_aggregate_clustering) {
+    return do_with_cql_env([] (cql_test_env& e) {
+        equery(e, "create table t (p1 int, c1 int, c2 int, v int, primary key((p1), c1, c2))");
+        equery(e, "insert into t (p1, c1, c2, v) values (1, 1, 1, 100)");
+        equery(e, "insert into t (p1, c1, c2, v) values (1, 1, 2, 100)");
+        equery(e, "insert into t (p1, c1, c2, v) values (1, 1, 3, 100)");
+        equery(e, "insert into t (p1, c1, c2, v) values (2, 1, 1, 100)");
+        equery(e, "insert into t (p1, c1, c2, v) values (2, 2, 2, 100)");
+        equery(e, "delete from t where p1=1 and c1=1 and c2 =3");
+        require_rows(e, "select sum(v) from t group by p1", {{I(200), I(1)}, {I(200), I(2)}});
+        require_rows(e, "select sum(v) from t group by p1, c1",
+                     {{I(200), I(1), I(1)}, {I(100), I(2), I(1)}, {I(100), I(2), I(2)}});
+        require_rows(e, "select sum(v) from t where p1=1 and c1=1 group by c2 allow filtering",
+                     {{I(100), I(1)}, {I(100), I(2)}});
+        require_rows(e, "select sum(v) from t group by p1, c1, c2",
+                     {{I(100), I(1), I(1), I(1)}, {I(100), I(1), I(1), I(2)},
+                      {I(100), I(2), I(1), I(1)}, {I(100), I(2), I(2), I(2)}});
+        return make_ready_future<>();
+    });
+}
+
+SEASTAR_TEST_CASE(test_group_by_text_key) {
+    return do_with_cql_env([] (cql_test_env& e) {
+        equery(e, "create table t (p text, c int, v int, primary key(p, c))");
+        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123', 1, 100)");
+        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123', 2, 200)");
+        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123', 3, 300)");
+        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123abc', 1, 150)");
+        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123abc', 2, 250)");
+        require_rows(e, "select sum(v) from t group by p",
+                     {{I(600), T("123456789012345678901234567890123")},
+                      {I(400), T("123456789012345678901234567890123abc")}});
+        require_rows(e, "select sum(v) from t where p='123456789012345678901234567890123' group by c",
+                     {{I(100), I(1)}, {I(200), I(2)}, {I(300), I(3)}});
         return make_ready_future<>();
     });
 }
