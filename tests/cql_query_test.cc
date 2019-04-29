@@ -3582,3 +3582,20 @@ SEASTAR_TEST_CASE(test_group_by_text_key) {
         return make_ready_future<>();
     });
 }
+
+SEASTAR_TEST_CASE(test_group_by_simple) {
+    return do_with_cql_env([] (cql_test_env& e) {
+        equery(e, "create table t (p int, c int, n int, primary key(p, c))");
+        equery(e, "insert into t (p, c, n) values (1, 1, 11)");
+        require_rows(e, "select n from t group by p", {{I(11), I(1)}});
+        equery(e, "insert into t (p, c, n) values (2, 1, 21)");
+        require_rows(e, "select n from t group by p", {{I(11), I(1)}, {I(21), I(2)}});
+        equery(e, "delete from t where p=1");
+        require_rows(e, "select n from t group by p", {{I(21), I(2)}});
+        equery(e, "insert into t (p, c, n) values (1, 1, 11)");
+        equery(e, "insert into t (p, c, n) values (1, 2, 12)");
+        equery(e, "insert into t (p, c, n) values (1, 3, 13)");
+        require_rows(e, "select n from t group by p", {{I(11), I(1)}, {I(21), I(2)}});
+        return make_ready_future<>();
+    });
+}
