@@ -1447,19 +1447,17 @@ bool select_statement::contains_alias(::shared_ptr<column_identifier> name) {
 
 namespace {
 
-/// Returns names of all columns involved in an equality relation.
-std::vector<bytes> columns_restricted_by_equality(
-        schema_ptr schema, std::vector<::shared_ptr<relation>> relations) {
-    std::vector<bytes> equality_restricted;
+/// True iff one of \p relations is a single-column EQ involving \p def.
+bool equality_restricted(
+        const column_definition& def, schema_ptr schema, const std::vector<::shared_ptr<relation>>& relations) {
     for (const auto& relation : relations) {
         if (const auto sc_rel = dynamic_pointer_cast<single_column_relation>(relation)) {
-            if (sc_rel->is_EQ()) {
-                equality_restricted.push_back(
-                        sc_rel->get_entity()->prepare_column_identifier(schema)->name());
+            if (sc_rel->is_EQ() && sc_rel->get_entity()->prepare_column_identifier(schema)->name() == def.name()) {
+                return true;
             }
         }
     }
-    return equality_restricted;
+    return false;
 }
 
 } // anonymous namespace
@@ -1476,14 +1474,8 @@ std::vector<size_t> select_statement::prepare_group_by(schema_ptr schema, select
     // It's OK if GROUP BY columns list ends before the primary key is exhausted.
 
     const auto key_size = schema->partition_key_size() + schema->clustering_key_size();
-    const auto restricted_columns = columns_restricted_by_equality(schema, _where_clause);
     const auto all_columns = schema->all_columns_in_select_order();
     uint32_t expected_index = 0; // Index of the next column we expect to encounter.
-
-    /// Returns true iff the currently expected column may be skipped in GROUP BY.
-    auto may_skip = [&] {
-        return boost::algorithm::any_of_equal(restricted_columns, all_columns[expected_index].name());
-    };
 
     for (const auto& col : _group_by_columns) {
         auto def = schema->get_column_definition(col->prepare_column_identifier(schema)->name());
@@ -1493,7 +1485,8 @@ std::vector<size_t> select_statement::prepare_group_by(schema_ptr schema, select
         if (!def->is_primary_key()) {
             throw exceptions::invalid_request_exception(format("Group by non-primary-key column {}", *col));
         }
-        while (*def != all_columns[expected_index] && may_skip()) {
+        while (*def != all_columns[expected_index]
+               && equality_restricted(all_columns[expected_index], schema, _where_clause)) {
             if (++expected_index >= key_size) {
                 throw exceptions::invalid_request_exception(format("Group by column {} is out of order", *col));
             }
