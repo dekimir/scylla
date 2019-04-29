@@ -3430,7 +3430,7 @@ shared_ptr<cql_transport::messages::result_message> equery(
 
 SEASTAR_TEST_CASE(test_group_by_syntax) {
     return do_with_cql_env([] (cql_test_env& e) {
-        equery(e, "create table t1 (p1 int, p2 int, c1 int, c2 int, npk int, primary key((p1, p2), c1, c2))");
+        equery(e, "create table t1 (p1 int, p2 int, c1 int, c2 int, c3 int, npk int, primary key((p1, p2), c1, c2, c3))");
         equery(e, "create table t2 (p1 int, p2 int, p3 int, npk int, primary key((p1, p2, p3)))");
 
         // Must parse correctly:
@@ -3438,7 +3438,7 @@ SEASTAR_TEST_CASE(test_group_by_syntax) {
         equery(e, "select count(c1) from t1 group by p1, p2, c1");
         equery(e, "select sum(c2) from t1 group by p1, p2");
         equery(e, "select avg(npk) from t1 group by \"p1\", \"p2\"");
-        equery(e, "select sum(p2) from t1 group by p1, p2, c1, c2");
+        equery(e, "select sum(p2) from t1 group by p1, p2, c1, c2, c3");
         equery(e, "select count(npk) from t1 where p1=1 and p2=1 group by c1, c2 order by c1 allow filtering");
         equery(e, "select c2 from t1 where p2=2 group by p1, c1 allow filtering");
         equery(e, "select npk from t1 where p2=2 group by p1, p2, c1 allow filtering");
@@ -3462,8 +3462,9 @@ SEASTAR_TEST_CASE(test_group_by_syntax) {
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p2, p1").get(), ire, order);
         BOOST_REQUIRE_EXCEPTION(
                 e.execute_cql("select * from t1 where p1=1 group by p2, c2 allow filtering").get(), ire, order);
-        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1, p2, c1, c2, foo").get(), ire, unknown);
-        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1, p2, c1, c2, npk").get(), ire, non_primary);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1, p2, c1, c2, c3, foo").get(), ire, unknown);
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t1 group by p1, p2, c1, c2, c3, npk").get(), ire, non_primary);
         BOOST_REQUIRE_EXCEPTION(
                 e.execute_cql("select * from t2 where p1=1 group by p3 allow filtering").get(), ire, order);
         BOOST_REQUIRE_EXCEPTION(
@@ -3481,6 +3482,11 @@ SEASTAR_TEST_CASE(test_group_by_syntax) {
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1, p2").get(), ire, partition);
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1").get(), ire, partition);
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1").get(), ire, partition);
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t1 where p1 > 0 group by p2 allow filtering").get(), ire, order);
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t1 where (c1,c2) > (0,0) group by p1, p2, c3 allow filtering").get(),
+                ire, order);
 
         return make_ready_future<>();
     });
