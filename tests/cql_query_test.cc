@@ -3401,12 +3401,14 @@ SEASTAR_TEST_CASE(test_describe_varchar) {
 
 namespace {
 
-// TODO: leverage tests/util.hh, after it lands.
+// TODO: move to cql_assertions.hh.
 
 /// Returns a predicate that checks whether a cassandra_exception's message contains fragment \c frag.
 auto make_predicate_for_exception_message_fragment(const char* frag) {
     return [frag](const exceptions::cassandra_exception& e) {
-        return e.get_message().find(frag) != sstring::npos;
+        const bool status = (e.get_message().find(frag) != sstring::npos);
+        BOOST_CHECK_MESSAGE(status, format("Exception text '{}' doesn't contain fragment '{}'", e.what(), frag));
+        return status;
     };
 }
 
