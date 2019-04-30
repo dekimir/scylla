@@ -3429,7 +3429,7 @@ shared_ptr<cql_transport::messages::result_message> equery(
 } // anonymous namespace
 
 SEASTAR_TEST_CASE(test_group_by_syntax) {
-    return do_with_cql_env([] (cql_test_env& e) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
         equery(e, "create table t1 (p1 int, p2 int, c1 int, c2 int, c3 int, npk int, primary key((p1, p2), c1, c2, c3))");
         equery(e, "create table t2 (p1 int, p2 int, p3 int, npk int, primary key((p1, p2, p3)))");
 
@@ -3493,7 +3493,7 @@ SEASTAR_TEST_CASE(test_group_by_syntax) {
 }
 
 SEASTAR_TEST_CASE(test_group_by_syntax_no_value_columns) {
-    return do_with_cql_env([] (cql_test_env& e) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
         equery(e, "create table t (p1 int, p2 int, p3 int, primary key((p1, p2, p3)))");
         BOOST_REQUIRE_EXCEPTION(
                 e.execute_cql("select * from t group by p1, p2, p3, p1").get(),
@@ -3528,7 +3528,7 @@ auto T(const char* t) { return utf8_type->decompose(t); }
 } // anonymous namespace
 
 SEASTAR_TEST_CASE(test_group_by_aggregate_single_key) {
-    return do_with_cql_env([] (cql_test_env& e) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
         equery(e, "create table t (p int primary key, n int)");
         equery(e, "insert into t (p, n) values (1, 10)");
         // Rows contain GROUP BY column values (later filtered in cql_server::connection).
@@ -3544,7 +3544,7 @@ SEASTAR_TEST_CASE(test_group_by_aggregate_single_key) {
 }
 
 SEASTAR_TEST_CASE(test_group_by_aggregate_partition_only) {
-    return do_with_cql_env([] (cql_test_env& e) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
         equery(e, "create table t (p1 int, p2 int, p3 int, v int, primary key((p1, p2, p3)))");
         equery(e, "insert into t (p1, p2, p3, v) values (1, 1, 1, 100)");
         // Rows contain GROUP BY column values (later filtered in cql_server::connection).
@@ -3565,7 +3565,7 @@ SEASTAR_TEST_CASE(test_group_by_aggregate_partition_only) {
 }
 
 SEASTAR_TEST_CASE(test_group_by_aggregate_clustering) {
-    return do_with_cql_env([] (cql_test_env& e) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
         equery(e, "create table t (p1 int, c1 int, c2 int, v int, primary key((p1), c1, c2))");
         equery(e, "insert into t (p1, c1, c2, v) values (1, 1, 1, 100)");
         equery(e, "insert into t (p1, c1, c2, v) values (1, 1, 2, 100)");
@@ -3586,7 +3586,7 @@ SEASTAR_TEST_CASE(test_group_by_aggregate_clustering) {
 }
 
 SEASTAR_TEST_CASE(test_group_by_text_key) {
-    return do_with_cql_env([] (cql_test_env& e) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
         equery(e, "create table t (p text, c text, v int, primary key(p, c))");
         equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123', '1', 100)");
         equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123', '2', 200)");
@@ -3609,7 +3609,7 @@ SEASTAR_TEST_CASE(test_group_by_text_key) {
 }
 
 SEASTAR_TEST_CASE(test_group_by_simple) {
-    return do_with_cql_env([] (cql_test_env& e) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
         equery(e, "create table t (p int, c int, n int, primary key(p, c))");
         equery(e, "insert into t (p, c, n) values (1, 1, 11)");
         require_rows(e, "select n from t group by p", {{I(11), I(1)}});
