@@ -76,7 +76,7 @@ protected:
     ::shared_ptr<parameters> _parameters;
     ::shared_ptr<selection::selection> _selection;
     ::shared_ptr<restrictions::statement_restrictions> _restrictions;
-    ::shared_ptr<std::vector<size_t>> _group_by_cell_indices;
+    ::shared_ptr<std::vector<size_t>> _group_by_cell_indices; ///< Indices in result row of cells holding GROUP BY values.
     bool _is_reversed;
     ::shared_ptr<term> _limit;
     ::shared_ptr<term> _per_partition_limit;
