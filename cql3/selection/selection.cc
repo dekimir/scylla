@@ -116,11 +116,11 @@ protected:
     class simple_selectors : public selectors {
     private:
         std::vector<bytes_opt> _current;
-        bool first = true;
+        bool _first = true;
     public:
         virtual void reset() override {
             _current.clear();
-            first = true;
+            _first = true;
         }
 
         virtual std::vector<bytes_opt> get_output_row(cql_serialization_format sf) override {
@@ -131,9 +131,9 @@ protected:
             // GROUP BY calls add_input_row() repeatedly without reset() in between, and it expects
             // the output to be the first value encountered:
             // https://cassandra.apache.org/doc/latest/cql/dml.html#grouping-results
-            if (first) {
+            if (_first) {
                 _current = std::move(*rs.current);
-                first = false;
+                _first = false;
             }
         }
 
