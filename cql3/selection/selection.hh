@@ -245,8 +245,8 @@ private:
     std::unique_ptr<result_set> _result_set;
     std::unique_ptr<selectors> _selectors;
     const std::vector<size_t> _group_by_cell_indices; ///< Indices in \c current of cells holding GROUP BY values.
-    /// Previous row's group: either concatenation of GROUP BY column values (when present) or a single bool value indicating aggregation.
-    std::vector<int8_t> _last_group;
+    std::vector<bytes_opt> _last_group; ///< Previous row's group: all of GROUP BY column values.
+    bool _group_began; ///< Whether a group began being formed.
 public:
     std::optional<std::vector<bytes_opt>> current;
 private:

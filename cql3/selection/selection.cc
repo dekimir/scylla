@@ -41,6 +41,8 @@
 
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/adaptor/filtered.hpp>
+#include <boost/range/algorithm/equal.hpp>
+#include <boost/range/algorithm/transform.hpp>
 
 #include "cql3/selection/selection.hh"
 #include "cql3/selection/selector_factories.hh"
@@ -276,6 +278,8 @@ result_set_builder::result_set_builder(const selection& s, gc_clock::time_point 
     : _result_set(std::make_unique<result_set>(::make_shared<metadata>(*(s.get_result_metadata()))))
     , _selectors(s.new_selectors())
     , _group_by_cell_indices(std::move(group_by_cell_indices))
+    , _last_group(_group_by_cell_indices.size())
+    , _group_began(false)
     , _now(now)
     , _cql_serialization_format(sf)
 {
@@ -321,40 +325,21 @@ void result_set_builder::add_collection(const column_definition& def, bytes_view
     // timestamps, ttls meaningless for collections
 }
 
-namespace {
-
-/// Returns a concatenation of bytes in \p current[i] for each i in \p indices.
-std::vector<int8_t> get_group(const std::vector<bytes_opt>& current,
-                              const std::vector<size_t>& indices) {
-    std::vector<int8_t> concat;
-    for (auto i : indices) {
-        // Assuming current[i] can't be null -- that would be an internal error.
-        concat.insert(concat.end(), current[i]->cbegin(), current[i]->cend());
-    }
-    return concat;
-}
-
-} // anonymous namespace
-
 void result_set_builder::update_last_group() {
-    if (_group_by_cell_indices.empty()) {
-        if (_last_group.empty()) {
-            _last_group = {!_selectors->is_aggregate()};
-        }
-    } else {
-        _last_group = get_group(*current, _group_by_cell_indices);
-    }
+    _group_began = true;
+    boost::transform(_group_by_cell_indices, _last_group.begin(), [this](size_t i) { return (*current)[i]; });
 }
 
 bool result_set_builder::last_group_ended() const {
+    if (!_group_began) {
+        return false;
+    }
     if (_last_group.empty()) {
-        return false; // The group never began.
+        return !_selectors->is_aggregate();
     }
-    if (_group_by_cell_indices.empty()) {
-        return _last_group[0];
-    } else {
-        return _last_group != get_group(*current, _group_by_cell_indices);
-    }
+    using boost::adaptors::transformed;
+    return !boost::equal(_last_group,
+                         _group_by_cell_indices | transformed([this](size_t i) { return (*current)[i]; }));
 }
 
 void result_set_builder::flush_selectors() {

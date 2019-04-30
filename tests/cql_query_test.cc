@@ -3587,17 +3587,23 @@ SEASTAR_TEST_CASE(test_group_by_aggregate_clustering) {
 
 SEASTAR_TEST_CASE(test_group_by_text_key) {
     return do_with_cql_env([] (cql_test_env& e) {
-        equery(e, "create table t (p text, c int, v int, primary key(p, c))");
-        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123', 1, 100)");
-        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123', 2, 200)");
-        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123', 3, 300)");
-        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123abc', 1, 150)");
-        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123abc', 2, 250)");
+        equery(e, "create table t (p text, c text, v int, primary key(p, c))");
+        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123', '1', 100)");
+        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123', '2', 200)");
+        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123', '3', 300)");
+        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123abc', '1', 150)");
+        equery(e, "insert into t (p, c, v) values ('123456789012345678901234567890123abc', '2', 250)");
+        equery(e, "insert into t (p, c, v) values ('ab', 'cd', 310)");
+        equery(e, "insert into t (p, c, v) values ('abc', 'd', 420)");
         require_rows(e, "select sum(v) from t group by p",
                      {{I(600), T("123456789012345678901234567890123")},
-                      {I(400), T("123456789012345678901234567890123abc")}});
+                      {I(400), T("123456789012345678901234567890123abc")},
+                      {I(310), T("ab")},
+                      {I(420), T("abc")}});
+        require_rows(e, "select sum(v) from t where p in ('ab','abc') group by p, c allow filtering",
+                     {{I(310), T("ab"), T("cd")}, {I(420), T("abc"), T("d")}});
         require_rows(e, "select sum(v) from t where p='123456789012345678901234567890123' group by c",
-                     {{I(100), I(1)}, {I(200), I(2)}, {I(300), I(3)}});
+                     {{I(100), T("1")}, {I(200), T("2")}, {I(300), T("3")}});
         return make_ready_future<>();
     });
 }
