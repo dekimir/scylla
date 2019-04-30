@@ -430,7 +430,7 @@ private:
 
     /// True iff the \c current row ends a previously started group, either according to
     /// _group_by_cell_indices or aggregation.
-    bool last_group_ended();
+    bool last_group_ended() const;
 
     /// If there is a valid row in this->current, process it; if \p more_rows_coming, get ready to
     /// receive another.

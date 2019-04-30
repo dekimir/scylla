@@ -346,7 +346,7 @@ void result_set_builder::update_last_group() {
     }
 }
 
-bool result_set_builder::last_group_ended() {
+bool result_set_builder::last_group_ended() const {
     if (_last_group.empty()) {
         return false; // The group never began.
     }
