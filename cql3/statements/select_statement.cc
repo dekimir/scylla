@@ -1460,6 +1460,11 @@ bool equality_restricted(
     return false;
 }
 
+/// Returns an exception to throw when \p col is out of order in GROUP BY.
+auto make_order_exception(const column_identifier::raw& col) {
+    return exceptions::invalid_request_exception(format("Group by column {} is out of order", col));
+}
+
 } // anonymous namespace
 
 std::vector<size_t> select_statement::prepare_group_by(schema_ptr schema, selection::selection& selection) const {
@@ -1477,22 +1482,26 @@ std::vector<size_t> select_statement::prepare_group_by(schema_ptr schema, select
     const auto all_columns = schema->all_columns_in_select_order();
     uint32_t expected_index = 0; // Index of the next column we expect to encounter.
 
+    using exceptions::invalid_request_exception;
     for (const auto& col : _group_by_columns) {
         auto def = schema->get_column_definition(col->prepare_column_identifier(schema)->name());
         if (!def) {
-            throw exceptions::invalid_request_exception(format("Group by unknown column {}", *col));
+            throw invalid_request_exception(format("Group by unknown column {}", *col));
         }
         if (!def->is_primary_key()) {
-            throw exceptions::invalid_request_exception(format("Group by non-primary-key column {}", *col));
+            throw invalid_request_exception(format("Group by non-primary-key column {}", *col));
+        }
+        if (expected_index >= key_size) {
+            throw make_order_exception(*col);
         }
         while (*def != all_columns[expected_index]
                && equality_restricted(all_columns[expected_index], schema, _where_clause)) {
             if (++expected_index >= key_size) {
-                throw exceptions::invalid_request_exception(format("Group by column {} is out of order", *col));
+                throw make_order_exception(*col);
             }
         }
         if (*def != all_columns[expected_index]) {
-            throw exceptions::invalid_request_exception(format("Group by column {} is out of order", *col));
+            throw make_order_exception(*col);
         }
         ++expected_index;
         const auto index = selection.index_of(*def);
@@ -1500,7 +1509,7 @@ std::vector<size_t> select_statement::prepare_group_by(schema_ptr schema, select
     }
 
     if (expected_index < schema->partition_key_size()) {
-        throw exceptions::invalid_request_exception(format("GROUP BY must include the entire partition key"));
+        throw invalid_request_exception(format("GROUP BY must include the entire partition key"));
     }
 
     return indices;

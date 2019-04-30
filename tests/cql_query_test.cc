@@ -3492,6 +3492,17 @@ SEASTAR_TEST_CASE(test_group_by_syntax) {
     });
 }
 
+SEASTAR_TEST_CASE(test_group_by_syntax_no_value_columns) {
+    return do_with_cql_env([] (cql_test_env& e) {
+        equery(e, "create table t (p1 int, p2 int, p3 int, primary key((p1, p2, p3)))");
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t group by p1, p2, p3, p1").get(),
+                exceptions::invalid_request_exception,
+                make_predicate_for_exception_message_fragment("order"));
+        return make_ready_future<>();
+    });
+}
+
 namespace {
 
 /// Asserts that equery(e, qstr) result contains expected rows, in any order.
