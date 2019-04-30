@@ -3447,6 +3447,7 @@ SEASTAR_TEST_CASE(test_group_by_syntax) {
         equery(e, "select * from t2 where p1=1 group by p2, p3 allow filtering");
         equery(e, "select * from t2 where p1=1 and p2=2 and p3=3 group by p1, p2, p3 allow filtering");
         equery(e, "select * from t2 where p1=1 and p2=2 and p3=3 group by p3 allow filtering");
+        equery(e, "select * from t1 where p1>0 and p2=0 group by p1, c1 allow filtering");
 
         using ire = exceptions::invalid_request_exception;
         const auto unknown = make_predicate_for_exception_message_fragment("unknown column");
@@ -3454,39 +3455,48 @@ SEASTAR_TEST_CASE(test_group_by_syntax) {
         const auto order = make_predicate_for_exception_message_fragment("order");
         const auto partition = make_predicate_for_exception_message_fragment("partition key");
 
-        // Must report errors:
+        // Flag invalid columns in GROUP BY:
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by xyz").get(), ire, unknown);
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1, xyz").get(), ire, unknown);
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by npk").get(), ire, non_primary);
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1, npk").get(), ire, non_primary);
-        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p2, p1").get(), ire, order);
-        BOOST_REQUIRE_EXCEPTION(
-                e.execute_cql("select * from t1 where p1=1 group by p2, c2 allow filtering").get(), ire, order);
+        // Even when GROUP BY lists all primary-key columns:
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1, p2, c1, c2, c3, foo").get(), ire, unknown);
         BOOST_REQUIRE_EXCEPTION(
                 e.execute_cql("select * from t1 group by p1, p2, c1, c2, c3, npk").get(), ire, non_primary);
+        // Even when entire primary key is equality-restricted.
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t2 where p1=1 and p2=2 and p3=3 group by npk allow filtering").get(),
+                ire, non_primary);
+        // Flag invalid column order:
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p2, p1").get(), ire, order);
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t1 where p1=1 group by p2, c2 allow filtering").get(), ire, order);
+        // Even with equality restrictions:
         BOOST_REQUIRE_EXCEPTION(
                 e.execute_cql("select * from t2 where p1=1 group by p3 allow filtering").get(), ire, order);
         BOOST_REQUIRE_EXCEPTION(
                 e.execute_cql("select * from t2 where p1=1 group by p2, p1 allow filtering").get(), ire, order);
-        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1, p2, p2, p3").get(), ire, order);
-        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1, p2, p3, p1").get(), ire, order);
         BOOST_REQUIRE_EXCEPTION(
                 e.execute_cql("select * from t2 where p2=2 group by p1, p3, p2 allow filtering").get(), ire, order);
         BOOST_REQUIRE_EXCEPTION(
-                e.execute_cql("select * from t2 where p1=1 and p2=2 and p3=3 group by npk allow filtering").get(),
-                ire, non_primary);
-        BOOST_REQUIRE_EXCEPTION(
                 e.execute_cql("select * from t2 where p1=1 and p2=2 and p3=3 group by p2, p1 allow filtering").get(),
                 ire, order);
-        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1, p2").get(), ire, partition);
-        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1").get(), ire, partition);
-        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1").get(), ire, partition);
+        // And with non-equality restrictions:
         BOOST_REQUIRE_EXCEPTION(
                 e.execute_cql("select * from t1 where p1 > 0 group by p2 allow filtering").get(), ire, order);
         BOOST_REQUIRE_EXCEPTION(
                 e.execute_cql("select * from t1 where (c1,c2) > (0,0) group by p1, p2, c3 allow filtering").get(),
                 ire, order);
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t1 where p1>0 and p2=0 group by c1 allow filtering").get(), ire, order);
+        // Even when GROUP BY lists all primary-key columns:
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1, p2, p2, p3").get(), ire, order);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1, p2, p3, p1").get(), ire, order);
+        // GROUP BY must list the entire partition key:
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1, p2").get(), ire, partition);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t2 group by p1").get(), ire, partition);
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select * from t1 group by p1").get(), ire, partition);
 
         return make_ready_future<>();
     });
