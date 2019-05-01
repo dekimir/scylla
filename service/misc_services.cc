@@ -93,7 +93,7 @@ cache_hitrate_calculator::cache_hitrate_calculator(seastar::sharded<database>& d
 {}
 
 void cache_hitrate_calculator::recalculate_timer() {
-    recalculate_hitrates().then_wrapped([p = shared_from_this()] (future<lowres_clock::duration> f) {
+    _done = recalculate_hitrates().then_wrapped([p = shared_from_this()] (future<lowres_clock::duration> f) {
         lowres_clock::duration d;
         if (f.failed()) {
             d = std::chrono::milliseconds(2000);
@@ -123,11 +123,11 @@ future<lowres_clock::duration> cache_hitrate_calculator::recalculate_hitrates() 
         }
     };
 
-    static auto non_system_filter = [&] (const std::pair<utils::UUID, lw_shared_ptr<column_family>>& cf) {
+    auto non_system_filter = [&] (const std::pair<utils::UUID, lw_shared_ptr<column_family>>& cf) {
         return _db.local().find_keyspace(cf.second->schema()->ks_name()).get_replication_strategy().get_type() != locator::replication_strategy_type::local;
     };
 
-    auto cf_to_cache_hit_stats = [] (database& db) {
+    auto cf_to_cache_hit_stats = [non_system_filter] (database& db) {
         return boost::copy_range<std::unordered_map<utils::UUID, stat>>(db.get_column_families() | boost::adaptors::filtered(non_system_filter) |
                 boost::adaptors::transformed([]  (const std::pair<utils::UUID, lw_shared_ptr<column_family>>& cf) {
             auto& stats = cf.second->get_row_cache().stats();
@@ -142,10 +142,10 @@ future<lowres_clock::duration> cache_hitrate_calculator::recalculate_hitrates() 
         return std::move(a);
     };
 
-    return _db.map_reduce0(cf_to_cache_hit_stats, std::unordered_map<utils::UUID, stat>(), sum_stats_per_cf).then([this] (std::unordered_map<utils::UUID, stat> rates) mutable {
+    return _db.map_reduce0(cf_to_cache_hit_stats, std::unordered_map<utils::UUID, stat>(), sum_stats_per_cf).then([this, non_system_filter] (std::unordered_map<utils::UUID, stat> rates) mutable {
         _diff = 0;
         // set calculated rates on all shards
-        return _db.invoke_on_all([this, rates = std::move(rates), cpuid = engine().cpu_id()] (database& db) {
+        return _db.invoke_on_all([this, rates = std::move(rates), cpuid = engine().cpu_id(), non_system_filter] (database& db) {
             sstring gstate;
             for (auto& cf : db.get_column_families() | boost::adaptors::filtered(non_system_filter)) {
                 auto it = rates.find(cf.first);
@@ -184,7 +184,7 @@ future<lowres_clock::duration> cache_hitrate_calculator::recalculate_hitrates() 
 future<> cache_hitrate_calculator::stop() {
     _timer.cancel();
     _stopped = true;
-    return make_ready_future<>();
+    return std::move(_done);
 }
 
 

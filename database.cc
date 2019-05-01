@@ -91,6 +91,7 @@
 #include <seastar/core/shared_ptr_incomplete.hh>
 
 using namespace std::chrono_literals;
+using namespace db;
 
 logging::logger dblog("database");
 
@@ -108,13 +109,7 @@ user_types_metadata*
 seastar::internal::lw_shared_ptr_accessors<user_types_metadata, void>::to_value(seastar::lw_shared_ptr_counter_base*);
 
 sstables::sstable::version_types get_highest_supported_format() {
-    if (service::get_local_storage_service().cluster_supports_mc_sstable()) {
-        return sstables::sstable::version_types::mc;
-    } else if (service::get_local_storage_service().cluster_supports_la_sstable()) {
-        return sstables::sstable::version_types::la;
-    } else {
-        return sstables::sstable::version_types::ka;
-    }
+    return service::get_local_storage_service().sstables_format();
 }
 
 // Used for tests where the CF exists without a database object. We need to pass a valid
@@ -585,8 +580,8 @@ future<> database::parse_system_tables(distributed<service::storage_proxy>& prox
         return create_keyspace(ksm);
     }).then([&proxy, this] {
         return do_parse_schema_tables(proxy, db::schema_tables::TYPES, [this, &proxy] (schema_result_value_type &v) {
-            auto&& user_types = create_types_from_schema_partition(v);
             auto& ks = this->find_keyspace(v.first);
+            auto&& user_types = create_types_from_schema_partition(*ks.metadata(), v.second);
             for (auto&& type : user_types) {
                 ks.add_user_type(type);
             }
@@ -937,10 +932,10 @@ keyspace::make_directory_for_column_family(const sstring& name, utils::UUID uuid
     }
     return seastar::async([cfdirs = std::move(cfdirs)] {
         for (auto& cfdir : cfdirs) {
-            io_check(recursive_touch_directory, cfdir).get();
+            io_check([&cfdir] { return recursive_touch_directory(cfdir); }).get();
         }
-        io_check(touch_directory, cfdirs[0] + "/upload").get();
-        io_check(touch_directory, cfdirs[0] + "/staging").get();
+        io_check([name = cfdirs[0] + "/upload"] { return touch_directory(name); }).get();
+        io_check([name = cfdirs[0] + "/staging"] { return touch_directory(name); }).get();
     });
 }
 
@@ -1061,7 +1056,7 @@ database::create_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm) {
     create_in_memory_keyspace(ksm);
     auto& datadir = _keyspaces.at(ksm->name()).datadir();
     if (datadir != "") {
-        return io_check(touch_directory, datadir);
+        return io_check([&datadir] { return touch_directory(datadir); });
     } else {
         return make_ready_future<>();
     }
@@ -1855,9 +1850,9 @@ future<> database::clear_snapshot(sstring tag, std::vector<sstring> keyspace_nam
     });
 }
 
-future<utils::UUID> update_schema_version(distributed<service::storage_proxy>& proxy)
+future<utils::UUID> update_schema_version(distributed<service::storage_proxy>& proxy, schema_features features)
 {
-    return db::schema_tables::calculate_schema_digest(proxy).then([&proxy] (utils::UUID uuid) {
+    return db::schema_tables::calculate_schema_digest(proxy, features).then([&proxy] (utils::UUID uuid) {
         return proxy.local().get_db().invoke_on_all([uuid] (database& db) {
             db.update_version(uuid);
         }).then([uuid] {
@@ -1873,9 +1868,9 @@ future<> announce_schema_version(utils::UUID schema_version) {
     return service::get_local_migration_manager().passive_announce(schema_version);
 }
 
-future<> update_schema_version_and_announce(distributed<service::storage_proxy>& proxy)
+future<> update_schema_version_and_announce(distributed<service::storage_proxy>& proxy, schema_features features)
 {
-    return update_schema_version(proxy).then([] (utils::UUID uuid) {
+    return update_schema_version(proxy, features).then([] (utils::UUID uuid) {
         return announce_schema_version(uuid);
     });
 }

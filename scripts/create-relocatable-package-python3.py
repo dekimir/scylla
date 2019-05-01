@@ -157,7 +157,7 @@ def copy_file_to_python_env(ar, f):
             ar.add(os.path.realpath(f), arcname=libfile)
         else:
             m = magic.detect_from_filename(f)
-            if m and m.mime_type.startswith('application/'):
+            if m and (m.mime_type.startswith('application/x-sharedlib') or m.mime_type.startswith('application/x-pie-executable')):
                 fix_sharedlib(ar, f, libfile)
             else:
                 # in case this is a directory that is listed, we don't want to include everything that is in that directory
@@ -233,6 +233,7 @@ ar.add('build/SCYLLA-RELOCATABLE-FILE', arcname='SCYLLA-RELOCATABLE-FILE')
 ar.add('dist/redhat/python3')
 ar.add('build/python3/SCYLLA-RELEASE-FILE', arcname='SCYLLA-RELEASE-FILE')
 ar.add('build/python3/SCYLLA-VERSION-FILE', arcname='SCYLLA-VERSION-FILE')
+ar.add('build/SCYLLA-PRODUCT-FILE', arcname='SCYLLA-PRODUCT-FILE')
 
 for f in file_list:
     copy_file_to_python_env(ar, f)

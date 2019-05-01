@@ -191,7 +191,7 @@ future<> verification_error(fs::path path, const char* fstr, Args&&... args) {
 // and that files can be read and directories can be read, written, and looked up (execute)
 // No other file types may exist.
 future<> distributed_loader::verify_owner_and_mode(fs::path path) {
-    return file_stat(path.string()).then([path = std::move(path)] (stat_data sd) {
+    return file_stat(path.string(), follow_symlink::no).then([path = std::move(path)] (stat_data sd) {
         if (sd.uid != geteuid()) {
             return verification_error(std::move(path), "File not owned by current euid: {}. Owner is: {}", geteuid(), sd.uid);
         }
@@ -807,7 +807,7 @@ future<> distributed_loader::init_system_keyspace(distributed<database>& db) {
         const auto& cfg = db.local().get_config();
         for (auto& data_dir : cfg.data_file_directories()) {
             for (auto ksname : system_keyspaces) {
-                io_check(touch_directory, data_dir + "/" + ksname).get();
+                io_check([name = data_dir + "/" + ksname] { return touch_directory(name); }).get();
                 distributed_loader::populate_keyspace(db, data_dir, ksname).get();
             }
         }

@@ -83,6 +83,9 @@ void manager::register_metrics(const sstring& group_name) {
 
         sm::make_derive("discarded", _stats.discarded,
                         sm::description("Number of hints that were discarded during sending (too old, schema changed, etc.).")),
+
+        sm::make_derive("corrupted_files", _stats.corrupted_files,
+                        sm::description("Number of hints files that were discarded during sending because the file was corrupted.")),
     });
 }
 
@@ -307,7 +310,7 @@ future<db::commitlog> manager::end_point_hints_manager::add_store() noexcept {
     manager_logger.trace("Going to add a store to {}", _hints_dir.c_str());
 
     return futurize_apply([this] {
-        return io_check(recursive_touch_directory, _hints_dir.c_str()).then([this] () {
+        return io_check([name = _hints_dir.c_str()] { return recursive_touch_directory(name); }).then([this] () {
             commitlog::config cfg;
 
             cfg.commit_log_location = _hints_dir.c_str();
@@ -315,6 +318,10 @@ future<db::commitlog> manager::end_point_hints_manager::add_store() noexcept {
             cfg.commitlog_total_space_in_mb = resource_manager::max_hints_per_ep_size_mb;
             cfg.fname_prefix = manager::FILENAME_PREFIX;
             cfg.extensions = &_shard_manager.local_db().extensions();
+
+            // HH doesn't utilize the flow that benefits from reusing segments.
+            // Therefore let's simply disable it to avoid any possible confusion.
+            cfg.reuse_segments = false;
 
             return commitlog::create_commitlog(std::move(cfg)).then([this] (commitlog l) {
                 // add_store() is triggered every time hint files are forcefully flushed to I/O (every hints_flush_period).
@@ -725,6 +732,10 @@ bool manager::end_point_hints_manager::sender::send_one_file(const sstring& fnam
         }, _last_not_complete_rp.pos, &_db.extensions()).get0();
 
         s->done().get();
+    } catch (db::commitlog::segment_error& ex) {
+        manager_logger.error("{}: {}. Dropping...", fname, ex.what());
+        ctx_ptr->state.remove(send_state::segment_replay_failed);
+        ++this->shard_stats().corrupted_files;
     } catch (...) {
         manager_logger.trace("sending of {} failed: {}", fname, std::current_exception());
         ctx_ptr->state.set(send_state::segment_replay_failed);
@@ -910,7 +921,7 @@ void manager::rebalance_segments_for(
         std::list<fs::path>& current_shard_segments = ep_segments[i];
 
         // Make sure that the shard_path_dir exists and if not - create it
-        io_check(recursive_touch_directory, shard_path_dir.c_str()).get();
+        io_check([name = shard_path_dir.c_str()] { return recursive_touch_directory(name); }).get();
 
         while (current_shard_segments.size() < segments_per_shard && !segments_to_move.empty()) {
             auto seg_path_it = segments_to_move.begin();

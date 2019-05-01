@@ -41,6 +41,7 @@
 #include "db/schema_tables.hh"
 
 #include "service/migration_manager.hh"
+#include "service/storage_service.hh"
 #include "partition_slice_builder.hh"
 #include "dht/i_partitioner.hh"
 #include "system_keyspace.hh"
@@ -70,6 +71,7 @@
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/range/algorithm/copy.hpp>
 #include <boost/range/algorithm/transform.hpp>
+#include <boost/range/adaptor/indirected.hpp>
 #include <boost/range/adaptor/map.hpp>
 #include <boost/range/join.hpp>
 
@@ -148,8 +150,8 @@ struct user_types_to_drop final {
 };
 
 [[nodiscard]] static user_types_to_drop merge_types(distributed<service::storage_proxy>& proxy,
-    schema_result&& before,
-    schema_result&& after);
+    schema_result before,
+    schema_result after);
 
 static future<> do_merge_schema(distributed<service::storage_proxy>&, std::vector<mutation>, bool do_flush);
 
@@ -196,7 +198,7 @@ future<> save_system_schema(const sstring & ksname) {
     auto ksm = ks.metadata();
 
     // delete old, possibly obsolete entries in schema tables
-    return parallel_for_each(all_table_names(), [ksm] (sstring cf) {
+    return parallel_for_each(all_table_names(schema_features::full()), [ksm] (sstring cf) {
         auto deletion_timestamp = schema_creation_timestamp() - 1;
         return db::execute_cql(format("DELETE FROM {}.{} USING TIMESTAMP {} WHERE keyspace_name = ?", NAME, cf,
             deletion_timestamp), ksm->name()).discard_result();
@@ -568,7 +570,7 @@ schema_ptr aggregates() {
  * Read schema from system keyspace and calculate MD5 digest of every row, resulting digest
  * will be converted into UUID which would act as content-based version of the schema.
  */
-future<utils::UUID> calculate_schema_digest(distributed<service::storage_proxy>& proxy)
+future<utils::UUID> calculate_schema_digest(distributed<service::storage_proxy>& proxy, schema_features features)
 {
     auto map = [&proxy] (sstring table) {
         return db::system_keyspace::query_mutations(proxy, NAME, table).then([&proxy, table] (auto rs) {
@@ -590,8 +592,8 @@ future<utils::UUID> calculate_schema_digest(distributed<service::storage_proxy>&
             feed_hash_for_schema_digest(hash, m);
         }
     };
-    return do_with(md5_hasher(), [map, reduce] (auto& hash) {
-        return do_for_each(all_table_names(), [&hash, map, reduce] (auto& table) {
+    return do_with(md5_hasher(), all_table_names(features), [features, map, reduce] (auto& hash, auto& tables) {
+        return do_for_each(tables, [&hash, map, reduce] (auto& table) {
             return map(table).then([&hash, reduce] (auto&& mutations) {
                 reduce(hash, mutations);
             });
@@ -601,7 +603,7 @@ future<utils::UUID> calculate_schema_digest(distributed<service::storage_proxy>&
     });
 }
 
-future<std::vector<frozen_mutation>> convert_schema_to_mutations(distributed<service::storage_proxy>& proxy)
+future<std::vector<frozen_mutation>> convert_schema_to_mutations(distributed<service::storage_proxy>& proxy, schema_features features)
 {
     auto map = [&proxy] (sstring table) {
         return db::system_keyspace::query_mutations(proxy, NAME, table).then([&proxy, table] (auto rs) {
@@ -622,13 +624,12 @@ future<std::vector<frozen_mutation>> convert_schema_to_mutations(distributed<ser
         std::move(mutations.begin(), mutations.end(), std::back_inserter(result));
         return std::move(result);
     };
-    return map_reduce(all_table_names(), map, std::vector<frozen_mutation>{}, reduce);
+    return map_reduce(all_table_names(features), map, std::vector<frozen_mutation>{}, reduce);
 }
 
 future<schema_result>
 read_schema_for_keyspaces(distributed<service::storage_proxy>& proxy, const sstring& schema_table_name, const std::set<sstring>& keyspace_names)
 {
-    auto schema = proxy.local().get_db().local().find_schema(NAME, schema_table_name);
     auto map = [&proxy, schema_table_name] (const sstring& keyspace_name) { return read_schema_partition_for_keyspace(proxy, schema_table_name, keyspace_name); };
     auto insert = [] (schema_result&& result, auto&& schema_entity) {
         if (!schema_entity.second->empty()) {
@@ -696,33 +697,7 @@ read_keyspace_mutation(distributed<service::storage_proxy>& proxy, const sstring
 static semaphore the_merge_lock {1};
 
 future<> merge_lock() {
-    // ref:  #1088
-    // to avoid deadlocks, we don't want long-standing calls to the shard 0
-    // as they can cause a deadlock:
-    //
-    //   fiber1                fiber2
-    //   merge_lock()                         (succeeds)
-    //                         merge_lock()   (waits)
-    //   invoke_on_all()                      (waits on merge_lock to relinquish smp::submit_to slot)
-    //
-    // so we issue the lock calls with a timeout; the slot will be relinquished, and invoke_on_all()
-    // can complete
-    return repeat([] () mutable {
-        return smp::submit_to(0, [] {
-            return the_merge_lock.try_wait();
-        }).then([] (bool result) {
-            if (result) {
-                return make_ready_future<stop_iteration>(stop_iteration::yes);
-            } else {
-                static thread_local auto rand_engine = std::default_random_engine();
-                auto dist = std::uniform_int_distribution<int>(0, 100);
-                auto to = std::chrono::microseconds(dist(rand_engine));
-                return sleep(to).then([] {
-                    return make_ready_future<stop_iteration>(stop_iteration::no);
-                });
-            }
-        });
-    });
+    return smp::submit_to(0, [] { return the_merge_lock.wait(); });
 }
 
 future<> merge_unlock() {
@@ -738,11 +713,11 @@ future<> merge_unlock() {
  * @throws ConfigurationException If one of metadata attributes has invalid value
  * @throws IOException If data was corrupted during transportation or failed to apply fs operations
  */
-future<> merge_schema(distributed<service::storage_proxy>& proxy, std::vector<mutation> mutations)
+future<> merge_schema(service::storage_service& ss, distributed<service::storage_proxy>& proxy, std::vector<mutation> mutations)
 {
-    return merge_lock().then([&proxy, mutations = std::move(mutations)] () mutable {
-        return do_merge_schema(proxy, std::move(mutations), true).then([&proxy] {
-            return update_schema_version_and_announce(proxy);
+    return merge_lock().then([&ss, &proxy, mutations = std::move(mutations)] () mutable {
+        return do_merge_schema(proxy, std::move(mutations), true).then([&ss, &proxy] {
+            return update_schema_version_and_announce(proxy, ss.cluster_schema_features());
         });
     }).finally([] {
         return merge_unlock();
@@ -1034,81 +1009,138 @@ static void merge_tables_and_views(distributed<service::storage_proxy>& proxy,
     }).get();
 }
 
-struct naked_user_type {
-    const sstring keyspace;
-    const sstring qualified_name;
+static std::vector<const query::result_set_row*> collect_rows(const std::set<sstring>& keys, const schema_result& result) {
+    std::vector<const query::result_set_row*> ret;
+    for (const auto& key : keys) {
+        for (const auto& row : result.find(key)->second->rows()) {
+            ret.push_back(&row);
+        }
+    }
+    return ret;
+}
+
+// Build a map from primary keys to rows.
+static std::map<std::vector<bytes>, const query::result_set_row*> build_row_map(const query::result_set& result) {
+    const std::vector<query::result_set_row>& rows = result.rows();
+    const schema_ptr& schema = result.schema();
+    std::vector<column_definition> primary_key;
+    for (const auto& column : schema->partition_key_columns()) {
+        primary_key.push_back(column);
+    }
+    for (const auto& column : schema->clustering_key_columns()) {
+        primary_key.push_back(column);
+    }
+    std::map<std::vector<bytes>, const query::result_set_row*> ret;
+    for (const auto& row: rows) {
+        std::vector<bytes> key;
+        for (const auto& column : primary_key) {
+            const data_value *val = row.get_data_value(column.name_as_text());
+            key.push_back(val->serialize());
+        }
+        ret.insert(std::pair(std::move(key), &row));
+    }
+    return ret;
+}
+
+struct row_diff {
+    std::vector<const query::result_set_row*> altered;
+    std::vector<const query::result_set_row*> created;
+    std::vector<const query::result_set_row*> dropped;
 };
 
-static inline void collect_types(std::set<sstring>& keys, schema_result& result, std::vector<naked_user_type>& to)
-{
-    for (auto&& key : keys) {
-        auto&& value = result[key];
-        auto types = create_types_from_schema_partition(schema_result_value_type{key, std::move(value)});
-        boost::transform(types, std::back_inserter(to), [] (user_type type) {
-            return naked_user_type{std::move(type->_keyspace), std::move(type->name())};
-        });
+// Compute which rows have been created, dropped or altered.
+// A row is identified by its primary key.
+// In the output, all entries of a given keyspace are together.
+static row_diff diff_rows(
+        distributed<service::storage_proxy>& proxy, const schema_result& before, const schema_result& after) {
+    auto diff = difference(before, after, indirect_equal_to<lw_shared_ptr<query::result_set>>());
+
+    // For new or empty keyspaces, just record each row.
+    auto dropped = collect_rows(diff.entries_only_on_left, before); // Keyspaces now without rows
+    auto created = collect_rows(diff.entries_only_on_right, after); // New keyspaces with rows
+    std::vector<const query::result_set_row*> altered;
+
+    for (const auto& key : diff.entries_differing) {
+        // For each keyspace that changed, compute the difference of the corresponding result_set to find which rows
+        // have changed.
+        auto before_rows = build_row_map(*before.find(key)->second);
+        auto after_rows = build_row_map(*after.find(key)->second);
+        auto diff_row = difference(before_rows, after_rows, indirect_equal_to<const query::result_set_row*>());
+        for (const auto& key : diff_row.entries_only_on_left) {
+            dropped.push_back(before_rows.find(key)->second);
+        }
+        for (const auto& key : diff_row.entries_only_on_right) {
+            created.push_back(after_rows.find(key)->second);
+        }
+        for (const auto& key : diff_row.entries_differing) {
+            altered.push_back(after_rows.find(key)->second);
+        }
     }
+    return {std::move(altered), std::move(created), std::move(dropped)};
+}
+
+template<typename V>
+static std::vector<V> get_list(const query::result_set_row& row, const sstring& name);
+
+// Create types for a given keyspace. This takes care of topologically sorting user defined types.
+template <typename T> static std::vector<user_type> create_types(keyspace_metadata& ks, T&& range) {
+    cql_type_parser::raw_builder builder(ks);
+    for (const query::result_set_row& row : range) {
+        builder.add(row.get_nonnull<sstring>("type_name"),
+                        get_list<sstring>(row, "field_names"),
+                        get_list<sstring>(row, "field_types"));
+    }
+    return builder.build();
+}
+
+// Given a set of rows that is sorted by keyspace, create types for each keyspace.
+// The topological sort in each keyspace is necessary when creating types, since we can only create a type when the
+// types it reference have already been created.
+static std::vector<user_type> create_types(database& db, const std::vector<const query::result_set_row*>& rows) {
+    std::vector<user_type> ret;
+    for (auto i = rows.begin(), e = rows.end(); i != e;) {
+        const auto &row = *i;
+        auto keyspace = row->get_nonnull<sstring>("keyspace_name");
+        auto next = std::find_if(i, e, [&keyspace](const query::result_set_row* r) {
+            return r->get_nonnull<sstring>("keyspace_name") != keyspace;
+        });
+        auto ks = db.find_keyspace(keyspace).metadata();
+        auto v = create_types(*ks, boost::make_iterator_range(i, next) | boost::adaptors::indirected);
+        ret.insert(ret.end(), std::make_move_iterator(v.begin()), std::make_move_iterator(v.end()));
+        i = next;
+    }
+    return ret;
 }
 
 // see the comments for merge_keyspaces()
-[[nodiscard]] static user_types_to_drop merge_types(distributed<service::storage_proxy>& proxy, schema_result&& before, schema_result&& after)
+[[nodiscard]] static user_types_to_drop merge_types(distributed<service::storage_proxy>& proxy, schema_result before, schema_result after)
 {
-    std::vector<naked_user_type> created, altered, dropped;
-
-    auto diff = difference(before, after, indirect_equal_to<lw_shared_ptr<query::result_set>>());
-
-    collect_types(diff.entries_only_on_left, before, dropped); // Keyspaces with no more types
-    collect_types(diff.entries_only_on_right, after, created); // New keyspaces with types
-
-    for (auto&& keyspace : diff.entries_differing) {
-        // The user types of this keyspace differ, so diff the current types with the updated ones
-        auto current_types = proxy.local().get_db().local().find_keyspace(keyspace).metadata()->user_types()->get_all_types();
-        decltype(current_types) updated_types;
-        auto ts = create_types_from_schema_partition(schema_result_value_type{keyspace, std::move(after[keyspace])});
-        updated_types.reserve(ts.size());
-        for (auto&& type : ts) {
-            updated_types[type->_name] = std::move(type);
-        }
-
-        auto delta = difference(current_types, updated_types, indirect_equal_to<user_type>());
-
-        for (auto&& type_name : delta.entries_only_on_left) {
-            dropped.emplace_back(naked_user_type{keyspace, current_types[type_name]->name()});
-        }
-        for (auto&& type_name : delta.entries_only_on_right) {
-            created.emplace_back(naked_user_type{keyspace, updated_types[type_name]->name()});
-        }
-        for (auto&& type_name : delta.entries_differing) {
-            altered.emplace_back(naked_user_type{keyspace, updated_types[type_name]->name()});
-        }
-    }
+    auto diff = diff_rows(proxy, before, after);
 
     // Create and update user types before any tables/views are created that potentially
     // use those types. Similarly, defer dropping until after tables/views that may use
     // some of these user types are dropped.
 
-    proxy.local().get_db().invoke_on_all([&created, &altered] (database& db) {
+    proxy.local().get_db().invoke_on_all([&diff] (database& db) {
         return seastar::async([&] {
-            for (auto&& type : created) {
-                auto user_type = dynamic_pointer_cast<const user_type_impl>(parse_type(type.qualified_name));
+            for (auto&& user_type : create_types(db, diff.created)) {
                 db.find_keyspace(user_type->_keyspace).add_user_type(user_type);
                 service::get_local_migration_manager().notify_create_user_type(user_type).get();
             }
-            for (auto&& type : altered) {
-                auto user_type = dynamic_pointer_cast<const user_type_impl>(parse_type(type.qualified_name));
+            for (auto&& user_type : create_types(db, diff.altered)) {
                 db.find_keyspace(user_type->_keyspace).add_user_type(user_type);
                 service::get_local_migration_manager().notify_update_user_type(user_type).get();
             }
         });
     }).get();
 
-    return user_types_to_drop{[&proxy, dropped = std::move(dropped)] {
-        proxy.local().get_db().invoke_on_all([dropped = std::move(dropped)](database& db) {
-            return do_for_each(dropped, [&db](auto& user_type_to_drop) {
-                auto user_type = dynamic_pointer_cast<const user_type_impl>(
-                        parse_type(std::move(user_type_to_drop.qualified_name)));
-                db.find_keyspace(user_type->_keyspace).remove_user_type(user_type);
-                return service::get_local_migration_manager().notify_drop_user_type(user_type);
+    return user_types_to_drop{[&proxy, before = std::move(before), rows = std::move(diff.dropped)] () mutable {
+        proxy.local().get_db().invoke_on_all([&rows](database& db) {
+            return do_with(create_types(db, rows), [&db] (auto &dropped) {
+                return do_for_each(dropped, [&db](auto& user_type) {
+                    db.find_keyspace(user_type->_keyspace).remove_user_type(user_type);
+                    return service::get_local_migration_manager().notify_drop_user_type(user_type);
+                });
             });
         }).get();
     }};
@@ -1315,7 +1347,7 @@ std::vector<mutation> make_create_keyspace_mutations(lw_shared_ptr<keyspace_meta
 std::vector<mutation> make_drop_keyspace_mutations(lw_shared_ptr<keyspace_metadata> keyspace, api::timestamp_type timestamp)
 {
     std::vector<mutation> mutations;
-    for (auto&& schema_table : all_tables()) {
+    for (auto&& schema_table : all_tables(schema_features::full())) {
         auto pkey = partition_key::from_exploded(*schema_table, {utf8_type->decompose(keyspace->name())});
         mutation m{schema_table, pkey};
         m.partition().apply(tombstone{timestamp, gc_clock::now()});
@@ -1345,7 +1377,7 @@ lw_shared_ptr<keyspace_metadata> create_keyspace_from_schema_partition(const sch
     // We get called from multiple shards with result set originating on only one of them.
     // Cannot use copying accessors for "deep" types like map, because we will hit shared_ptr asserts
     // (or screw up shared pointers)
-    const auto& replication = value_cast<map_type_impl::native_type>(row.get_data_value("replication"));
+    const auto& replication = row.get_nonnull<map_type_impl::native_type>("replication");
 
     std::map<sstring, sstring> strategy_options;
     for (auto& p : replication) {
@@ -1358,15 +1390,15 @@ lw_shared_ptr<keyspace_metadata> create_keyspace_from_schema_partition(const sch
 }
 
 template<typename K, typename V>
-static std::map<K, V> get_map(const query::result_set_row& row, const sstring& name) {
-    std::map<K, V> map;
-
-    auto values = row.get_nonnull<map_type_impl::native_type>(name);
-    for (auto&& entry : values) {
-        map.emplace(value_cast<K>(entry.first), value_cast<V>(entry.second));
-    };
-
-    return map;
+static std::optional<std::map<K, V>> get_map(const query::result_set_row& row, const sstring& name) {
+    if (auto values = row.get<map_type_impl::native_type>(name)) {
+        std::map<K, V> map;
+        for (auto&& entry : *values) {
+            map.emplace(value_cast<K>(entry.first), value_cast<V>(entry.second));
+        };
+        return map;
+    }
+    return std::nullopt;
 }
 
 template<typename V>
@@ -1381,15 +1413,9 @@ static std::vector<V> get_list(const query::result_set_row& row, const sstring& 
     return list;
 }
 
-std::vector<user_type> create_types_from_schema_partition(const schema_result_value_type& result)
-{
-    cql_type_parser::raw_builder builder(result.first);
-    for (auto&& row : result.second->rows()) {
-        builder.add(row.get_nonnull<sstring>("type_name"),
-                        get_list<sstring>(row, "field_names"),
-                        get_list<sstring>(row, "field_types"));
-    }
-    return builder.build();
+std::vector<user_type> create_types_from_schema_partition(
+        keyspace_metadata& ks, lw_shared_ptr<query::result_set> result) {
+    return create_types(ks, result->rows());
 }
 
 /*
@@ -1900,24 +1926,22 @@ static future<schema_ptr> create_table_from_table_row(distributed<service::stora
 static void prepare_builder_from_table_row(const schema_ctxt& ctxt, schema_builder& builder, const query::result_set_row& table_row)
 {
     // These row reads have been purposefully reordered to match the origin counterpart. For easier matching.
-    if (table_row.has("bloom_filter_fp_chance")) {
-        builder.set_bloom_filter_fp_chance(table_row.get_nonnull<double>("bloom_filter_fp_chance"));
+    if (auto val = table_row.get<double>("bloom_filter_fp_chance")) {
+        builder.set_bloom_filter_fp_chance(*val);
     } else {
         builder.set_bloom_filter_fp_chance(builder.get_bloom_filter_fp_chance());
     }
 
-    if (table_row.has("caching")) {
-        auto map = get_map<sstring, sstring>(table_row, "caching");
-        builder.set_caching_options(caching_options::from_map(map));
+    if (auto map = get_map<sstring, sstring>(table_row, "caching")) {
+        builder.set_caching_options(caching_options::from_map(*map));
     }
 
-    if (table_row.has("comment")) {
-        builder.set_comment(table_row.get_nonnull<sstring>("comment"));
+    if (auto val = table_row.get<sstring>("comment")) {
+        builder.set_comment(*val);
     }
 
-    if (table_row.has("compaction")) {
-        auto map = get_map<sstring, sstring>(table_row, "compaction");
-
+    if (auto opt_map = get_map<sstring, sstring>(table_row, "compaction")) {
+        auto &map = *opt_map;
         auto i = map.find("class");
         if (i != map.end()) {
             try {
@@ -1942,22 +1966,21 @@ static void prepare_builder_from_table_row(const schema_ctxt& ctxt, schema_build
         builder.set_compaction_strategy_options(map);
     }
 
-    if (table_row.has("compression")) {
-        auto map = get_map<sstring, sstring>(table_row, "compression");
-        compression_parameters cp(map);
+    if (auto map = get_map<sstring, sstring>(table_row, "compression")) {
+        compression_parameters cp(*map);
         builder.set_compressor_params(cp);
     }
 
-    if (table_row.has("dclocal_read_repair_chance")) {
-        builder.set_dc_local_read_repair_chance(table_row.get_nonnull<double>("dclocal_read_repair_chance"));
+    if (auto val = table_row.get<double>("dclocal_read_repair_chance")) {
+        builder.set_dc_local_read_repair_chance(*val);
     }
 
-    if (table_row.has("default_time_to_live")) {
-        builder.set_default_time_to_live(gc_clock::duration(table_row.get_nonnull<int32_t>("default_time_to_live")));
+    if (auto val = table_row.get<int32_t>("default_time_to_live")) {
+        builder.set_default_time_to_live(gc_clock::duration(*val));
     }
 
-    if (table_row.has("extensions")) {
-        auto map = get_map<sstring, bytes>(table_row, "extensions");
+    if (auto val = get_map<sstring, bytes>(table_row, "extensions")) {
+        auto &map = *val;
         schema::extensions_map result;
         auto& exts = ctxt.extensions().schema_extensions();
         for (auto&p : map) {
@@ -1994,32 +2017,32 @@ static void prepare_builder_from_table_row(const schema_ctxt& ctxt, schema_build
         builder.set_extensions(std::move(result));
     }
 
-    if (table_row.has("gc_grace_seconds")) {
-        builder.set_gc_grace_seconds(table_row.get_nonnull<int32_t>("gc_grace_seconds"));
+    if (auto val = table_row.get<int32_t>("gc_grace_seconds")) {
+        builder.set_gc_grace_seconds(*val);
     }
 
-    if (table_row.has("min_index_interval")) {
-        builder.set_min_index_interval(table_row.get_nonnull<int>("min_index_interval"));
+    if (auto val = table_row.get<int>("min_index_interval")) {
+        builder.set_min_index_interval(*val);
     }
 
-    if (table_row.has("memtable_flush_period_in_ms")) {
-        builder.set_memtable_flush_period(table_row.get_nonnull<int32_t>("memtable_flush_period_in_ms"));
+    if (auto val = table_row.get<int32_t>("memtable_flush_period_in_ms")) {
+        builder.set_memtable_flush_period(*val);
     }
 
-    if (table_row.has("max_index_interval")) {
-        builder.set_max_index_interval(table_row.get_nonnull<int>("max_index_interval"));
+    if (auto val = table_row.get<int>("max_index_interval")) {
+        builder.set_max_index_interval(*val);
     }
 
-    if (table_row.has("read_repair_chance")) {
-        builder.set_read_repair_chance(table_row.get_nonnull<double>("read_repair_chance"));
+    if (auto val = table_row.get<double>("read_repair_chance")) {
+        builder.set_read_repair_chance(*val);
     }
 
-    if (table_row.has("crc_check_chance")) {
-        builder.set_crc_check_chance(table_row.get_nonnull<double>("crc_check_chance"));
+    if (auto val = table_row.get<double>("crc_check_chance")) {
+        builder.set_crc_check_chance(*val);
     }
 
-    if (table_row.has("speculative_retry")) {
-        builder.set_speculative_retry(table_row.get_nonnull<sstring>("speculative_retry"));
+    if (auto val = table_row.get<sstring>("speculative_retry")) {
+        builder.set_speculative_retry(*val);
     }
 }
 
@@ -2234,8 +2257,8 @@ static std::vector<column_definition> create_columns_from_column_rows(const quer
         auto name_bytes = row.get_nonnull<bytes>("column_name_bytes");
         column_id position = row.get_nonnull<int32_t>("position");
 
-        if (row.has("clustering_order")) {
-            auto order = row.get_nonnull<sstring>("clustering_order");
+        if (auto val = row.get<sstring>("clustering_order")) {
+            auto order = *val;
             std::transform(order.begin(), order.end(), order.begin(), ::toupper);
             if (order == "DESC") {
                 type = reversed_type_impl::get_instance(type);
@@ -2678,21 +2701,26 @@ data_type parse_type(sstring str)
     return db::marshal::type_parser::parse(str);
 }
 
-std::vector<schema_ptr> all_tables() {
+std::vector<schema_ptr> all_tables(schema_features features) {
     // Don't forget to update this list when new schema tables are added.
     // The listed schema tables are the ones synchronized between nodes,
     // and forgetting one of them in this list can cause bugs like #4339.
-    return {
+    //
+    // This list must be kept backwards-compatible because it's used
+    // for schema digest calculation. Refs #4457.
+    std::vector<schema_ptr> result = {
         keyspaces(), tables(), scylla_tables(), columns(), dropped_columns(), triggers(),
-        views(), indexes(), types(), functions(), aggregates(), view_virtual_columns()
+        views(), types(), functions(), aggregates(), indexes()
     };
+    if (features.contains<schema_feature::VIEW_VIRTUAL_COLUMNS>()) {
+        result.emplace_back(view_virtual_columns());
+    }
+    return result;
 }
 
-const std::vector<sstring>& all_table_names() {
-    static thread_local std::vector<sstring> all =
-            boost::copy_range<std::vector<sstring>>(all_tables() |
-            boost::adaptors::transformed([] (auto schema) { return schema->cf_name(); }));
-    return all;
+std::vector<sstring> all_table_names(schema_features features) {
+    return boost::copy_range<std::vector<sstring>>(all_tables(features) |
+           boost::adaptors::transformed([] (auto schema) { return schema->cf_name(); }));
 }
 
 namespace legacy {
