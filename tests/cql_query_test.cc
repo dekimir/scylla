@@ -3614,6 +3614,15 @@ SEASTAR_TEST_CASE(test_group_by_text_key) {
                      {{I(310), T("ab"), T("cd")}, {I(420), T("abc"), T("d")}});
         require_rows(e, "select sum(v) from t where p='123456789012345678901234567890123' group by c",
                      {{I(100), T("1")}, {I(200), T("2")}, {I(300), T("3")}});
+        equery(e, "create table t2 (p text, c1 text, c2 text, v int, primary key(p, c1, c2))");
+        equery(e, "insert into t2 (p, c1, c2, v) values (' ', '', '', 10)");
+        equery(e, "insert into t2 (p, c1, c2, v) values (' ', '', 'b', 20)");
+        equery(e, "insert into t2 (p, c1, c2, v) values (' ', 'a', '', 30)");
+        equery(e, "insert into t2 (p, c1, c2, v) values (' ', 'a', 'b', 40)");
+        require_rows(e, "select avg(v) from t2 group by p", {{I(25), T(" ")}});
+        require_rows(e, "select avg(v) from t2 group by p, c1", {{I(15), T(" "), T("")}, {I(35), T(" "), T("a")}});
+        require_rows(e, "select sum(v) from t2 where c1='' group by p, c2 allow filtering",
+                     {{I(10), T(" "), T("")}, {I(20), T(" "), T("b")}});
         return make_ready_future<>();
     });
 }
