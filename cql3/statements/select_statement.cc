@@ -319,7 +319,7 @@ select_statement::do_execute(service::storage_proxy& proxy,
     // If we user provided a page_size we'll use that to page internally (because why not), otherwise we use our default
     // Note that if there are some nodes in the cluster with a version less than 2.0, we can't use paging (CASSANDRA-6707).
     // Also note: all GROUP BY queries are considered aggregation.
-    const bool aggregate = _selection->is_aggregate() || (_group_by_cell_indices && !_group_by_cell_indices->empty());
+    const bool aggregate = _selection->is_aggregate() || has_group_by();
     const bool nonpaged_filtering = restrictions_need_filtering && page_size <= 0;
     if (aggregate || nonpaged_filtering) {
         page_size = DEFAULT_COUNT_PAGE_SIZE;
