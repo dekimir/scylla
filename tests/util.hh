@@ -41,7 +41,7 @@ inline auto make(std::function<bool(const std::exception&)> check,
 }
 
 /// Returns a predicate that will check if the exception message contains the given fragment.
-auto message_contains(
+inline auto message_contains(
         const sstring& fragment,
         const std::experimental::source_location& loc = std::experimental::source_location::current()) {
     return make([=](const auto& e) { return sstring(e.what()).find(fragment) != sstring::npos; },
