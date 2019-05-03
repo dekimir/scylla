@@ -3627,7 +3627,7 @@ SEASTAR_TEST_CASE(test_group_by_text_key) {
     });
 }
 
-SEASTAR_TEST_CASE(test_group_by_simple) {
+SEASTAR_TEST_CASE(test_group_by_non_aggregate) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
         equery(e, "create table t (p int, c int, n int, primary key(p, c))");
         equery(e, "insert into t (p, c, n) values (1, 1, 11)");
