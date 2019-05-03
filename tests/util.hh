@@ -21,53 +21,45 @@
 
 #pragma once
 
+#include <experimental/source_location>
 #include <fmt/format.h>
-#include <functional>
-#include <iostream>
 #include <seastar/core/sstring.hh>
 
 #include "exceptions/exceptions.hh"
 
-/// Returns a predicate that takes an exception and applies f to its message.
-///
-/// If f returns true, the predicate also returns true.  But if f returns false, the predicate
-/// outputs the exception message into the test log before itself returning false.  This is handy
-/// when passing the predicate to, eg, BOOST_REQUIRE_EXCEPTION:
-///
-/// \code
-/// BOOST_REQUIRE_EXCEPTION(
-///     some_code,
-///     exception_class,
-///     make_predicate_on_exception_message(make_contains_predicate("something")));
-/// \endcode
-///
-/// See also REQUIRE_EXCEPTION below.
-template <typename Exception>
-auto make_predicate_on_exception_message(std::function<bool(const sstring&)> f) {
-    return [f = std::move(f)](const Exception& e) {
-        const auto& msg = e.what();
-        const bool success = f(msg);
-        BOOST_CHECK_MESSAGE(success, fmt::format("Exception message was: {}", msg));
-        return success;
-    };
+namespace exception_predicate {
+
+/// Makes an exception predicate that applies \p check function to verify the exception and \p err
+/// function to create an error message if the check fails.
+inline auto make(std::function<bool(const std::exception&)> check,
+                 std::function<sstring(const std::exception&)> err) {
+    return [check = std::move(check), err = std::move(err)](const std::exception& e) {
+               const bool status = check(e);
+               BOOST_CHECK_MESSAGE(status, err(e));
+               return status;
+           };
 }
 
-/// Returns a predicate that will check if a string contains the given fragment.
-inline auto make_contains_predicate(const sstring& fragment) {
-    return [=](const sstring& str) { return str.find(fragment) != sstring::npos; };
+/// Returns a predicate that will check if the exception message contains the given fragment.
+auto message_contains(
+        const sstring& fragment,
+        const std::experimental::source_location& loc = std::experimental::source_location::current()) {
+    return make([=](const auto& e) { return sstring(e.what()).find(fragment) != sstring::npos; },
+                [=](const auto& e) {
+                    return fmt::format("Message '{}' doesn't contain '{}'\n{}:{}: invoked here",
+                                       e.what(), fragment, loc.file_name(), loc.line());
+                });
 }
 
-/// Returns a predicate that will check if a string equals the given text.
-inline auto make_equals_predicate(const sstring& text) {
-    return [=](const sstring& str) { return str == text; };
+/// Returns a predicate that will check if the exception message equals the given text.
+inline auto message_equals(
+        const sstring& text,
+        const std::experimental::source_location& loc = std::experimental::source_location::current()) {
+    return make([=](const auto& e) { return text == e.what(); },
+                [=](const auto& e) {
+                    return fmt::format("Message '{}' doesn't equal '{}'\n{}:{}: invoked here",
+                                       e.what(), text, loc.file_name(), loc.line());
+                });
 }
 
-/// Like BOOST_REQUIRE_EXCEPTION, but also checks that the exception's message exactly equals \c message.
-#define REQUIRE_EXCEPTION(expression, exception_type, message) \
-    BOOST_REQUIRE_EXCEPTION(expression, exception_type,        \
-        make_predicate_on_exception_message<exception_type>(make_equals_predicate(message)))
-
-/// Like BOOST_REQUIRE_EXCEPTION, but also checks that the exception's message contains \c fragment.
-#define REQUIRE_EXCEPTION_F(expression, exception_type, fragment) \
-    BOOST_REQUIRE_EXCEPTION(expression, exception_type,           \
-        make_predicate_on_exception_message<exception_type>(make_contains_predicate(fragment)))
+} // namespace exception_predicate

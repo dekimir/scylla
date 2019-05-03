@@ -103,12 +103,13 @@ SEASTAR_TEST_CASE(test_explicit_type_casting_in_avg_function_double) {
 SEASTAR_TEST_CASE(test_unsupported_conversions) {
     return do_with_cql_env_thread([&] (auto& e) {
         using ire = exceptions::invalid_request_exception;
+        using exception_predicate::message_contains;
         e.execute_cql("CREATE TABLE air_quality_data_text (sensor_id text, time timestamp, co_ppm text, PRIMARY KEY (sensor_id, time));").get();
-        REQUIRE_EXCEPTION(e.execute_cql("select CAST(co_ppm AS int) from air_quality_data_text").get(), ire,
-            "org.apache.cassandra.db.marshal.UTF8Type cannot be cast to org.apache.cassandra.db.marshal.Int32Type");
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select CAST(co_ppm AS int) from air_quality_data_text").get(), ire,
+            message_contains("UTF8Type cannot be cast to org.apache.cassandra.db.marshal.Int32Type"));
         e.execute_cql("CREATE TABLE air_quality_data_ascii (sensor_id text, time timestamp, co_ppm ascii, PRIMARY KEY (sensor_id, time));").get();
-        REQUIRE_EXCEPTION(e.execute_cql("select CAST(co_ppm AS int) from air_quality_data_ascii").get(), ire,
-            "org.apache.cassandra.db.marshal.AsciiType cannot be cast to org.apache.cassandra.db.marshal.Int32Type");
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("select CAST(co_ppm AS int) from air_quality_data_ascii").get(), ire,
+            message_contains("AsciiType cannot be cast to org.apache.cassandra.db.marshal.Int32Type"));
     });
 }
 

@@ -1262,6 +1262,8 @@ SEASTAR_THREAD_TEST_CASE(test_uncompressed_static_row_read) {
 // INSERT INTO test_ks.test_table(pk, ck, v) VALUES(2, 20, 200);
 // INSERT INTO test_ks.test_table(pk, ck, v) VALUES(3, 30, 300);
 
+using exception_predicate::message_equals;
+
 SEASTAR_THREAD_TEST_CASE(test_uncompressed_random_partitioner) {
     auto abj = defer([] { await_background_jobs().get(); });
     const sstring uncompressed_random_partitioner_path =
@@ -1277,7 +1279,10 @@ SEASTAR_THREAD_TEST_CASE(test_uncompressed_random_partitioner) {
     sstable_assertions sst(uncompressed_random_partitioner_schema,
                            uncompressed_random_partitioner_path);
     using namespace std::string_literals;
-    REQUIRE_EXCEPTION(sst.load(), std::runtime_error, "SSTable tests/sstables/3.x/uncompressed/random_partitioner/mc-1-big-Data.db uses org.apache.cassandra.dht.RandomPartitioner partitioner which is different than org.apache.cassandra.dht.Murmur3Partitioner partitioner used by the database"s);
+    BOOST_REQUIRE_EXCEPTION(sst.load(), std::runtime_error,
+        message_equals("SSTable tests/sstables/3.x/uncompressed/random_partitioner/mc-1-big-Data.db uses "
+                       "org.apache.cassandra.dht.RandomPartitioner partitioner which is different than "
+                       "org.apache.cassandra.dht.Murmur3Partitioner partitioner used by the database"s));
 }
 // Following tests run on files in tests/sstables/3.x/uncompressed/compound_static_row
 // They were created using following CQL statements:
@@ -4983,7 +4988,7 @@ SEASTAR_THREAD_TEST_CASE(test_sstable_reader_on_unknown_column) {
         sst->write_components(mt->make_flat_reader(write_schema), 1, write_schema, cfg, mt->get_encoding_stats()).get();
         sst->load().get();
 
-        REQUIRE_EXCEPTION(
+        BOOST_REQUIRE_EXCEPTION(
             assert_that(sst->read_rows_flat(read_schema))
                 .produces_partition_start(dk)
                 .produces_row(to_ck(0), {{val2_cdef, int32_type->decompose(int32_t(200))}})
@@ -4992,7 +4997,7 @@ SEASTAR_THREAD_TEST_CASE(test_sstable_reader_on_unknown_column) {
                 .produces_partition_end()
                 .produces_end_of_stream(),
             std::exception,
-            "Column val1 missing in current schema in sstable " + sst->get_filename());
+            message_equals("Column val1 missing in current schema in sstable " + sst->get_filename()));
     }
 }
 

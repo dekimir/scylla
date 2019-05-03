@@ -69,8 +69,8 @@ SEASTAR_THREAD_TEST_CASE(test_empty_index) {
     sstable_ptr sstp = std::get<0>(env.reusable_sst(s, "tests/sstables/empty_index", 36, sstable_version_types::mc).get());
     sstp->load().get();
     auto fut = sstables::test(sstp).read_indexes();
-    REQUIRE_EXCEPTION(fut.get(), malformed_sstable_exception,
-            "missing index entry in sstable tests/sstables/empty_index/mc-36-big-Index.db");
+    BOOST_REQUIRE_EXCEPTION(fut.get(), malformed_sstable_exception, exception_predicate::message_equals(
+        "missing index entry in sstable tests/sstables/empty_index/mc-36-big-Index.db"));
 }
 
 SEASTAR_THREAD_TEST_CASE(missing_column_in_schema) {
