@@ -3643,3 +3643,12 @@ SEASTAR_TEST_CASE(test_group_by_non_aggregate) {
         return make_ready_future<>();
     });
 }
+
+SEASTAR_TEST_CASE(test_group_by_null_clustering) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
+        equery(e, "create table t (p int, c int, sv int static, primary key(p, c))");
+        equery(e, "insert into t (p, sv) values (1, 100)"); // c will be NULL.
+        require_rows(e, "select sv from t where p=1 group by c", {{I(100), std::nullopt}});
+        return make_ready_future<>();
+    });
+}
