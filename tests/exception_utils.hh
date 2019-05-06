@@ -33,7 +33,7 @@ namespace exception_predicate {
 /// function to create an error message if the check fails.
 inline auto make(std::function<bool(const std::exception&)> check,
                  std::function<sstring(const std::exception&)> err) {
-    return [check = std::move(check), err = std::move(err)](const std::exception& e) {
+    return [check = std::move(check), err = std::move(err)] (const std::exception& e) {
                const bool status = check(e);
                BOOST_CHECK_MESSAGE(status, err(e));
                return status;
@@ -44,8 +44,8 @@ inline auto make(std::function<bool(const std::exception&)> check,
 inline auto message_contains(
         const sstring& fragment,
         const std::experimental::source_location& loc = std::experimental::source_location::current()) {
-    return make([=](const auto& e) { return sstring(e.what()).find(fragment) != sstring::npos; },
-                [=](const auto& e) {
+    return make([=] (const auto& e) { return sstring(e.what()).find(fragment) != sstring::npos; },
+                [=] (const auto& e) {
                     return fmt::format("Message '{}' doesn't contain '{}'\n{}:{}: invoked here",
                                        e.what(), fragment, loc.file_name(), loc.line());
                 });
@@ -55,8 +55,8 @@ inline auto message_contains(
 inline auto message_equals(
         const sstring& text,
         const std::experimental::source_location& loc = std::experimental::source_location::current()) {
-    return make([=](const auto& e) { return text == e.what(); },
-                [=](const auto& e) {
+    return make([=] (const auto& e) { return text == e.what(); },
+                [=] (const auto& e) {
                     return fmt::format("Message '{}' doesn't equal '{}'\n{}:{}: invoked here",
                                        e.what(), text, loc.file_name(), loc.line());
                 });
