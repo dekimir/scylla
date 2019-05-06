@@ -31,8 +31,9 @@ namespace exception_predicate {
 
 /// Makes an exception predicate that applies \p check function to verify the exception and \p err
 /// function to create an error message if the check fails.
-inline auto make(std::function<bool(const std::exception&)> check,
-                 std::function<sstring(const std::exception&)> err) {
+inline std::function<bool(const std::exception&)> make(
+        std::function<bool(const std::exception&)> check,
+        std::function<sstring(const std::exception&)> err) {
     return [check = std::move(check), err = std::move(err)] (const std::exception& e) {
                const bool status = check(e);
                BOOST_CHECK_MESSAGE(status, err(e));
@@ -41,7 +42,7 @@ inline auto make(std::function<bool(const std::exception&)> check,
 }
 
 /// Returns a predicate that will check if the exception message contains the given fragment.
-inline auto message_contains(
+inline std::function<bool(const std::exception&)> message_contains(
         const sstring& fragment,
         const std::experimental::source_location& loc = std::experimental::source_location::current()) {
     return make([=] (const std::exception& e) { return sstring(e.what()).find(fragment) != sstring::npos; },
@@ -52,7 +53,7 @@ inline auto message_contains(
 }
 
 /// Returns a predicate that will check if the exception message equals the given text.
-inline auto message_equals(
+inline std::function<bool(const std::exception&)> message_equals(
         const sstring& text,
         const std::experimental::source_location& loc = std::experimental::source_location::current()) {
     return make([=] (const std::exception& e) { return text == e.what(); },
