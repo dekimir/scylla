@@ -43,7 +43,7 @@
 #include "types/set.hh"
 #include "db/config.hh"
 #include "sstables/compaction_manager.hh"
-#include "util.hh"
+#include "exception_utils.hh"
 
 using namespace std::literals::chrono_literals;
 

@@ -51,7 +51,7 @@
 #include "encoding_stats.hh"
 #include "sstables/mc/writer.hh"
 #include "simple_schema.hh"
-#include "util.hh"
+#include "exception_utils.hh"
 
 using namespace sstables;
 

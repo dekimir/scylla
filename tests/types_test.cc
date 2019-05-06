@@ -34,7 +34,7 @@
 #include "types/map.hh"
 #include "types/list.hh"
 #include "types/set.hh"
-#include "util.hh"
+#include "exception_utils.hh"
 
 using namespace std::literals::chrono_literals;
 

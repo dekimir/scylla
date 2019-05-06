@@ -22,7 +22,7 @@
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
 #include "sstable_test.hh"
-#include "util.hh"
+#include "exception_utils.hh"
 
 using namespace sstables;
 
