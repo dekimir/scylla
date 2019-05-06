@@ -22,45 +22,27 @@
 #pragma once
 
 #include <experimental/source_location>
-#include <fmt/format.h>
+#include <functional>
 #include <seastar/core/sstring.hh>
 
-#include "exceptions/exceptions.hh"
+#include "seastarx.hh"
 
 namespace exception_predicate {
 
 /// Makes an exception predicate that applies \p check function to verify the exception and \p err
 /// function to create an error message if the check fails.
-inline std::function<bool(const std::exception&)> make(
+extern std::function<bool(const std::exception&)> make(
         std::function<bool(const std::exception&)> check,
-        std::function<sstring(const std::exception&)> err) {
-    return [check = std::move(check), err = std::move(err)] (const std::exception& e) {
-               const bool status = check(e);
-               BOOST_CHECK_MESSAGE(status, err(e));
-               return status;
-           };
-}
+        std::function<sstring(const std::exception&)> err);
 
 /// Returns a predicate that will check if the exception message contains the given fragment.
-inline std::function<bool(const std::exception&)> message_contains(
+extern std::function<bool(const std::exception&)> message_contains(
         const sstring& fragment,
-        const std::experimental::source_location& loc = std::experimental::source_location::current()) {
-    return make([=] (const std::exception& e) { return sstring(e.what()).find(fragment) != sstring::npos; },
-                [=] (const std::exception& e) {
-                    return fmt::format("Message '{}' doesn't contain '{}'\n{}:{}: invoked here",
-                                       e.what(), fragment, loc.file_name(), loc.line());
-                });
-}
+        const std::experimental::source_location& loc = std::experimental::source_location::current());
 
 /// Returns a predicate that will check if the exception message equals the given text.
-inline std::function<bool(const std::exception&)> message_equals(
+extern std::function<bool(const std::exception&)> message_equals(
         const sstring& text,
-        const std::experimental::source_location& loc = std::experimental::source_location::current()) {
-    return make([=] (const std::exception& e) { return text == e.what(); },
-                [=] (const std::exception& e) {
-                    return fmt::format("Message '{}' doesn't equal '{}'\n{}:{}: invoked here",
-                                       e.what(), text, loc.file_name(), loc.line());
-                });
-}
+        const std::experimental::source_location& loc = std::experimental::source_location::current());
 
 } // namespace exception_predicate
