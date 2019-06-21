@@ -118,6 +118,11 @@ public:
         return _relation_type == operator_type::EQ;
     }
 
+    /// True iff the operator of this relation is <code>LIKE</code>.
+    virtual bool is_LIKE() const final {
+        return _relation_type == operator_type::LIKE;
+    }
+
     /**
      * Checks if the operator of this relation is a <code>Slice</code> (GT, GTE, LTE, LT).
      *
@@ -150,6 +155,8 @@ public:
             return new_slice_restriction(db, schema, bound_names, statements::bound::START, true);
         } else if (_relation_type == operator_type::GT) {
             return new_slice_restriction(db, schema, bound_names, statements::bound::START, false);
+        } else if (_relation_type == operator_type::LIKE) {
+            return new_LIKE_restriction(db, schema, bound_names);
         } else if (_relation_type == operator_type::IN) {
             return new_IN_restriction(db, schema, bound_names);
         } else if (_relation_type == operator_type::CONTAINS) {
@@ -181,6 +188,12 @@ public:
      */
     virtual ::shared_ptr<restrictions::restriction> new_EQ_restriction(database& db, schema_ptr schema,
         ::shared_ptr<variable_specifications> bound_names) = 0;
+
+    /**
+     * Creates a new LIKE restriction instance.
+     */
+    virtual ::shared_ptr<restrictions::restriction> new_LIKE_restriction(
+        database& db, schema_ptr schema, ::shared_ptr<variable_specifications> bound_names) = 0;
 
     /**
      * Creates a new IN restriction instance.

@@ -72,6 +72,7 @@ private:
     bool _slice;
     bool _contains;
     bool _in;
+    bool _like;
 public:
     single_column_primary_key_restrictions(schema_ptr schema, bool allow_filtering)
         : _schema(schema)
@@ -80,6 +81,7 @@ public:
         , _slice(false)
         , _contains(false)
         , _in(false)
+        , _like(false)
     { }
 
     // Convert another primary key restrictions type into this type, possibly using different schema
@@ -91,6 +93,7 @@ public:
         , _slice(other._slice)
         , _contains(other._contains)
         , _in(other._in)
+        , _like(other._like)
     {
         for (const auto& entry : other._restrictions->restrictions()) {
             const column_definition* other_cdef = entry.first;
@@ -121,6 +124,10 @@ public:
 
     virtual bool is_IN() const override {
         return _in;
+    }
+
+    virtual bool is_LIKE() const override {
+        return _like;
     }
 
     virtual bool is_all_eq() const override {
@@ -160,6 +167,7 @@ public:
         _slice |= restriction->is_slice();
         _in |= restriction->is_IN();
         _contains |= restriction->is_contains();
+        _like |= restriction->is_LIKE();
         _restrictions->add_restriction(restriction);
     }
 
@@ -470,12 +478,12 @@ inline bool single_column_primary_key_restrictions<partition_key>::needs_filteri
 template<>
 inline bool single_column_primary_key_restrictions<clustering_key>::needs_filtering(const schema& schema) const {
     // Restrictions currently need filtering in three cases:
-    // 1. any of them is a CONTAINS restriction
+    // 1. any of them is a CONTAINS or LIKE restriction
     // 2. restrictions do not form a contiguous prefix (i.e. there are gaps in it)
     // 3. a SLICE restriction isn't on a last place
     column_id position = 0;
     for (const auto& restriction : _restrictions->restrictions() | boost::adaptors::map_values) {
-        if (restriction->is_contains() || position != restriction->get_column_def().id) {
+        if (restriction->is_contains() || restriction->is_LIKE() || position != restriction->get_column_def().id) {
             return true;
         }
         if (!restriction->is_slice()) {
@@ -499,7 +507,7 @@ inline unsigned single_column_primary_key_restrictions<clustering_key>::num_pref
     column_id position = 0;
     unsigned int count = 0;
     for (const auto& restriction : _restrictions->restrictions() | boost::adaptors::map_values) {
-        if (restriction->is_contains() || position != restriction->get_column_def().id) {
+        if (restriction->is_contains() || restriction->is_LIKE() || position != restriction->get_column_def().id) {
             return count;
         }
         if (!restriction->is_slice()) {

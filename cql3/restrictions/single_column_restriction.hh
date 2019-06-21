@@ -51,6 +51,7 @@
 #include "exceptions/exceptions.hh"
 #include "keys.hh"
 #include "mutation_partition.hh"
+#include "utils/like_matcher.hh"
 
 namespace cql3 {
 
@@ -114,6 +115,7 @@ public:
     class IN;
     class IN_with_values;
     class IN_with_marker;
+    class LIKE;
 
     class slice;
     class contains;
@@ -392,6 +394,57 @@ public:
     }
 };
 
+class single_column_restriction::LIKE final : public single_column_restriction {
+private:
+    ::shared_ptr<terminal> _value;
+    like_matcher _like_matcher;
+public:
+    LIKE(const column_definition& column_def, ::shared_ptr<terminal> value)
+            : single_column_restriction(column_def)
+          , _value(value)
+          , _like_matcher(*value->get(query_options::DEFAULT))
+    { }
+
+    virtual std::vector<bytes_opt> values(const query_options& options) const override {
+        std::vector<bytes_opt> v;
+        v.push_back(to_bytes_opt(_value->bind_and_get(options)));
+        return v;
+    }
+
+    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
+        return false;
+    }
+
+    virtual bool is_supported_by(const secondary_index::index& index) const {
+        return index.supports_expression(_column_def, cql3::operator_type::LIKE);
+    }
+
+    virtual sstring to_string() const override {
+        return format("LIKE({})", _value->to_string());
+    }
+
+    virtual void merge_with(::shared_ptr<restriction> other) {
+        throw exceptions::invalid_request_exception(
+            format("{} cannot be restricted by more than one relation if it includes a LIKE",
+                   _column_def.name_as_text()));
+    }
+
+    virtual bool is_LIKE() const override {
+        return true;
+    }
+
+    virtual bool is_satisfied_by(const schema& schema,
+                                 const partition_key& key,
+                                 const clustering_key_prefix& ckey,
+                                 const row& cells,
+                                 const query_options& options,
+                                 gc_clock::time_point now) const override;
+    virtual bool is_satisfied_by(bytes_view data, const query_options& options) const override;
+    virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
+        return ::make_shared<LIKE>(cdef, _value);
+    }
+};
+
 // This holds CONTAINS, CONTAINS_KEY, and map[key] = value restrictions because we might want to have any combination of them.
 class single_column_restriction::contains final : public single_column_restriction {
 private:
@@ -553,7 +606,6 @@ private:
         return values;
     }
 };
-
 
 }
 

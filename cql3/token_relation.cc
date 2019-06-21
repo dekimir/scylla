@@ -88,6 +88,11 @@ std::vector<::shared_ptr<cql3::column_specification>> cql3::token_relation::to_r
     return ::make_shared<restrictions::token_restriction::EQ>(column_defs, term);
 }
 
+::shared_ptr<cql3::restrictions::restriction> cql3::token_relation::new_LIKE_restriction(
+        database&, schema_ptr, ::shared_ptr<variable_specifications>) {
+    throw exceptions::invalid_request_exception("LIKE cannot be used with the token function");
+}
+
 ::shared_ptr<cql3::restrictions::restriction> cql3::token_relation::new_IN_restriction(
         database& db, schema_ptr schema,
         ::shared_ptr<variable_specifications> bound_names) {

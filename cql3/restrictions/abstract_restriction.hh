@@ -74,6 +74,10 @@ public:
         return false;
     }
 
+    virtual bool is_LIKE() const override {
+        return false;
+    }
+
     virtual bool is_IN() const override {
         return false;
     }

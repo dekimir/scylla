@@ -99,6 +99,9 @@ public:
             schema_ptr schema,
             ::shared_ptr<variable_specifications> bound_names) override;
 
+    ::shared_ptr<restrictions::restriction> new_LIKE_restriction(
+        database& db, schema_ptr schema, ::shared_ptr<variable_specifications> bound_names) override;
+
     ::shared_ptr<restrictions::restriction> new_IN_restriction(database& db,
             schema_ptr schema,
             ::shared_ptr<variable_specifications> bound_names) override;

@@ -65,6 +65,7 @@ public:
     virtual bool is_on_token() const = 0;
     virtual bool is_slice() const = 0;
     virtual bool is_EQ() const = 0;
+    virtual bool is_LIKE() const = 0;
     virtual bool is_IN() const = 0;
     virtual bool is_contains() const = 0;
     virtual bool is_multi_column() const = 0;

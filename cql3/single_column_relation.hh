@@ -150,6 +150,9 @@ protected:
     virtual ::shared_ptr<restrictions::restriction> new_EQ_restriction(database& db, schema_ptr schema,
                                            ::shared_ptr<variable_specifications> bound_names);
 
+    virtual ::shared_ptr<restrictions::restriction> new_LIKE_restriction(
+        database& db, schema_ptr schema, ::shared_ptr<variable_specifications> bound_names) override;
+
     virtual ::shared_ptr<restrictions::restriction> new_IN_restriction(database& db, schema_ptr schema,
                                            ::shared_ptr<variable_specifications> bound_names) override;
 
@@ -206,7 +209,7 @@ private:
     }
 
     bool is_legal_relation_for_non_frozen_collection() const {
-        return is_contains_key() || is_contains() || is_map_entry_equality();
+        return is_contains_key() || is_contains() || is_map_entry_equality() || is_LIKE();
     }
 
     bool is_map_entry_equality() const {

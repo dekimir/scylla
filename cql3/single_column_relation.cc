@@ -79,6 +79,20 @@ single_column_relation::new_EQ_restriction(database& db, schema_ptr schema, ::sh
 }
 
 ::shared_ptr<restrictions::restriction>
+single_column_relation::new_LIKE_restriction(
+    database& db, schema_ptr schema, ::shared_ptr<variable_specifications> bound_names) {
+    const column_definition& column_def = to_column_definition(schema, _entity);
+    // Ignore _map_key, as only EQ restrictions are allowed with _map_key.
+    auto term = to_term(to_receivers(schema, column_def), _value, db, schema->ks_name(), bound_names);
+    auto t = dynamic_pointer_cast<terminal>(term);
+    if (!t) {
+        throw exceptions::invalid_request_exception(
+            format("LIKE operator expects a constant RHS, instead got {}", _value->to_string()));
+    }
+    return ::make_shared<single_column_restriction::LIKE>(column_def, std::move(t));
+}
+
+::shared_ptr<restrictions::restriction>
 single_column_relation::new_IN_restriction(database& db, schema_ptr schema, ::shared_ptr<variable_specifications> bound_names) {
     const column_definition& column_def = to_column_definition(schema, _entity);
     auto receivers = to_receivers(schema, column_def);
