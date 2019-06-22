@@ -3848,3 +3848,80 @@ SEASTAR_TEST_CASE(test_aggregate_and_simple_selection_together) {
         return make_ready_future<>();
     });
 }
+
+SEASTAR_TEST_CASE(test_like_operator) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int primary key, s text)");
+        cquery_nofail(e, "insert into t (p, s) values (1, 'abc')");
+        require_rows(e, "select s from t where s like 'abc' allow filtering", {{T("abc")}});
+        require_rows(e, "select s from t where s like 'ab_' allow filtering", {{T("abc")}});
+        cquery_nofail(e, "insert into t (p, s) values (2, 'abb')");
+        require_rows(e, "select s from t where s like 'ab_' allow filtering", {{T("abc")}, {T("abb")}});
+        require_rows(e, "select s from t where s like '%c' allow filtering", {{T("abc")}});
+    });
+}
+
+SEASTAR_TEST_CASE(test_like_operator_on_partition_key) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
+        // Fully constrained:
+        cquery_nofail(e, "create table t (s text primary key)");
+        cquery_nofail(e, "insert into t (s) values ('abc')");
+        require_rows(e, "select s from t where s like 'a__' allow filtering", {{T("abc")}});
+        cquery_nofail(e, "insert into t (s) values ('acc')");
+        require_rows(e, "select s from t where s like 'a__' allow filtering", {{T("abc")}, {T("acc")}});
+
+        // Partially constrained:
+        cquery_nofail(e, "create table t2 (s1 text, s2 text, primary key((s1, s2)))");
+        cquery_nofail(e, "insert into t2 (s1, s2) values ('abc', 'abc')");
+        require_rows(e, "select s2 from t2 where s2 like 'a%' allow filtering", {{T("abc")}});
+        cquery_nofail(e, "insert into t2 (s1, s2) values ('aba', 'aba')");
+        require_rows(e, "select s2 from t2 where s2 like 'a%' allow filtering", {{T("abc")}, {T("aba")}});
+    });
+}
+
+#if 0 // TODO: Re-enable when query::result_set::consume() is fixed.
+SEASTAR_TEST_CASE(test_like_operator_on_clustering_key) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int, s text, primary key(p, s))");
+        cquery_nofail(e, "insert into t (p, s) values (1, 'abc')");
+        require_rows(e, "select s from t where s like '%c' allow filtering", {{T("abc")}});
+        cquery_nofail(e, "insert into t (p, s) values (2, 'acc')");
+        require_rows(e, "select s from t where s like '%c' allow filtering", {{T("abc")}, {T("acc")}});
+    });
+}
+#endif
+
+SEASTAR_TEST_CASE(test_like_operator_conjunction) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
+        cquery_nofail(e, "create table t (s1 text primary key, s2 text)");
+        cquery_nofail(e, "insert into t (s1, s2) values ('abc', 'ABC')");
+        require_rows(e, "select * from t where s1 like 'a%' and s2 like '__C' allow filtering",
+                     {{T("abc"), T("ABC")}});
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t where s1 like 'a%' and s1 = 'abc' allow filtering").get(),
+                exceptions::invalid_request_exception,
+                exception_predicate::message_contains("more than one relation"));
+    });
+}
+
+#if 0 // TODO: enable when LIKE code actually gets invoked in this scenario.
+SEASTAR_TEST_CASE(test_like_operator_on_nonstring) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
+        cquery_nofail(e, "create table t (k int primary key)");
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t where k like 123 allow filtering").get(),
+                exceptions::invalid_request_exception,
+                exception_predicate::message_contains("only on string types"));
+    });
+}
+#endif
+
+SEASTAR_TEST_CASE(test_like_operator_on_token) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
+        cquery_nofail(e, "create table t (s text primary key)");
+        BOOST_REQUIRE_EXCEPTION(
+                e.execute_cql("select * from t where token(s) like 'abc' allow filtering").get(),
+                exceptions::invalid_request_exception,
+                exception_predicate::message_contains("token function"));
+    });
+}
