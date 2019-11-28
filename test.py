@@ -132,6 +132,7 @@ boost_tests = [
     'data_listeners_test',
     'truncation_migration_test',
     'like_matcher_test',
+    'enum_option_test',
 ]
 
 other_tests = [
