@@ -360,7 +360,10 @@ public:
             cfg->view_hints_directory.set(data_dir_path + "/view_hints.dir");
             cfg->num_tokens.set(256);
             cfg->ring_delay_ms.set(500);
-            cfg->experimental.set(true);
+            auto features = cfg->experimental();
+            features.emplace_back(db::experimental_features::CDC);
+            features.emplace_back(db::experimental_features::LWT);
+            cfg->experimental(features);
             cfg->shutdown_announce_in_ms.set(0);
             cfg->broadcast_to_all_shards().get();
             create_directories((data_dir_path + "/system").c_str());
