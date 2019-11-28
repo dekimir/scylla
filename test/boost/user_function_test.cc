@@ -47,7 +47,7 @@ static shared_ptr<cql_transport::event::schema_change> get_schema_change(
 SEASTAR_TEST_CASE(test_user_function_disabled) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
         auto fut = e.execute_cql("CREATE FUNCTION my_func(val int) CALLED ON NULL INPUT RETURNS int LANGUAGE Lua AS 'return 2';");
-        BOOST_REQUIRE_EXCEPTION(fut.get(), ire, message_equals("User defined functions are disabled. Set enable_user_defined_functions to enable them"));
+        BOOST_REQUIRE_EXCEPTION(fut.get(), ire, message_equals("User defined functions are disabled. Set experimental_features to enable them"));
     });
 }
 
@@ -55,7 +55,7 @@ template<typename Func>
 static future<> with_udf_enabled(Func&& func) {
     auto db_cfg_ptr = make_shared<db::config>();
     auto& db_cfg = *db_cfg_ptr;
-    db_cfg.enable_user_defined_functions({true}, db::config::config_source::CommandLine);
+    db_cfg.experimental_features({db::experimental_features_t::UDF}, db::config::config_source::CommandLine);
     return do_with_cql_env_thread(std::forward<Func>(func), db_cfg_ptr);
 }
 
@@ -949,7 +949,7 @@ SEASTAR_THREAD_TEST_CASE(test_user_function_db_init) {
     auto& db_cfg = *db_cfg_ptr;
 
     db_cfg.data_file_directories({data_dir.path().string()}, db::config::config_source::CommandLine);
-    db_cfg.enable_user_defined_functions({true}, db::config::config_source::CommandLine);
+    db_cfg.experimental_features({db::experimental_features_t::UDF}, db::config::config_source::CommandLine);
 
     do_with_cql_env_thread([] (cql_test_env& e) {
         e.execute_cql("CREATE FUNCTION my_func(a int, b float) CALLED ON NULL INPUT RETURNS int LANGUAGE Lua AS 'return 2';").get();
