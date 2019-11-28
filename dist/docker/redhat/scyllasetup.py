@@ -114,8 +114,9 @@ class ScyllaSetup:
         if self._authorizer is not None:
             args += ["--authorizer %s" % self._authorizer]
 
-        if self._experimental == "1":
-            args += ["--experimental=on"]
+        if self._experimental is not None:
+            for feature in args:
+                args += ["--experimental=%s" % feature]
 
         if self._clusterName is not None:
             args += ["--cluster-name %s" % self._clusterName]

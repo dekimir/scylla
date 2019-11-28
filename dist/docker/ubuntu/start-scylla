@@ -64,7 +64,7 @@ fi
 EXPERIMENTAL_ARG=""
 if [[ -n $SCYLLA_EXPERIMENTAL ]]
 then
-	EXPERIMENTAL_ARG="--experimental=on"
+	EXPERIMENTAL_ARG="--experimental=cdc --experimental=lwt --experimental=udf"
 fi
 
 if [ x"$SCYLLA_SEEDS" != "x" ];then

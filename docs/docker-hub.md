@@ -241,16 +241,16 @@ For example, to disable developer mode:
 $ docker run --name some-scylla -d scylladb/scylla --developer-mode 0
 ```
 
-### `--experimental ENABLE`
+### `--experimental`
 
-The `--experimental` command line option enables Scylla's experimental mode
-If no `--experimental` command line option is defined, Scylla defaults to running with experimental mode *disabled*.
+The `--experimental` command line option enables Scylla's experimental features.
+If no `--experimental` command line option is defined, Scylla defaults to running with experimental features *disabled*.
 It is highly recommended to disable experimental mode for production deployments.
 
-For example, to enable experimental mode:
+For example, to enable experimental features CDC and LWT:
 
 ```console
-$ docker run --name some-scylla -d scylladb/scylla --experimental 1
+$ docker run --name some-scylla -d scylladb/scylla --experimental cdc lwt
 ```
 
 **Since: 2.0**
