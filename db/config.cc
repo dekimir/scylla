@@ -693,6 +693,7 @@ db::config::config(std::shared_ptr<db::extensions> exts)
     , shutdown_announce_in_ms(this, "shutdown_announce_in_ms", value_status::Used, 2 * 1000, "Time a node waits after sending gossip shutdown message in milliseconds. Same as -Dcassandra.shutdown_announce_in_ms in cassandra.")
     , developer_mode(this, "developer_mode", value_status::Used, false, "Relax environment checks. Setting to true can reduce performance and reliability significantly.")
     , skip_wait_for_gossip_to_settle(this, "skip_wait_for_gossip_to_settle", value_status::Used, -1, "An integer to configure the wait for gossip to settle. -1: wait normally, 0: do not wait at all, n: wait for at most n polls. Same as -Dcassandra.skip_wait_for_gossip_to_settle in cassandra.")
+    , experimental(this, "experimental", value_status::Used, false, "Set to true to unlock all experimental features.")
     , experimental_features(this, "experimental_features", value_status::Used, {}, "Unlock experimental features provided as the option arguments (possible values: 'lwt', 'cdc', 'udf'). Can be repeated.")
     , lsa_reclamation_step(this, "lsa_reclamation_step", value_status::Used, 1, "Minimum number of segments to reclaim in a single step")
     , prometheus_port(this, "prometheus_port", value_status::Used, 9180, "Prometheus port, set to zero to disable")
@@ -850,6 +851,9 @@ db::fs::path db::config::get_conf_sub(db::fs::path sub) {
 }
 
 bool db::config::check_experimental(experimental_features_t::feature f) const {
+    if (experimental()) {
+        return true;
+    }
     const auto& optval = experimental_features();
     return find(begin(optval), end(optval), enum_option<experimental_features_t>{f}) != end(optval);
 }
