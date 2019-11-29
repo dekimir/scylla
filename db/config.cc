@@ -159,7 +159,7 @@ struct convert<db::config::seed_provider_type> {
 
 template <>
 class convert<enum_option<db::experimental_features_t>> {
-  public:
+public:
     static bool decode(const Node& node, enum_option<db::experimental_features_t>& rhs) {
         std::string name;
         if (!convert<std::string>::decode(node, name)) {
