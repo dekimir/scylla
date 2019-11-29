@@ -26,8 +26,23 @@
 
 #include <boost/program_options/errors.hpp>
 #include <iostream>
+#include <seastar/util/gcc6-concepts.hh>
 #include <sstream>
 #include <type_traits>
+
+GCC6_CONCEPT(
+template<typename T>
+concept bool HasMapInterface = requires(T t) {
+    typename std::remove_reference<T>::type::mapped_type;
+    typename std::remove_reference<T>::type::key_type;
+    typename std::remove_reference<T>::type::value_type;
+    t.find(typename std::remove_reference<T>::type::key_type());
+    t.begin();
+    t.end();
+    t.cbegin();
+    t.cend();
+};
+)
 
 /// A Boost program option holding an enum value.
 ///
@@ -36,7 +51,8 @@
 /// the enum value JANUARY.
 ///
 /// Mapper must have a static method `map()` that returns a map from a streamable key type (eg, string) to the
-/// enum in question.
+/// enum in question.  In fact, enum_option knows which enum it represents only by referencing
+/// Mapper::map().mapped_type.
 ///
 /// Example:
 ///
@@ -57,6 +73,7 @@
 ///     ("vec", po::value<vector<enum_option<Type>>>()->multitoken(), "Type vector");
 /// }
 template<typename Mapper>
+GCC6_CONCEPT(requires HasMapInterface<decltype(Mapper::map())>)
 struct enum_option {
     using map_t = typename std::remove_reference<decltype(Mapper::map())>::type;
     typename map_t::mapped_type value;
