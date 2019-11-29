@@ -54,6 +54,9 @@ concept bool HasMapInterface = requires(T t) {
 /// enum in question.  In fact, enum_option knows which enum it represents only by referencing
 /// Mapper::map().mapped_type.
 ///
+/// \note one enum_option holds only one enum value.  When multiple choices are allowed, use
+/// vector<enum_option>.
+///
 /// Example:
 ///
 /// struct Type {
