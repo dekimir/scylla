@@ -924,43 +924,43 @@ SEASTAR_TEST_CASE(test_parse_broken) {
     return make_ready_future<>();
 }
 
-using ef = experimental_features;
+using ef = experimental_features_t;
 using features = std::vector<enum_option<ef>>;
 
-SEASTAR_TEST_CASE(test_parse_experimental_cdc) {
+SEASTAR_TEST_CASE(test_parse_experimental_features_cdc) {
     config cfg;
-    cfg.read_from_yaml("experimental:\n    - cdc\n", throw_on_error);
-    BOOST_CHECK_EQUAL(cfg.experimental(), features{ef::CDC});
+    cfg.read_from_yaml("experimental_features:\n    - cdc\n", throw_on_error);
+    BOOST_CHECK_EQUAL(cfg.experimental_features(), features{ef::CDC});
     return make_ready_future();
 }
 
-SEASTAR_TEST_CASE(test_parse_experimental_lwt) {
+SEASTAR_TEST_CASE(test_parse_experimental_features_lwt) {
     config cfg;
-    cfg.read_from_yaml("experimental:\n    - lwt\n", throw_on_error);
-    BOOST_CHECK_EQUAL(cfg.experimental(), features{ef::LWT});
+    cfg.read_from_yaml("experimental_features:\n    - lwt\n", throw_on_error);
+    BOOST_CHECK_EQUAL(cfg.experimental_features(), features{ef::LWT});
     return make_ready_future();
 }
 
-SEASTAR_TEST_CASE(test_parse_experimental_udf) {
+SEASTAR_TEST_CASE(test_parse_experimental_features_udf) {
     config cfg;
-    cfg.read_from_yaml("experimental:\n    - udf\n", throw_on_error);
-    BOOST_CHECK_EQUAL(cfg.experimental(), features{ef::UDF});
+    cfg.read_from_yaml("experimental_features:\n    - udf\n", throw_on_error);
+    BOOST_CHECK_EQUAL(cfg.experimental_features(), features{ef::UDF});
     return make_ready_future();
 }
 
-SEASTAR_TEST_CASE(test_parse_experimental_multiple) {
+SEASTAR_TEST_CASE(test_parse_experimental_features_multiple) {
     config cfg;
-    cfg.read_from_yaml("experimental:\n    - cdc\n    - lwt\n    - cdc\n", throw_on_error);
-    BOOST_CHECK_EQUAL(cfg.experimental(), (features{ef::CDC, ef::LWT, ef::CDC}));
+    cfg.read_from_yaml("experimental_features:\n    - cdc\n    - lwt\n    - cdc\n", throw_on_error);
+    BOOST_CHECK_EQUAL(cfg.experimental_features(), (features{ef::CDC, ef::LWT, ef::CDC}));
     return make_ready_future();
 }
 
-SEASTAR_TEST_CASE(test_parse_experimental_invalid) {
+SEASTAR_TEST_CASE(test_parse_experimental_features_invalid) {
     config cfg;
     using value_status = utils::config_file::value_status;
-    cfg.read_from_yaml("experimental:\n    - invalidoptiontvaluedonotuse\n",
+    cfg.read_from_yaml("experimental_features:\n    - invalidoptiontvaluedonotuse\n",
                        [] (const sstring& opt, const sstring& msg, std::optional<value_status> status) {
-                           BOOST_REQUIRE_EQUAL(opt, "experimental");
+                           BOOST_REQUIRE_EQUAL(opt, "experimental_features");
                            BOOST_REQUIRE_NE(msg.find("line 2, column 7"), msg.npos);
                        });
     return make_ready_future();

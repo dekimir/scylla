@@ -109,7 +109,7 @@ template <>
 const config_type config_type_for<db::seed_provider_type> = config_type("seed provider", seed_provider_to_json);
 
 template <>
-const config_type config_type_for<std::vector<enum_option<db::experimental_features>>> = config_type(
+const config_type config_type_for<std::vector<enum_option<db::experimental_features_t>>> = config_type(
         "experimental features", value_to_json<std::vector<sstring>>);
 
 }
@@ -158,14 +158,14 @@ struct convert<db::config::seed_provider_type> {
 };
 
 template <>
-class convert<enum_option<db::experimental_features>> {
+class convert<enum_option<db::experimental_features_t>> {
   public:
-    static bool decode(const Node& node, enum_option<db::experimental_features>& rhs) {
+    static bool decode(const Node& node, enum_option<db::experimental_features_t>& rhs) {
         std::string name;
         if (!convert<std::string>::decode(node, name)) {
             return false;
         }
-        const auto& m = db::experimental_features::map();
+        const auto& m = db::experimental_features_t::map();
         auto found = m.find(name);
         if (found == m.end()) {
             return false;
@@ -693,7 +693,7 @@ db::config::config(std::shared_ptr<db::extensions> exts)
     , shutdown_announce_in_ms(this, "shutdown_announce_in_ms", value_status::Used, 2 * 1000, "Time a node waits after sending gossip shutdown message in milliseconds. Same as -Dcassandra.shutdown_announce_in_ms in cassandra.")
     , developer_mode(this, "developer_mode", value_status::Used, false, "Relax environment checks. Setting to true can reduce performance and reliability significantly.")
     , skip_wait_for_gossip_to_settle(this, "skip_wait_for_gossip_to_settle", value_status::Used, -1, "An integer to configure the wait for gossip to settle. -1: wait normally, 0: do not wait at all, n: wait for at most n polls. Same as -Dcassandra.skip_wait_for_gossip_to_settle in cassandra.")
-    , experimental(this, "experimental", value_status::Used, {}, "Unlock experimental feature provided as the argument (possible values: 'lwt', 'cdc', 'udf'). Can be repeated with different arguments, to unlock multiple features.")
+    , experimental_features(this, "experimental_features", value_status::Used, {}, "Unlock experimental features provided as the option arguments (possible values: 'lwt', 'cdc', 'udf'). Can be repeated.")
     , lsa_reclamation_step(this, "lsa_reclamation_step", value_status::Used, 1, "Minimum number of segments to reclaim in a single step")
     , prometheus_port(this, "prometheus_port", value_status::Used, 9180, "Prometheus port, set to zero to disable")
     , prometheus_address(this, "prometheus_address", value_status::Used, "0.0.0.0", "Prometheus listening address")
@@ -849,9 +849,9 @@ db::fs::path db::config::get_conf_sub(db::fs::path sub) {
     return get_conf_dir() / sub;
 }
 
-bool db::config::check_experimental(experimental_features::feature f) const {
-    const auto optval = experimental();
-    return find(begin(optval), end(optval), enum_option<experimental_features>{f}) != end(optval);
+bool db::config::check_experimental(experimental_features_t::feature f) const {
+    const auto& optval = experimental_features();
+    return find(begin(optval), end(optval), enum_option<experimental_features_t>{f}) != end(optval);
 }
 
 namespace bpo = boost::program_options;
@@ -896,8 +896,8 @@ const db::extensions& db::config::extensions() const {
     return *_extensions;
 }
 
-std::unordered_map<sstring, db::experimental_features::feature>& db::experimental_features::map() {
-    static const auto inst = new std::unordered_map<sstring, db::experimental_features::feature>{
+std::unordered_map<sstring, db::experimental_features_t::feature>& db::experimental_features_t::map() {
+    static const auto inst = new std::unordered_map<sstring, db::experimental_features_t::feature>{
         {"lwt", LWT}, {"udf", UDF}, {"cdc", CDC}
     };
     return *inst;

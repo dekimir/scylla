@@ -76,7 +76,7 @@ sstring config_value_as_json(const std::unordered_map<sstring, log_level>& v);
 namespace db {
 
 /// Enumeration of all valid values for the `experimental` config entry.
-struct experimental_features {
+struct experimental_features_t {
     enum feature { LWT, UDF, CDC };
     static std::unordered_map<sstring, feature>& map(); // See enum_option.
 };
@@ -88,7 +88,7 @@ public:
     ~config();
 
     /// True iff the feature is enabled.
-    bool check_experimental(experimental_features::feature f) const;
+    bool check_experimental(experimental_features_t::feature f) const;
 
     void setup_directories();
 
@@ -272,7 +272,7 @@ public:
     named_value<uint32_t> shutdown_announce_in_ms;
     named_value<bool> developer_mode;
     named_value<int32_t> skip_wait_for_gossip_to_settle;
-    named_value<std::vector<enum_option<experimental_features>>> experimental;
+    named_value<std::vector<enum_option<experimental_features_t>>> experimental_features;
     named_value<size_t> lsa_reclamation_step;
     named_value<uint16_t> prometheus_port;
     named_value<sstring> prometheus_address;

@@ -351,10 +351,10 @@ std::set<sstring> storage_service::get_config_supported_features_set() {
         if (config.enable_sstables_mc_format()) {
             features.insert(MC_SSTABLE_FEATURE);
         }
-        if (config.check_experimental(db::experimental_features::UDF)) {
+        if (config.check_experimental(db::experimental_features_t::UDF)) {
             features.insert(UDF_FEATURE);
         }
-        if (config.check_experimental(db::experimental_features::CDC)) {
+        if (config.check_experimental(db::experimental_features_t::CDC)) {
             features.insert(CDC_FEATURE);
         }
     }
