@@ -47,7 +47,7 @@ static shared_ptr<cql_transport::event::schema_change> get_schema_change(
 SEASTAR_TEST_CASE(test_user_function_disabled) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
         auto fut = e.execute_cql("CREATE FUNCTION my_func(val int) CALLED ON NULL INPUT RETURNS int LANGUAGE Lua AS 'return 2';");
-        BOOST_REQUIRE_EXCEPTION(fut.get(), ire, message_equals("User defined functions are disabled. Set enable_user_defined_functions to enable them"));
+        BOOST_REQUIRE_EXCEPTION(fut.get(), ire, message_equals("User defined functions are disabled. Set experimental_features to enable them"));
     });
 }
 
