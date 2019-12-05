@@ -355,7 +355,12 @@ std::set<sstring> storage_service::get_config_supported_features_set() {
         if (config.enable_sstables_mc_format()) {
             features.insert(MC_SSTABLE_FEATURE);
         }
-        if (config.check_experimental(db::experimental_features_t::UDF)) {
+        if (config.enable_user_defined_functions()) {
+            if (!config.check_experimental(db::experimental_features_t::UDF)) {
+                throw std::runtime_error(
+                        "You must use both enable_user_defined_functions and experimental_features:udf "
+                        "to enable user-defined functions");
+            }
             features.insert(UDF_FEATURE);
         }
         if (config.check_experimental(db::experimental_features_t::CDC)) {
