@@ -22,6 +22,7 @@
 
 #include <unordered_map>
 #include <regex>
+#include <sstream>
 
 #include <boost/any.hpp>
 #include <boost/program_options.hpp>
@@ -165,12 +166,11 @@ public:
         if (!convert<std::string>::decode(node, name)) {
             return false;
         }
-        const auto& m = db::experimental_features_t::map();
-        auto found = m.find(name);
-        if (found == m.end()) {
+        try {
+            std::istringstream(name) >> rhs;
+        } catch (boost::program_options::invalid_option_value&) {
             return false;
         }
-        rhs.value = found->second;
         return true;
     }
 };
@@ -900,11 +900,10 @@ const db::extensions& db::config::extensions() const {
     return *_extensions;
 }
 
-std::unordered_map<sstring, db::experimental_features_t::feature>& db::experimental_features_t::map() {
-    static const auto inst = new std::unordered_map<sstring, db::experimental_features_t::feature>{
-        {"lwt", LWT}, {"udf", UDF}, {"cdc", CDC}
-    };
-    return *inst;
+std::unordered_map<sstring, db::experimental_features_t::feature> db::experimental_features_t::map() {
+    // We decided against using the construct-on-first-use idiom here:
+    // https://github.com/scylladb/scylla/pull/5369#discussion_r353614807
+    return {{"lwt", LWT}, {"udf", UDF}, {"cdc", CDC}};
 }
 
 template struct utils::config_file::named_value<seastar::log_level>;
