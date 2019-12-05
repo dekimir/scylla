@@ -77,26 +77,27 @@ concept bool HasMapInterface = requires(T t) {
 /// }
 template<typename Mapper>
 GCC6_CONCEPT(requires HasMapInterface<decltype(Mapper::map())>)
-struct enum_option {
+class enum_option {
     using map_t = typename std::remove_reference<decltype(Mapper::map())>::type;
-    typename map_t::mapped_type value;
-
+    typename map_t::mapped_type _value;
+    map_t _map;
+  public:
     // For smooth conversion from enum values:
-    enum_option(const typename map_t::mapped_type& v) : value(v) {}
+    enum_option(const typename map_t::mapped_type& v) : _value(v), _map(Mapper::map()) {}
 
     // So values can be default-constructed before streaming into them:
-    enum_option() {}
+    enum_option() : _map(Mapper::map()) {}
 
     bool operator==(const enum_option<Mapper>& that) const {
-        return value == that.value;
+        return _value == that._value;
     }
 
     // For program_options parser:
     friend std::istream& operator>>(std::istream& s, enum_option<Mapper>& opt) {
         typename map_t::key_type key;
         s >> key;
-        const auto found = Mapper::map().find(key);
-        if (found == Mapper::map().end()) {
+        const auto found = opt._map.find(key);
+        if (found == opt._map.end()) {
             std::string text;
             if (s.rdstate() & s.failbit) {
                 // key wasn't read successfully.
@@ -109,15 +110,15 @@ struct enum_option {
             }
             throw boost::program_options::invalid_option_value(text);
         }
-        opt.value = found->second;
+        opt._value = found->second;
         return s;
     }
 
     // For various printers and formatters:
     friend std::ostream& operator<<(std::ostream& s, const enum_option<Mapper>& opt) {
-        auto found = find_if(Mapper::map().cbegin(), Mapper::map().cend(),
-                             [&opt](const typename map_t::value_type& e) { return e.second == opt.value; });
-        if (found == Mapper::map().cend()) {
+        auto found = find_if(opt._map.cbegin(), opt._map.cend(),
+                             [&opt](const typename map_t::value_type& e) { return e.second == opt._value; });
+        if (found == opt._map.cend()) {
             return s << "?unknown";
         } else {
             return s << found->first;

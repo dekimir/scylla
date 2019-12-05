@@ -39,11 +39,8 @@ namespace {
 
 struct days {
     enum enumeration { Mo, Tu, We, Th, Fr, Sa, Su };
-    static const std::unordered_map<std::string, enumeration>& map() {
-        static const auto inst = new std::unordered_map<std::string, enumeration>{
-            {"Mon", Mo}, {"Tue", Tu}, {"Wed", We}, {"Thu", Th}, {"Fri", Fr}, {"Sat", Sa}, {"Sun", Su}
-        };
-        return *inst;
+    static std::unordered_map<std::string, enumeration> map() {
+        return {{"Mon", Mo}, {"Tue", Tu}, {"Wed", We}, {"Thu", Th}, {"Fri", Fr}, {"Sat", Sa}, {"Sun", Su}};
     }
 };
 
@@ -101,11 +98,8 @@ namespace {
 
 struct names {
     enum enumeration { John, Jane, Jim };
-    static const std::map<std::string, enumeration>& map() {
-        static const auto inst = new std::map<std::string, enumeration>{
-            {"John", John}, {"Jane", Jane}, {"James", Jim}
-        };
-        return *inst;
+    static std::map<std::string, enumeration> map() {
+        return {{"John", John}, {"Jane", Jane}, {"James", Jim}};
     }
 };
 
@@ -126,13 +120,12 @@ namespace {
 
 struct cities {
     enum enumeration { SF, TO, NY };
-    static const std::unordered_map<std::string, enumeration>& map() {
-        static const auto inst = new std::unordered_map<std::string, enumeration>{
+    static std::unordered_map<std::string, enumeration> map() {
+        return {
             {"SanFrancisco", SF}, {"SF", SF}, {"SFO", SF}, {"Frisco", SF},
             {"Toronto", TO}, {"TO", TO}, {"YYZ", TO}, {"TheSix", TO},
             {"NewYork", NY}, {"NY", NY}, {"NYC", NY}, {"BigApple", NY},
         };
-        return *inst;
     }
 };
 
@@ -163,9 +156,8 @@ namespace {
 
 struct numbers {
     enum enumeration { ONE, TWO };
-    static const std::unordered_map<int, enumeration>& map() {
-        static const auto inst = new std::unordered_map<int, enumeration>{{1, ONE}, {2, TWO}};
-        return *inst;
+    static std::unordered_map<int, enumeration> map() {
+        return {{1, ONE}, {2, TWO}};
     }
 };
 
