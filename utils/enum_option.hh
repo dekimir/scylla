@@ -64,9 +64,7 @@ concept bool HasMapInterface = requires(T t) {
 ///   const static unordered_map<string, ty>& map();
 /// };
 /// const unordered_map<string, Type::ty>& Type::map() {
-///   static const auto inst =
-///     new unordered_map<string, Type::ty>{{"a1", Type::a1}, {"a2", Type::a2}, {"b1", Type::b1}};
-///   return *inst;
+///   return {{"a1", Type::a1}, {"a2", Type::a2}, {"b1", Type::b1}};
 /// }
 /// int main(int ac, char* av[]) {
 ///   namespace po = boost::program_options;
