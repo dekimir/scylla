@@ -182,7 +182,7 @@ static bool check_BEGINS_WITH(const rjson::value* v1, const rjson::value& v2) {
     return val1.substr(0, val2.size()) == val2;
 }
 
-static std::string_view get_strv(const rjson::value& v) {
+static std::string_view to_string_view(const rjson::value& v) {
     return std::string_view(v.GetString(), v.GetStringLength());
 }
 
@@ -203,7 +203,7 @@ static bool check_CONTAINS(const rjson::value* v1, const rjson::value& v2) {
                                "got {} instead", kv2.name));
     }
     if (kv1.name == "S" && kv2.name == "S") {
-        return get_strv(kv1.value).find(get_strv(kv2.value)) != std::string_view::npos;
+        return to_string_view(kv1.value).find(to_string_view(kv2.value)) != std::string_view::npos;
     } else if (kv1.name == "B" && kv2.name == "B") {
         return base64_decode(kv1.value).find(base64_decode(kv2.value)) != bytes::npos;
     } else if (is_set_of(kv1.name, kv2.name)) {
