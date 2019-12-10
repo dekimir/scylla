@@ -29,6 +29,7 @@
 #include "rjson.hh"
 #include "serialization.hh"
 #include "base64.hh"
+#include <stdexcept>
 
 namespace alternator {
 
@@ -455,7 +456,7 @@ static bool verify_expected_one(const rjson::value& condition, const rjson::valu
             verify_operand_count(attribute_value_list, exact_size(1), *comparison_operator);
             return check_NOT_CONTAINS(got, (*attribute_value_list)[0]);
         }
-        __builtin_unreachable();
+        throw std::logic_error(format("Internal error: corrupted operator enum: {}", int(op)));
     }
 }
 
