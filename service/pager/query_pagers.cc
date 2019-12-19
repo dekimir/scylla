@@ -331,7 +331,7 @@ public:
 
             row_count = v.total_rows - v.dropped_rows;
             _max = _max - row_count;
-            _exhausted = (v.total_rows < page_size && !results->is_short_read() && v.dropped_rows == 0) || _max == 0;
+            _exhausted = (v.total_rows < page_size && !results->is_short_read()) || _max == 0;
             // If per partition limit is defined, we need to accumulate rows fetched for last partition key if the key matches
             if (_cmd->slice.partition_row_limit() < query::max_rows) {
                 if (_last_pkey && v.last_pkey && _last_pkey->equal(*_schema, *v.last_pkey)) {
