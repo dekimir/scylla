@@ -277,7 +277,7 @@ selection::collect_metadata(schema_ptr schema, const std::vector<::shared_ptr<ra
 }
 
 result_set_builder::result_set_builder(const selection& s, gc_clock::time_point now, cql_serialization_format sf,
-                                       std::vector<size_t> group_by_cell_indices)
+                                       uint32_t max_rows, std::vector<size_t> group_by_cell_indices)
     : _result_set(std::make_unique<result_set>(::make_shared<metadata>(*(s.get_result_metadata()))))
     , _selectors(s.new_selectors())
     , _group_by_cell_indices(std::move(group_by_cell_indices))
@@ -285,6 +285,7 @@ result_set_builder::result_set_builder(const selection& s, gc_clock::time_point 
     , _group_began(false)
     , _now(now)
     , _cql_serialization_format(sf)
+    , _max_rows(max_rows)
 {
     if (s._collect_timestamps) {
         _timestamps.resize(s._columns.size(), 0);
@@ -348,7 +349,9 @@ bool result_set_builder::last_group_ended() const {
 }
 
 void result_set_builder::flush_selectors() {
-    _result_set->add_row(_selectors->get_output_row(_cql_serialization_format));
+    if (_result_set->size() < _max_rows) {
+        _result_set->add_row(_selectors->get_output_row(_cql_serialization_format));
+    }
     _selectors->reset();
 }
 

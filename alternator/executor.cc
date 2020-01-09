@@ -1214,7 +1214,7 @@ std::unordered_set<std::string> calculate_attrs_to_get(const rjson::value& req) 
 static std::optional<rjson::value> describe_single_item(schema_ptr schema, const query::partition_slice& slice, const cql3::selection::selection& selection, foreign_ptr<lw_shared_ptr<query::result>> query_result, std::unordered_set<std::string>&& attrs_to_get) {
     rjson::value item = rjson::empty_object();
 
-    cql3::selection::result_set_builder builder(selection, gc_clock::now(), cql_serialization_format::latest());
+    cql3::selection::result_set_builder builder(selection, gc_clock::now(), cql_serialization_format::latest(), query::max_rows);
     query::result_view::consume(*query_result, slice, cql3::selection::result_set_builder::visitor(builder, *schema, selection));
 
     auto result_set = builder.build();

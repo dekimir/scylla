@@ -346,7 +346,7 @@ select_statement::do_execute(service::storage_proxy& proxy,
     if (aggregate || nonpaged_filtering) {
         return do_with(
                 cql3::selection::result_set_builder(*_selection, now,
-                        options.get_cql_serialization_format(), *_group_by_cell_indices),
+                        options.get_cql_serialization_format(), command->row_limit, *_group_by_cell_indices),
                 [this, p, page_size, now, timeout_duration, restrictions_need_filtering](auto& builder) {
                     return do_until([p] {return p->is_exhausted();},
                             [p, &builder, page_size, now, timeout_duration] {
@@ -668,7 +668,7 @@ select_statement::process_results(foreign_ptr<lw_shared_ptr<query::result>> resu
     }
 
     cql3::selection::result_set_builder builder(*_selection, now,
-            options.get_cql_serialization_format());
+            options.get_cql_serialization_format(), get_limit(options));
     return do_with(std::move(builder), [this, cmd, restrictions_need_filtering, results = std::move(results), options] (cql3::selection::result_set_builder& builder) mutable {
         return builder.with_thread_if_needed([this, &builder, cmd, restrictions_need_filtering, results = std::move(results), options] {
             if (restrictions_need_filtering) {
@@ -918,7 +918,7 @@ indexed_table_select_statement::do_execute(service::storage_proxy& proxy,
     const bool aggregate = _selection->is_aggregate() || has_group_by();
     if (aggregate) {
         const bool restrictions_need_filtering = _restrictions->need_filtering();
-        return do_with(cql3::selection::result_set_builder(*_selection, now, options.get_cql_serialization_format()), std::make_unique<cql3::query_options>(cql3::query_options(options)),
+        return do_with(cql3::selection::result_set_builder(*_selection, now, options.get_cql_serialization_format(), get_limit(options)), std::make_unique<cql3::query_options>(cql3::query_options(options)),
                 [this, &options, &proxy, &state, now, whole_partitions, partition_slices, restrictions_need_filtering] (cql3::selection::result_set_builder& builder, std::unique_ptr<cql3::query_options>& internal_options) {
             // page size is set to the internal count page size, regardless of the user-provided value
             internal_options.reset(new cql3::query_options(std::move(internal_options), options.get_paging_state(), DEFAULT_COUNT_PAGE_SIZE));
@@ -1103,8 +1103,8 @@ indexed_table_select_statement::read_posting_list(service::storage_proxy& proxy,
     int32_t page_size = options.get_page_size();
     if (page_size <= 0 || !service::pager::query_pagers::may_need_paging(*_view_schema, page_size, *cmd, partition_ranges)) {
         return proxy.query(_view_schema, cmd, std::move(partition_ranges), options.get_consistency(), {timeout, state.get_permit(), state.get_client_state(), state.get_trace_state()})
-        .then([this, now, &options, selection = std::move(selection), partition_slice = std::move(partition_slice)] (service::storage_proxy::coordinator_query_result qr) {
-            cql3::selection::result_set_builder builder(*selection, now, options.get_cql_serialization_format());
+        .then([this, now, &options, selection = std::move(selection), partition_slice = std::move(partition_slice), limit] (service::storage_proxy::coordinator_query_result qr) {
+            cql3::selection::result_set_builder builder(*selection, now, options.get_cql_serialization_format(), limit);
             query::result_view::consume(*qr.query_result,
                                         std::move(partition_slice),
                                         cql3::selection::result_set_builder::visitor(builder, *_view_schema, *selection));

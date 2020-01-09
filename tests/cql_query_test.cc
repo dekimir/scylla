@@ -3952,6 +3952,20 @@ auto T(const char* t) { return utf8_type->decompose(t); }
 
 } // anonymous namespace
 
+SEASTAR_TEST_CASE(ttt) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
+        cquery_nofail(e, "create table torder (p1 int, c1 int, c2 int, r1 int, r2 int, PRIMARY KEY(p1, c1, c2));");
+        cquery_nofail(e, "insert into torder (p1, c1, c2, r1) values (0, 1, 2, 3);");
+        cquery_nofail(e, "insert into torder (p1, c1, c2, r1) values (0, 2, 1, 0);");
+        cquery_nofail(e, "insert into torder (p1, c1, c2, r1) values (0, 1, 1, 4);");
+        cquery_nofail(e, "insert into torder (p1, c1, c2, r1) values (0, 2, 2, 5);");
+        cquery_nofail(e, "insert into torder (p1, c1, c2, r1) values (1, 1, 0, 6);");
+        cquery_nofail(e, "insert into torder (p1, c1, c2, r1) values (1, 2, 3, 7);");
+        require_rows(e, "select c1, c2, r1 from torder where p1 in (0, 1) order by c1 desc, c2 desc limit 1;",
+                     {{int32_type->decompose(2), int32_type->decompose(3), int32_type->decompose(7)}});
+    });
+}
+
 SEASTAR_TEST_CASE(test_group_by_aggregate_single_key) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
         cquery_nofail(e, "create table t (p int primary key, n int)");

@@ -257,6 +257,7 @@ private:
     std::vector<int32_t> _ttls;
     const gc_clock::time_point _now;
     cql_serialization_format _cql_serialization_format;
+    uint32_t _max_rows;
 public:
     template<typename Func>
     auto with_thread_if_needed(Func&& func) {
@@ -321,7 +322,7 @@ public:
         bool do_filter(const selection& selection, const std::vector<bytes>& pk, const std::vector<bytes>& ck, const query::result_row_view& static_row, const query::result_row_view* row) const;
     };
 
-    result_set_builder(const selection& s, gc_clock::time_point now, cql_serialization_format sf,
+    result_set_builder(const selection& s, gc_clock::time_point now, cql_serialization_format sf, uint32_t max,
                        std::vector<size_t> group_by_cell_indices = {});
     void add_empty();
     void add(bytes_opt value);

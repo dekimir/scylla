@@ -21,6 +21,7 @@
 
 #include <utility>
 #include <algorithm>
+#include <limits>
 
 #include <boost/range/irange.hpp>
 #include <seastar/util/defer.hh>
@@ -476,7 +477,7 @@ public:
 
         return _ctx._proxy.query(_schema, std::move(command), std::move(partition_ranges), cl, service::storage_proxy::coordinator_query_options(default_timeout(), empty_service_permit(), client_state)).then(
                 [this, partition_slice = std::move(partition_slice), selection = std::move(selection)] (service::storage_proxy::coordinator_query_result qr) -> lw_shared_ptr<cql3::untyped_result_set> {
-                    cql3::selection::result_set_builder builder(*selection, gc_clock::now(), cql_serialization_format::latest());
+                    cql3::selection::result_set_builder builder(*selection, gc_clock::now(), cql_serialization_format::latest(), std::numeric_limits<uint32_t>::max());
                     query::result_view::consume(*qr.query_result, partition_slice, cql3::selection::result_set_builder::visitor(builder, *_schema, *selection));
                     auto result_set = builder.build();
                     if (!result_set || result_set->empty()) {

@@ -207,7 +207,7 @@ static bool has_clustering_keys(const schema& s, const query::read_command& cmd)
             gc_clock::time_point now, db::timeout_clock::time_point timeout) {
         return do_with(
                 cql3::selection::result_set_builder(*_selection, now,
-                        _options.get_cql_serialization_format()),
+                        _options.get_cql_serialization_format(), _cmd->row_limit),
                 [this, page_size, now, timeout](auto& builder) {
                     return this->fetch_page(builder, page_size, now, timeout).then([&builder] {
                         return builder.with_thread_if_needed([&builder] { return builder.build(); });
