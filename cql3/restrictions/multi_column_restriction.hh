@@ -90,6 +90,7 @@ public:
         auto as_pkr = static_pointer_cast<clustering_key_restrictions>(other);
         do_merge_with(as_pkr);
         update_asc_desc_existence();
+        expression = make_conjunction(std::move(expression), other->expression);
     }
 
     bool is_satisfied_by(const schema& schema,
@@ -640,10 +641,20 @@ private:
     ::shared_ptr<restriction> make_single_column_restriction(std::optional<cql3::statements::bound> bound, bool inclusive,
                                                              std::size_t column_pos,const bytes_opt& value) const {
         ::shared_ptr<cql3::term> term = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(value));
+        using namespace cql3::restrictions::wip;
         if (!bound){
-            return ::make_shared<cql3::restrictions::single_column_restriction::EQ>(*_column_defs[column_pos], term);
+            auto r = ::make_shared<cql3::restrictions::single_column_restriction::EQ>(*_column_defs[column_pos], term);
+            r->expression = binary_operator{
+                std::vector{column_value(_column_defs[column_pos])}, &operator_type::EQ, std::move(term)};
+            return r;
         } else {
-            return ::make_shared<cql3::restrictions::single_column_restriction::slice>(*_column_defs[column_pos], bound.value(), inclusive, term);
+            auto r = ::make_shared<cql3::restrictions::single_column_restriction::slice>(
+                    *_column_defs[column_pos], bound.value(), inclusive, term);
+            const auto op = is_start(*bound) ? (inclusive ? &operator_type::GTE : &operator_type::GT)
+                    : (inclusive ? &operator_type::LTE : &operator_type::LT);
+            r->expression = binary_operator{
+                std::vector{column_value(_column_defs[column_pos])}, op, std::move(term)};
+            return r;
         }
     }
 

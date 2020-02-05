@@ -45,6 +45,7 @@
 #include "cql3/cql3_type.hh"
 #include "cql3/lists.hh"
 #include "unimplemented.hh"
+#include "tuples.hh"
 #include "types/map.hh"
 #include "types/list.hh"
 
@@ -67,32 +68,47 @@ single_column_relation::to_term(const std::vector<lw_shared_ptr<column_specifica
 
 ::shared_ptr<restrictions::restriction>
 single_column_relation::new_EQ_restriction(database& db, schema_ptr schema, variable_specifications& bound_names) {
+    using namespace wip;
     const column_definition& column_def = to_column_definition(*schema, *_entity);
     if (!_map_key) {
         auto term = to_term(to_receivers(*schema, column_def), *_value, db, schema->ks_name(), bound_names);
-        return ::make_shared<single_column_restriction::EQ>(column_def, std::move(term));
+        auto restr = ::make_shared<single_column_restriction::EQ>(column_def, term);
+        restr->expression = binary_operator{std::vector{column_value(&column_def)}, &operator_type::EQ, term};
+        return restr;
     }
     auto&& receivers = to_receivers(*schema, column_def);
     auto&& entry_key = to_term({receivers[0]}, *_map_key, db, schema->ks_name(), bound_names);
     auto&& entry_value = to_term({receivers[1]}, *_value, db, schema->ks_name(), bound_names);
-    return make_shared<single_column_restriction::contains>(column_def, std::move(entry_key), std::move(entry_value));
+    auto restr = make_shared<single_column_restriction::contains>(column_def, entry_key, entry_value);
+    restr->expression =
+            binary_operator{std::vector{column_value(&column_def, entry_key)}, &operator_type::EQ, entry_value};
+    return restr;
 }
 
 ::shared_ptr<restrictions::restriction>
 single_column_relation::new_IN_restriction(database& db, schema_ptr schema, variable_specifications& bound_names) {
+    using namespace restrictions::wip;
     const column_definition& column_def = to_column_definition(*schema, *_entity);
     auto receivers = to_receivers(*schema, column_def);
     assert(_in_values.empty() || !_value);
     if (_value) {
         auto term = to_term(receivers, *_value, db, schema->ks_name(), bound_names);
-        return make_shared<single_column_restriction::IN_with_marker>(column_def, dynamic_pointer_cast<lists::marker>(term));
+        auto r = make_shared<single_column_restriction::IN_with_marker>(
+                column_def, dynamic_pointer_cast<lists::marker>(term));
+        r->expression = binary_operator{std::vector{column_value(&column_def)}, &operator_type::IN, std::move(term)};
+        return r;
     }
     auto terms = to_terms(receivers, _in_values, db, schema->ks_name(), bound_names);
     // Convert a single-item IN restriction to an EQ restriction
     if (terms.size() == 1) {
-        return ::make_shared<single_column_restriction::EQ>(column_def, std::move(terms[0]));
+        auto restr = ::make_shared<single_column_restriction::EQ>(column_def, terms[0]);
+        restr->expression = binary_operator{std::vector{column_value(&column_def)}, &operator_type::EQ, terms[0]};
+        return restr;
     }
-    return ::make_shared<single_column_restriction::IN_with_values>(column_def, std::move(terms));
+    auto r = ::make_shared<single_column_restriction::IN_with_values>(column_def, terms);
+    r->expression = binary_operator{std::vector{column_value(&column_def)}, &operator_type::IN,
+        ::make_shared<lists::delayed_value>(std::move(terms))};
+    return r;
 }
 
 ::shared_ptr<restrictions::restriction>
@@ -104,7 +120,10 @@ single_column_relation::new_LIKE_restriction(
                 format("LIKE is allowed only on string types, which {} is not", column_def.name_as_text()));
     }
     auto term = to_term(to_receivers(*schema, column_def), *_value, db, schema->ks_name(), bound_names);
-    return ::make_shared<single_column_restriction::LIKE>(column_def, std::move(term));
+    auto restr = ::make_shared<single_column_restriction::LIKE>(column_def, term);
+    using namespace wip;
+    restr->expression = binary_operator{std::vector{column_value(&column_def)}, &operator_type::LIKE, term};
+    return restr;
 }
 
 std::vector<lw_shared_ptr<column_specification>>

@@ -41,6 +41,7 @@
 
 #pragma once
 
+#include "cql3/lists.hh"
 #include "cql3/relation.hh"
 #include "cql3/term.hh"
 #include "cql3/tuples.hh"
@@ -145,7 +146,11 @@ protected:
             return cs->column_specification;
         });
         auto t = to_term(col_specs, *get_value(), db, schema->ks_name(), bound_names);
-        return ::make_shared<restrictions::multi_column_restriction::EQ>(schema, rs, t);
+        auto restr = ::make_shared<restrictions::multi_column_restriction::EQ>(schema, rs, t);
+        using namespace restrictions::wip;
+        std::vector<column_value> wip_rs(rs.cbegin(), rs.cend());
+        restr->expression = binary_operator{wip_rs, &operator_type::EQ, t};
+        return restr;
     }
 
     virtual shared_ptr<restrictions::restriction> new_IN_restriction(database& db, schema_ptr schema,
@@ -155,19 +160,29 @@ protected:
         std::transform(rs.begin(), rs.end(), col_specs.begin(), [] (auto cs) {
             return cs->column_specification;
         });
+        using namespace restrictions::wip;
+        std::vector<column_value> wip_rs(rs.cbegin(), rs.cend());
         if (_in_marker) {
             auto t = to_term(col_specs, *get_value(), db, schema->ks_name(), bound_names);
             auto as_abstract_marker = static_pointer_cast<abstract_marker>(t);
-            return ::make_shared<restrictions::multi_column_restriction::IN_with_marker>(schema, rs, as_abstract_marker);
+            auto r = ::make_shared<restrictions::multi_column_restriction::IN_with_marker>(
+                    schema, rs, as_abstract_marker);
+            r->expression = binary_operator{std::move(wip_rs), &operator_type::IN, std::move(t)};
+            return r;
         } else {
             std::vector<::shared_ptr<term::raw>> raws(_in_values.size());
             std::copy(_in_values.begin(), _in_values.end(), raws.begin());
-            auto ts = to_terms(col_specs, raws, db, schema->ks_name(), bound_names);
+            const auto ts = to_terms(col_specs, raws, db, schema->ks_name(), bound_names);
             // Convert a single-item IN restriction to an EQ restriction
             if (ts.size() == 1) {
-                return ::make_shared<restrictions::multi_column_restriction::EQ>(schema, rs, std::move(ts[0]));
+                auto restr = ::make_shared<restrictions::multi_column_restriction::EQ>(schema, rs, ts[0]);
+                restr->expression = binary_operator{std::move(wip_rs), &operator_type::EQ, ts[0]};
+                return restr;
             }
-            return ::make_shared<restrictions::multi_column_restriction::IN_with_values>(schema, rs, ts);
+            auto r = ::make_shared<restrictions::multi_column_restriction::IN_with_values>(schema, rs, ts);
+            r->expression = binary_operator{std::move(wip_rs), &operator_type::IN,
+                ::make_shared<lists::delayed_value>(std::move(ts))};
+            return r;
         }
     }
 
@@ -180,7 +195,11 @@ protected:
             return cs->column_specification;
         });
         auto t = to_term(col_specs, *get_value(), db, schema->ks_name(), bound_names);
-        return ::make_shared<restrictions::multi_column_restriction::slice>(schema, rs, bound, inclusive, t);
+        auto restr = ::make_shared<restrictions::multi_column_restriction::slice>(schema, rs, bound, inclusive, t);
+        using namespace restrictions::wip;
+        std::vector<column_value> wip_rs(rs.cbegin(), rs.cend());
+        restr->expression = binary_operator{wip_rs, &_relation_type, t};
+        return restr;
     }
 
     virtual shared_ptr<restrictions::restriction> new_contains_restriction(database& db, schema_ptr schema,

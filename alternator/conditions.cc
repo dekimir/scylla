@@ -33,6 +33,7 @@
 #include <boost/algorithm/cxx11/all_of.hpp>
 #include <boost/algorithm/cxx11/any_of.hpp>
 #include "utils/overloaded_functor.hh"
+#include "cql3/restrictions/restriction.hh"
 
 #include "expressions_eval.hh"
 
@@ -67,18 +68,28 @@ comparison_operator_type get_comparison_operator(const rjson::value& comparison_
     return it->second;
 }
 
+using cql3::operator_type;
+
 static ::shared_ptr<cql3::restrictions::single_column_restriction::contains> make_map_element_restriction(const column_definition& cdef, std::string_view key, const rjson::value& value) {
     bytes raw_key = utf8_type->from_string(sstring_view(key.data(), key.size()));
     auto key_value = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(std::move(raw_key)));
     bytes raw_value = serialize_item(value);
     auto entry_value = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(std::move(raw_value)));
-    return make_shared<cql3::restrictions::single_column_restriction::contains>(cdef, std::move(key_value), std::move(entry_value));
+    auto r = make_shared<cql3::restrictions::single_column_restriction::contains>(cdef, key_value, entry_value);
+    using namespace cql3::restrictions::wip;
+    r->expression = binary_operator{
+        std::vector{column_value(&cdef, std::move(key_value))}, &operator_type::EQ, std::move(entry_value)};
+    return r;
 }
 
 static ::shared_ptr<cql3::restrictions::single_column_restriction::EQ> make_key_eq_restriction(const column_definition& cdef, const rjson::value& value) {
     bytes raw_value = get_key_from_typed_value(value, cdef);
     auto restriction_value = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(std::move(raw_value)));
-    return make_shared<cql3::restrictions::single_column_restriction::EQ>(cdef, std::move(restriction_value));
+    auto r = make_shared<cql3::restrictions::single_column_restriction::EQ>(cdef, restriction_value);
+    using namespace cql3::restrictions::wip;
+    r->expression = binary_operator{
+        std::vector{column_value(&cdef)}, &operator_type::EQ, std::move(restriction_value)};
+    return r;
 }
 
 // Convert a QueryFilter or ScanFilter parameter into an equivalent set of

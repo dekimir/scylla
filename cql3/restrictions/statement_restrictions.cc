@@ -37,6 +37,7 @@
 #include "types/map.hh"
 #include "types/list.hh"
 #include "types/set.hh"
+#include "utils/overloaded_functor.hh"
 
 namespace cql3 {
 namespace restrictions {
@@ -991,6 +992,7 @@ sstring single_column_restriction::LIKE::to_string() const {
 void single_column_restriction::LIKE::merge_with(::shared_ptr<restriction> rest) {
     if (auto other = dynamic_pointer_cast<LIKE>(rest)) {
         boost::copy(other->_values, back_inserter(_values));
+        expression = make_conjunction(std::move(expression), rest->expression);
     } else {
         throw exceptions::invalid_request_exception(
                 format("{} cannot be restricted by both LIKE and non-LIKE restrictions", _column_def.name_as_text()));
@@ -1002,6 +1004,29 @@ void single_column_restriction::LIKE::merge_with(::shared_ptr<restriction> rest)
     std::copy(_values.cbegin() + 1, _values.cend(), back_inserter(r->_values));
     return r;
 }
+
+namespace wip {
+
+namespace {
+
+using children_t = std::vector<expression>; // conjunction's children.
+
+children_t explode_conjunction(expression e) {
+    return std::visit(overloaded_functor{
+            [] (const conjunction& c) { return std::move(c.children); },
+            [&] (const auto&) { return children_t{e}; },
+        }, e);
+}
+
+} // anonymous namespace
+
+expression make_conjunction(expression a, expression b) {
+    auto children = explode_conjunction(std::move(a));
+    boost::copy(explode_conjunction(std::move(b)), back_inserter(children));
+    return conjunction{children};
+}
+
+} // namespace wip
 
 } // namespace restrictions
 } // namespace cql3
