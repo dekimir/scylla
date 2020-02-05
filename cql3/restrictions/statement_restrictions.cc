@@ -37,6 +37,7 @@
 #include "types/map.hh"
 #include "types/list.hh"
 #include "types/set.hh"
+#include "utils/overloaded_functor.hh"
 
 namespace cql3 {
 namespace restrictions {
@@ -1020,6 +1021,43 @@ void single_column_restriction::LIKE::merge_with(::shared_ptr<restriction> rest)
     std::copy(_values.cbegin() + 1, _values.cend(), back_inserter(r->_values));
     return r;
 }
+
+namespace wip {
+
+::shared_ptr<expression> make_conjunction(::shared_ptr<expression> a, ::shared_ptr<expression> b) {
+    if (!a) {
+        return b;
+    }
+    if (!b) {
+        return a;
+    }
+    return std::visit(overloaded_functor{
+            [&] (const conjunction& a_conj) {
+                auto operands = a_conj.children;
+                std::visit(overloaded_functor{
+                        [&] (const conjunction& b_conj) {
+                            operands.insert(operands.end(), b_conj.children.cbegin(), b_conj.children.cend());
+                        },
+                        [&] (const binary_operator&) {
+                            operands.push_back(b);
+                        },
+                    }, *b);
+                return ::make_shared<expression>(conjunction{operands});
+            },
+            [&] (const binary_operator& a_binop) {
+                return std::visit(overloaded_functor{
+                        [&] (const conjunction&) {
+                            return make_conjunction(b, a);
+                        },
+                        [&] (const binary_operator&) {
+                            return ::make_shared<expression>(conjunction{std::vector{a, b}});
+                        },
+                    }, *b);
+            },
+        }, *a);
+}
+
+} // namespace wip
 
 } // namespace restrictions
 } // namespace cql3

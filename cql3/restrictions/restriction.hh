@@ -41,10 +41,13 @@
 
 #pragma once
 
+#include <memory>
+#include <variant>
 #include <vector>
 
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/sstring.hh>
+#include "cql3/abstract_marker.hh"
 #include "cql3/query_options.hh"
 #include "cql3/term.hh"
 #include "cql3/statements/bound.hh"
@@ -57,6 +60,55 @@ namespace restrictions {
 
 struct allow_local_index_tag {};
 using allow_local_index = bool_class<allow_local_index_tag>;
+
+/// Work-in-progress new restriction representation.  When complete, it will replace the old one.
+namespace wip {
+
+// The new representation exposes its member data publicly.  Operations on restrictions are
+// performed by free functions that take restrictions as parameters and use the visitor pattern to
+// specialize code for different kinds of restrictions.
+//
+// The most interesting class is wip::binary_operator below, which can represent both multi- and
+// single-column restrictions.  Instead of the old merge_with mechanism for combining restrictions,
+// we will simply add them into a conjunction expression that will be processed using visitors.
+
+class binary_operator;
+class conjunction;
+
+/// A restriction expression -- union of all possible restriction types.
+using expression = std::variant<binary_operator, conjunction>;
+
+/// A column, optionally subscripted by a term (eg, c1 or c2['abc']).
+struct column_value {
+    const column_definition* col;
+    ::shared_ptr<term> sub; ///< If present, this LHS is col[sub], otherwise just col.
+    /// For easy creation of vector<column_value> from vector<column_definition*>.
+    column_value(const column_definition* col) : col(col) {}
+    /// The compiler doesn't auto-generate this due to the other constructor's existence.
+    column_value(const column_definition* col, ::shared_ptr<term> sub) : col(col), sub(sub) {}
+};
+
+/// Represents token function on LHS of an operator relation.  No need to list column definitions
+/// here -- token takes exactly the partition key as its argument.
+struct token {};
+
+/// Operator restriction: LHS op RHS.
+struct binary_operator {
+    std::variant<std::vector<column_value>, token> lhs;
+    const operator_type& op;
+    ::shared_ptr<term> rhs;
+};
+
+/// A conjunction of restrictions.
+struct conjunction {
+    std::vector<::shared_ptr<expression>> children;
+};
+
+/// Creates a conjunction of a and b.  If either a or b is itself a conjunction, its children are inserted
+/// directly into the resulting conjunction's children, flattening the expression tree.
+extern ::shared_ptr<expression> make_conjunction(::shared_ptr<expression> a, ::shared_ptr<expression> b);
+
+} // namespace wip
 
 /**
  * Base class for <code>Restriction</code>s
@@ -74,6 +126,7 @@ protected:
     enum_set<op_enum> _ops;
     target _target = target::SINGLE_COLUMN;
 public:
+    ::shared_ptr<wip::expression> expression; ///< wip equivalent of *this.
     virtual ~restriction() {}
 
     restriction() = default;
