@@ -85,7 +85,11 @@ std::vector<::shared_ptr<cql3::column_specification>> cql3::token_relation::to_r
     auto column_defs = get_column_definitions(*schema);
     auto term = to_term(to_receivers(*schema, column_defs), *_value, db,
             schema->ks_name(), bound_names);
-    return ::make_shared<restrictions::token_restriction::EQ>(column_defs, term);
+    auto restr = ::make_shared<restrictions::token_restriction::EQ>(column_defs, term);
+    using namespace restrictions::wip;
+    restr->wip_equivalent = ::make_shared<expression>(
+            binary_operator{restrictions::wip::token{}, _relation_type, term});
+    return restr;
 }
 
 ::shared_ptr<cql3::restrictions::restriction> cql3::token_relation::new_IN_restriction(
@@ -104,8 +108,12 @@ std::vector<::shared_ptr<cql3::column_specification>> cql3::token_relation::to_r
     auto column_defs = get_column_definitions(*schema);
     auto term = to_term(to_receivers(*schema, column_defs), *_value, db,
             schema->ks_name(), bound_names);
-    return ::make_shared<restrictions::token_restriction::slice>(column_defs,
+    auto restr = ::make_shared<restrictions::token_restriction::slice>(column_defs,
             bound, inclusive, term);
+    using namespace restrictions::wip;
+    restr->wip_equivalent = ::make_shared<expression>(
+            binary_operator{restrictions::wip::token{}, _relation_type, term});
+    return restr;
 }
 
 ::shared_ptr<cql3::restrictions::restriction> cql3::token_relation::new_contains_restriction(

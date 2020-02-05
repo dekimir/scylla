@@ -341,6 +341,8 @@ public:
         }
 
         _slice.merge(other_slice->_slice);
+        wip_equivalent = ::make_shared<wip::expression>(
+                wip::conjunction{std::vector{wip_equivalent, r->wip_equivalent}});
     }
 
 #if 0
@@ -481,6 +483,8 @@ public:
         std::copy(other->_keys.begin(), other->_keys.end(), std::back_inserter(_keys));
         std::copy(other->_entry_keys.begin(), other->_entry_keys.end(), std::back_inserter(_entry_keys));
         std::copy(other->_entry_values.begin(), other->_entry_values.end(), std::back_inserter(_entry_values));
+        wip_equivalent = ::make_shared<wip::expression>(
+                wip::conjunction{std::vector{wip_equivalent, other_restriction->wip_equivalent}});
     }
 
 #if 0

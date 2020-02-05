@@ -90,6 +90,8 @@ public:
         auto as_pkr = static_pointer_cast<clustering_key_restrictions>(other);
         do_merge_with(as_pkr);
         update_asc_desc_existence();
+        wip_equivalent = ::make_shared<wip::expression>(
+                wip::conjunction{std::vector{wip_equivalent, other->wip_equivalent}});
     }
 
     bool is_satisfied_by(const schema& schema,

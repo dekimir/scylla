@@ -172,7 +172,10 @@ protected:
         }
 
         auto term = to_term(to_receivers(*schema, column_def), *_value, db, schema->ks_name(), bound_names);
-        return ::make_shared<restrictions::single_column_restriction::slice>(column_def, bound, inclusive, std::move(term));
+        auto restr = ::make_shared<restrictions::single_column_restriction::slice>(column_def, bound, inclusive, term);
+        using namespace restrictions::wip;
+        restr->wip_equivalent = ::make_shared<expression>(binary_operator{idents{&column_def}, _relation_type, term});
+        return restr;
     }
 
     virtual shared_ptr<restrictions::restriction> new_contains_restriction(database& db, schema_ptr schema,
