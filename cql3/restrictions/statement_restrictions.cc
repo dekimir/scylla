@@ -37,6 +37,7 @@
 #include "types/map.hh"
 #include "types/list.hh"
 #include "types/set.hh"
+#include "utils/overloaded_functor.hh"
 
 namespace cql3 {
 namespace restrictions {
@@ -1020,6 +1021,29 @@ void single_column_restriction::LIKE::merge_with(::shared_ptr<restriction> rest)
     std::copy(_values.cbegin() + 1, _values.cend(), back_inserter(r->_values));
     return r;
 }
+
+namespace wip {
+
+namespace {
+
+using children_t = std::vector<expression>; // conjunction's children.
+
+children_t explode_conjunction(const expression& e) {
+    return std::visit(overloaded_functor{
+            [] (const conjunction& c) { return c.children; },
+            [&] (const auto&) { return children_t{e}; },
+        }, e);
+}
+
+} // anonymous namespace
+
+expression make_conjunction(const expression& a, const expression& b) {
+    auto children = explode_conjunction(a);
+    boost::copy(explode_conjunction(b), back_inserter(children));
+    return conjunction{children};
+}
+
+} // namespace wip
 
 } // namespace restrictions
 } // namespace cql3
