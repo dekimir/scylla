@@ -30,6 +30,7 @@ namespace cql3::restrictions {
 struct restrictions_config {
     uint32_t partition_key_restrictions_max_cartesian_product_size = 100;
     uint32_t clustering_key_restrictions_max_cartesian_product_size = 100;
+    bool use_wip = false;
 };
 
 }
