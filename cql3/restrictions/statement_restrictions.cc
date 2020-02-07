@@ -24,19 +24,24 @@
 #include <boost/range/algorithm.hpp>
 #include <boost/range/adaptors.hpp>
 #include <boost/algorithm/cxx11/any_of.hpp>
+#include <stdexcept>
 
+#include "query-result-reader.hh"
 #include "statement_restrictions.hh"
 #include "single_column_primary_key_restrictions.hh"
 #include "token_restriction.hh"
 #include "database.hh"
 
-#include "cql3/single_column_relation.hh"
 #include "cql3/constants.hh"
-#include "types/map.hh"
+#include "cql3/selection/selection.hh"
+#include "cql3/single_column_relation.hh"
 #include "types/list.hh"
+#include "types/map.hh"
 #include "types/set.hh"
+#include "utils/overloaded_functor.hh"
 
 namespace cql3 {
+
 namespace restrictions {
 
 static logging::logger rlogger("restrictions");
@@ -969,5 +974,224 @@ bool single_column_restriction::LIKE::is_satisfied_by(bytes_view data, const que
     return (*_matcher)(data);
 }
 
+namespace wip {
+
+namespace {
+
+using cql3::selection::selection;
+
+/// Returns cdef's value from the fetched data.
+bytes_opt get_value(const column_definition* cdef, const selection& selection,
+                    const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
+                    const std::vector<bytes_opt>& other_columns) {
+    switch (cdef->kind) {
+    case column_kind::partition_key:
+        return partition_key[cdef->id];
+    case column_kind::clustering_key:
+        return clustering_key[cdef->id];
+    case column_kind::static_column:
+    case column_kind::regular_column:
+        return other_columns[selection.index_of(*cdef)];
+    default:
+        throw exceptions::unsupported_operation_exception("Unknown column kind");
+    }
 }
+
+/// True iff columns' values equal t.
+bool equal(::shared_ptr<term> t, const idents& columns, const selection& selection,
+           const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
+           const std::vector<bytes_opt>& other_columns, const query_options& options) {
+    if (auto multi = dynamic_pointer_cast<multi_item_terminal>(t)) {
+        const auto& rhs = multi->get_elements();
+        if (rhs.size() != columns.size()) {
+            throw std::logic_error("LHS and RHS size mismatch");
+        }
+        for (size_t i = 0; i < rhs.size(); ++i) {
+            if (rhs[i] != get_value(columns[i], selection, partition_key, clustering_key, other_columns)) {
+                return false;
+            }
+        }
+        return true;
+    } else  {
+        if (columns.size() != 1) {
+            throw std::logic_error("RHS for multi-column is not a tuple");
+        }
+        return to_bytes_opt(t->bind_and_get(options)) ==
+                get_value(columns[0], selection, partition_key, clustering_key, other_columns);
+    }
 }
+
+/// True iff lhs is limited by rhs in the manner prescribed by op.
+bool limits(const bytes& lhs, const operator_type& op, const bytes& rhs, const abstract_type& type) {
+    const auto cmp = type.as_tri_comparator()(lhs, rhs);
+    if (cmp < 0) {
+        return op == operator_type::LT || op == operator_type::LTE;
+    } else if (cmp > 0) {
+        return op == operator_type::GT || op == operator_type::GTE;
+    } else {
+        return op == operator_type::LTE || op == operator_type::GTE;
+    }
+}
+
+/// True iff the value of opr.lhs is limited by opr.rhs in the manner prescribed by opr.op.
+bool limits(const binary_operator& opr, const selection& selection,
+            const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
+            const std::vector<bytes_opt>& other_columns, const query_options& options) {
+    const auto& columns = std::get<idents>(opr.lhs);
+    if (auto multi = dynamic_pointer_cast<multi_item_terminal>(opr.rhs)) {
+        const auto& rhs = multi->get_elements();
+        if (rhs.size() != columns.size()) {
+            throw std::logic_error("LHS and RHS size mismatch");
+        }
+        for (size_t i = 0; i < rhs.size(); ++i) {
+            const auto cmp = columns[i]->type->as_tri_comparator()(
+                    *get_value(columns[i], selection, partition_key, clustering_key, other_columns),
+                    *rhs[i]);
+            // If the components aren't equal, then we just learned the LHS/RHS order.
+            if (cmp < 0) {
+                if (opr.op == operator_type::LT || opr.op == operator_type::LTE) {
+                    return true;
+                } else if (opr.op == operator_type::GT || opr.op == operator_type::GTE) {
+                    return false;
+                } else {
+                    throw std::logic_error("Unknown slice operator");
+                }
+            } else if (cmp > 0) {
+                if (opr.op == operator_type::LT || opr.op == operator_type::LTE) {
+                    return false;
+                } else if (opr.op == operator_type::GT || opr.op == operator_type::GTE) {
+                    return true;
+                } else {
+                    throw std::logic_error("Unknown slice operator");
+                }
+            }
+            // Otherwise, we don't know the LHS/RHS order, so check the next component.
+        }
+        // Getting here means LHS == RHS.
+        return opr.op == operator_type::LTE || opr.op == operator_type::GTE;
+    } else {
+        if (columns.size() != 1) {
+            throw std::logic_error("RHS for multi-column is not a tuple");
+        }
+        auto lhs = get_value(columns[0], selection, partition_key, clustering_key, other_columns);
+        if (!lhs) {
+            return false;
+        }
+        auto rhs = to_bytes_opt(opr.rhs->bind_and_get(options));
+        if (!rhs) {
+            return false;
+        }
+        return limits(*lhs, opr.op, *rhs, *columns[0]->type);
+    }
+}
+
+/// Fetches the next cell value from iter and returns its value as bytes_opt if the cell is atomic;
+/// otherwise, returns nullopt.
+bytes_opt next_value(query::result_row_view::iterator_type& iter, const column_definition* cdef) {
+    if (cdef->type->is_multi_cell()) {
+        iter.next_collection_cell();
+    } else {
+        auto cell = iter.next_atomic_cell();
+        if (cell) {
+            return cell->value().with_linearized([] (bytes_view data) {
+                return bytes(data.cbegin(), data.cend());
+            });
+        }
+    }
+    return std::nullopt;
+}
+
+/// Returns values of non-primary-key, non-collection columns from selection.  The kth element of
+/// the result corresponds to the kth column in selection.
+std::vector<bytes_opt> get_non_pkc_values(const selection& selection, const query::result_row_view& static_row,
+                                          const query::result_row_view* row) {
+    const auto& cols = selection.get_columns();
+    std::vector<bytes_opt> vals(cols.size());
+    auto static_row_iterator = static_row.iterator();
+    auto row_iterator = row ? std::optional<query::result_row_view::iterator_type>(row->iterator()) : std::nullopt;
+    for (size_t i = 0; i < cols.size(); ++i) {
+        // TODO: use do_get_value() here.
+        switch (cols[i]->kind) {
+        case column_kind::static_column:
+            vals[i] = next_value(static_row_iterator, cols[i]);
+            break;
+        case column_kind::regular_column:
+            if (row) {
+                vals[i] = next_value(*row_iterator, cols[i]);
+            }
+            break;
+        default: // Skip.
+            break;
+        }
+    }
+    return vals;
+}
+
+/// WIP equivalent of restriction::is_satisfied_by.
+bool is_satisfied_by(
+        const expression& restr,
+        const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
+        const query::result_row_view& static_row, const query::result_row_view* row,
+        const selection& selection, const query_options& options) {
+    bool satisfies = false;
+    std::visit(overloaded_functor{
+            [&] (const conjunction& conj) {
+                for (auto& c : conj.children) {
+                    if (!is_satisfied_by(*c, partition_key, clustering_key, static_row, row, selection, options)) {
+                        satisfies = false;
+                        return;
+                    }
+                }
+                satisfies = true;
+            },
+            [&] (const binary_operator& opr) {
+                std::visit(overloaded_functor{
+                        [&] (const idents& ids) {
+                            auto other_columns = get_non_pkc_values(selection, static_row, row);
+                            if (opr.op == operator_type::EQ) {
+                                satisfies = equal(opr.rhs, ids, selection, partition_key, clustering_key, other_columns, options);
+                            } else if (opr.op == operator_type::NEQ) {
+                                satisfies = !equal(opr.rhs, ids, selection, partition_key, clustering_key, other_columns, options);
+                            } else if (opr.op.is_slice()) {
+                                satisfies = limits(opr, selection, partition_key, clustering_key, other_columns, options);
+                            } else {
+                                throw exceptions::unsupported_operation_exception("Unhandled wip::oper operator");
+                            }
+                        },
+                        [] (const token& tok) { /*TODO: implement*/ },
+                        [] (const subscript& sub) { /*TODO: implement*/ },
+                        [] (auto& default_case) {
+                            throw exceptions::unsupported_operation_exception("Unknown wip::binary_operator subtype");
+                        }
+                    }, opr.lhs);
+            },
+            [] (auto& default_case) {
+                throw exceptions::unsupported_operation_exception("Unknown wip::expression subtype");
+            }
+        }, restr);
+    return satisfies;
+}
+
+} // anonymous namespace
+
+void check_is_satisfied_by(
+        shared_ptr<expression> restr,
+        const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
+        const query::result_row_view& static_row, const query::result_row_view* row,
+        const selection& selection, const query_options& options,
+        bool expected) {
+    if (!options.get_cql_config().restrictions.use_wip) {
+        return;
+    }
+    if (!restr) {
+        rlogger.warn("Unimplemented wip restriction");
+        return;
+    }
+    if (expected != is_satisfied_by(*restr, partition_key, clustering_key, static_row, row, selection, options)) {
+        throw std::logic_error("WIP restrictions mismatch");
+    }
+}
+
+} // namespace wip
+} // namespace restrictions
+} // namespace cql3
