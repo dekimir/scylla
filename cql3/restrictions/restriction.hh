@@ -52,9 +52,14 @@
 #include "cql3/term.hh"
 #include "cql3/statements/bound.hh"
 #include "index/secondary_index_manager.hh"
+#include "query-result-reader.hh"
 #include "types.hh"
 
 namespace cql3 {
+
+namespace selection {
+class selection;
+} // namespace selection
 
 namespace restrictions {
 
@@ -107,6 +112,15 @@ struct conjunction {
 /// Creates a conjunction of a and b.  If either a or b is itself a conjunction, its children are inserted
 /// directly into the resulting conjunction's children, flattening the expression tree.
 extern ::shared_ptr<expression> make_conjunction(::shared_ptr<expression> a, ::shared_ptr<expression> b);
+
+/// Checks if restr is satisfied by the given data, then throws if the result is different from
+/// expected.
+extern void check_is_satisfied_by(
+        shared_ptr<expression> restr,
+        const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
+        const query::result_row_view& static_row, const query::result_row_view* row,
+        const selection::selection&, const query_options&,
+        bool expected);
 
 } // namespace wip
 
