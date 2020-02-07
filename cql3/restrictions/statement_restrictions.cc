@@ -26,20 +26,24 @@
 #include <boost/range/algorithm/transform.hpp>
 #include <boost/range/algorithm.hpp>
 #include <boost/range/adaptors.hpp>
+#include <stdexcept>
 
+#include "query-result-reader.hh"
 #include "statement_restrictions.hh"
 #include "single_column_primary_key_restrictions.hh"
 #include "token_restriction.hh"
 #include "database.hh"
 
-#include "cql3/single_column_relation.hh"
 #include "cql3/constants.hh"
-#include "types/map.hh"
+#include "cql3/selection/selection.hh"
+#include "cql3/single_column_relation.hh"
 #include "types/list.hh"
+#include "types/map.hh"
 #include "types/set.hh"
 #include "utils/overloaded_functor.hh"
 
 namespace cql3 {
+
 namespace restrictions {
 
 static logging::logger rlogger("restrictions");
@@ -1041,6 +1045,351 @@ expression make_conjunction(const expression& a, const expression& b) {
     auto children = explode_conjunction(a);
     boost::copy(explode_conjunction(b), back_inserter(children));
     return conjunction{children};
+}
+
+namespace {
+
+using cql3::selection::selection;
+
+/// Serialized values for all types of cells.
+struct row_data {
+    const std::vector<bytes>& partition_key;
+    const std::vector<bytes>& clustering_key;
+    const std::vector<bytes_opt>& other_columns;
+};
+
+/// Returns col's value from the fetched data.
+bytes_opt get_value(const column_value& col, const selection& selection, row_data cells,
+                    const query_options& options) {
+    auto cdef = col.col;
+    if (col.sub) {
+        auto col_type = static_pointer_cast<const collection_type_impl>(cdef->type);
+        if (!col_type->is_map()) {
+            throw exceptions::invalid_request_exception("subscripting non-map column");
+        }
+        const auto deserialized = cdef->type->deserialize(*cells.other_columns[selection.index_of(*cdef)]);
+        const auto& data_map = value_cast<map_type_impl::native_type>(deserialized);
+        const auto key = col.sub->bind_and_get(options);
+        auto&& key_type = col_type->name_comparator();
+        const auto found = with_linearized(*key, [&] (bytes_view key_bv) {
+            return std::find_if(data_map.cbegin(), data_map.cend(), [&] (auto&& element) {
+                return key_type->compare(element.first.serialize_nonnull(), key_bv) == 0;
+            });
+        });
+        return found == data_map.cend() ? bytes_opt() : bytes_opt(found->second.serialize_nonnull());
+    } else {
+        switch (cdef->kind) {
+        case column_kind::partition_key:
+            return cells.partition_key[cdef->id];
+        case column_kind::clustering_key:
+            return cells.clustering_key[cdef->id];
+        case column_kind::static_column:
+        case column_kind::regular_column:
+            return cells.other_columns[selection.index_of(*cdef)];
+        default:
+            throw exceptions::unsupported_operation_exception("Unknown column kind");
+        }
+    }
+}
+
+/// The comparator type for cv.
+data_type comparator(const column_value& cv) {
+    return cv.sub ?
+            static_pointer_cast<const collection_type_impl>(cv.col->type)->value_comparator() : cv.col->type;
+}
+
+/// True iff lhs's value equals rhs.
+bool equal(const bytes_opt& rhs, const column_value& lhs,
+           const selection& selection, row_data cells, const query_options& options) {
+    if (!rhs) {
+        return false;
+    }
+    const auto value = get_value(lhs, selection, cells, options);
+    if (!value) {
+        return false;
+    }
+    return comparator(lhs)->equal(*value, *rhs);
+}
+
+/// True iff columns' values equal t.
+bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const selection& selection,
+           row_data cells, const query_options& options) {
+    if (columns.size() > 1) {
+        auto multi = dynamic_pointer_cast<multi_item_terminal>(t);
+        if (!multi) {
+            throw std::logic_error("RHS for multi-column is not a tuple");
+        }
+        const auto& rhs = multi->get_elements();
+        if (rhs.size() != columns.size()) {
+            throw std::logic_error("LHS and RHS size mismatch");
+        }
+        return boost::equal(rhs, columns, [&] (const bytes_opt& rhs, const column_value& lhs) {
+            return equal(rhs, lhs, selection, cells, options);
+        });
+    } else if (columns.size() == 1) {
+        return equal(to_bytes_opt(t->bind_and_get(options)), columns[0], selection, cells, options);
+    } else {
+        throw std::logic_error("empty tuple on LHS of =");
+    }
+}
+
+/// True iff lhs is limited by rhs in the manner prescribed by op.
+bool limits(bytes_view lhs, const operator_type& op, bytes_view rhs, const abstract_type& type) {
+    if (!op.is_compare()) {
+        throw std::logic_error("limits() called on non-compare op");
+    }
+    const auto cmp = type.as_tri_comparator()(lhs, rhs);
+    if (cmp < 0) {
+        return op == operator_type::LT || op == operator_type::LTE || op == operator_type::NEQ;
+    } else if (cmp > 0) {
+        return op == operator_type::GT || op == operator_type::GTE || op == operator_type::NEQ;
+    } else {
+        return op == operator_type::LTE || op == operator_type::GTE || op == operator_type::EQ;
+    }
+}
+
+/// True iff the value of opr.lhs is limited by opr.rhs in the manner prescribed by opr.op.
+bool limits(const binary_operator& opr, const selection& selection, row_data cells,
+            const query_options& options) {
+    if (!opr.op->is_slice()) { // For EQ or NEQ, use equals().
+        throw std::logic_error("limits() called on non-slice op");
+    }
+    const auto& columns = std::get<0>(opr.lhs);
+    if (columns.size() > 1) {
+        auto multi = dynamic_pointer_cast<multi_item_terminal>(opr.rhs);
+        if (!multi) {
+            throw std::logic_error("RHS for multi-column is not a tuple");
+        }
+        const auto& rhs = multi->get_elements();
+        if (rhs.size() != columns.size()) {
+            throw std::logic_error("LHS and RHS size mismatch");
+        }
+        for (size_t i = 0; i < rhs.size(); ++i) {
+            const auto cmp = comparator(columns[i])->as_tri_comparator()(
+                    // CQL dictates that columns[i] is a clustering column and non-null.
+                    *get_value(columns[i], selection, cells, options),
+                    *rhs[i]);
+            // If the components aren't equal, then we just learned the LHS/RHS order.
+            if (cmp < 0) {
+                if (*opr.op == operator_type::LT || *opr.op == operator_type::LTE) {
+                    return true;
+                } else if (*opr.op == operator_type::GT || *opr.op == operator_type::GTE) {
+                    return false;
+                } else {
+                    throw std::logic_error("Unknown slice operator");
+                }
+            } else if (cmp > 0) {
+                if (*opr.op == operator_type::LT || *opr.op == operator_type::LTE) {
+                    return false;
+                } else if (*opr.op == operator_type::GT || *opr.op == operator_type::GTE) {
+                    return true;
+                } else {
+                    throw std::logic_error("Unknown slice operator");
+                }
+            }
+            // Otherwise, we don't know the LHS/RHS order, so check the next component.
+        }
+        // Getting here means LHS == RHS.
+        return *opr.op == operator_type::LTE || *opr.op == operator_type::GTE;
+    } else if (columns.size() == 1) {
+        auto lhs = get_value(columns[0], selection, cells, options);
+        if (!lhs) {
+            lhs = bytes(); // Compatible with old code, which feeds null to type comparators.
+        }
+        auto rhs = to_bytes_opt(opr.rhs->bind_and_get(options));
+        if (!rhs) {
+            return false;
+        }
+        return limits(*lhs, *opr.op, *rhs, *columns[0].col->type);
+    } else {
+        throw std::logic_error("empty tuple on LHS of an inequality");
+    }
+}
+
+/// True iff collection (list, set, or map) contains value.
+bool contains(const data_value& collection, const raw_value_view& value) {
+    if (!value) {
+        return true; // Compatible with old code, which skips null terms in value comparisons.
+    }
+    auto col_type = static_pointer_cast<const collection_type_impl>(collection.type());
+    auto&& element_type = col_type->is_set() ? col_type->name_comparator() : col_type->value_comparator();
+    return with_linearized(*value, [&] (bytes_view val) {
+        auto exists_in = [&](auto&& range) {
+            auto found = std::find_if(range.begin(), range.end(), [&] (auto&& element) {
+                return element_type->compare(element.serialize_nonnull(), val) == 0;
+            });
+            return found != range.end();
+        };
+        if (col_type->is_list()) {
+            if (!exists_in(value_cast<list_type_impl::native_type>(collection))) {
+                return false;
+            }
+        } else if (col_type->is_set()) {
+            if (!exists_in(value_cast<set_type_impl::native_type>(collection))) {
+                return false;
+            }
+        } else {
+            auto data_map = value_cast<map_type_impl::native_type>(collection);
+            using entry = std::pair<data_value, data_value>;
+            if (!exists_in(data_map | boost::adaptors::transformed([] (const entry& e) { return e.second; }))) {
+                return false;
+            }
+        }
+        return true;
+    });
+}
+
+/// True iff columns is a single collection containing value.
+bool contains(const raw_value_view& value, const std::vector<column_value>& columns, const selection& selection,
+              row_data cells, const query_options& options) {
+    if (columns.size() != 1) {
+        throw exceptions::unsupported_operation_exception("tuple CONTAINS not allowed");
+    }
+    if (columns[0].sub) {
+        throw exceptions::unsupported_operation_exception("CONTAINS lhs is subscripted");
+    }
+    const auto collection = get_value(columns[0], selection, cells, options);
+    if (collection) {
+        return contains(columns[0].col->type->deserialize(*collection), value);
+    } else {
+        return false;
+    }
+}
+
+/// True iff \p columns has a single element that's a map containing \p key.
+bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view key,
+                  const selection& selection, row_data cells, const query_options& options) {
+    if (columns.size() != 1) {
+        throw exceptions::unsupported_operation_exception("CONTAINS KEY on a tuple");
+    }
+    if (columns[0].sub) {
+        throw exceptions::unsupported_operation_exception("CONTAINS KEY lhs is subscripted");
+    }
+    if (!key) {
+        return true; // Compatible with old code, which skips null terms in key comparisons.
+    }
+    auto cdef = columns[0].col;
+    const auto collection = get_value(columns[0], selection, cells, options);
+    if (!collection) {
+        return false;
+    }
+    const auto data_map = value_cast<map_type_impl::native_type>(cdef->type->deserialize(*collection));
+    auto key_type = static_pointer_cast<const collection_type_impl>(cdef->type)->name_comparator();
+    auto found = with_linearized(*key, [&] (bytes_view k_bv) {
+        using entry = std::pair<data_value, data_value>;
+        return std::find_if(data_map.begin(), data_map.end(), [&] (const entry& element) {
+            return key_type->compare(element.first.serialize_nonnull(), k_bv) == 0;
+        });
+    });
+    return found != data_map.end();
+}
+
+/// Fetches the next cell value from iter and returns its value as bytes_opt if the cell is atomic;
+/// otherwise, returns nullopt.
+bytes_opt next_value(query::result_row_view::iterator_type& iter, const column_definition* cdef) {
+    if (cdef->type->is_multi_cell()) {
+        auto cell = iter.next_collection_cell();
+        if (cell) {
+            return cell->with_linearized([] (bytes_view data) {
+                return bytes(data.cbegin(), data.cend());
+            });
+        }
+    } else {
+        auto cell = iter.next_atomic_cell();
+        if (cell) {
+            return cell->value().with_linearized([] (bytes_view data) {
+                return bytes(data.cbegin(), data.cend());
+            });
+        }
+    }
+    return std::nullopt;
+}
+
+/// Returns values of non-primary-key columns from selection.  The kth element of the result
+/// corresponds to the kth column in selection.
+std::vector<bytes_opt> get_non_pk_values(const selection& selection, const query::result_row_view& static_row,
+                                         const query::result_row_view* row) {
+    const auto& cols = selection.get_columns();
+    std::vector<bytes_opt> vals(cols.size());
+    auto static_row_iterator = static_row.iterator();
+    auto row_iterator = row ? std::optional<query::result_row_view::iterator_type>(row->iterator()) : std::nullopt;
+    for (size_t i = 0; i < cols.size(); ++i) {
+        // TODO: use do_get_value() here.
+        switch (cols[i]->kind) {
+        case column_kind::static_column:
+            vals[i] = next_value(static_row_iterator, cols[i]);
+            break;
+        case column_kind::regular_column:
+            if (row) {
+                vals[i] = next_value(*row_iterator, cols[i]);
+            }
+            break;
+        default: // Skip.
+            break;
+        }
+    }
+    return vals;
+}
+
+/// WIP equivalent of restriction::is_satisfied_by.
+bool is_satisfied_by(
+        const expression& restr,
+        const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
+        const query::result_row_view& static_row, const query::result_row_view* row,
+        const selection& selection, const query_options& options) {
+    return std::visit(overloaded_functor{
+            [&] (bool v) { return v; },
+            [&] (const conjunction& conj) {
+                return boost::algorithm::all_of(conj.children, [&] (const expression& c) {
+                    return is_satisfied_by(c, partition_key, clustering_key, static_row, row, selection, options);
+                });
+            },
+            [&] (const binary_operator& opr) {
+                return std::visit(overloaded_functor{
+                        [&] (const std::vector<column_value>& cvs) {
+                            row_data cells{
+                                partition_key, clustering_key,
+                                get_non_pk_values(selection, static_row, row)
+                            };
+                            if (*opr.op == operator_type::EQ) {
+                                return equal(opr.rhs, cvs, selection, cells, options);
+                            } else if (*opr.op == operator_type::NEQ) {
+                                return !equal(opr.rhs, cvs, selection, cells, options);
+                            } else if (opr.op->is_slice()) {
+                                return limits(opr, selection, cells, options);
+                            } else if (*opr.op == operator_type::CONTAINS) {
+                                return contains(opr.rhs->bind_and_get(options), cvs,
+                                                selection, cells, options);
+                            } else if (*opr.op == operator_type::CONTAINS_KEY) {
+                                return contains_key(std::get<0>(opr.lhs), opr.rhs->bind_and_get(options),
+                                                    selection, cells, options);
+                            } else {
+                                throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
+                            }
+                        },
+                        // TODO: implement.
+                        [] (const token& tok) -> bool {
+                            throw exceptions::unsupported_operation_exception("wip::token");
+                        },
+                    }, opr.lhs);
+            },
+        }, restr);
+}
+
+} // anonymous namespace
+
+void check_is_satisfied_by(
+        const expression& restr,
+        const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
+        const query::result_row_view& static_row, const query::result_row_view* row,
+        const selection& selection, const query_options& options,
+        bool expected) {
+    if (!options.get_cql_config().restrictions.use_wip) {
+        return;
+    }
+    if (expected != is_satisfied_by(restr, partition_key, clustering_key, static_row, row, selection, options)) {
+        throw std::logic_error("WIP restrictions mismatch");
+    }
 }
 
 } // namespace wip
