@@ -420,7 +420,11 @@ bool result_set_builder::restrictions_filter::do_filter(const selection& selecti
     if (clustering_columns_restrictions->is_multi_column()) {
         auto multi_column_restriction = dynamic_pointer_cast<cql3::restrictions::multi_column_restriction>(clustering_columns_restrictions);
         clustering_key_prefix ckey = clustering_key_prefix::from_exploded(clustering_key);
-        return multi_column_restriction->is_satisfied_by(*_schema, ckey, _options);
+        const bool match = multi_column_restriction->is_satisfied_by(*_schema, ckey, _options);
+        restrictions::wip::check_is_satisfied_by(
+                clustering_columns_restrictions->wip_equivalent,
+                partition_key, clustering_key, static_row, row, selection, _options, match);
+        return match;
     }
 
     auto static_row_iterator = static_row.iterator();
@@ -451,11 +455,20 @@ bool result_set_builder::restrictions_filter::do_filter(const selection& selecti
             restrictions::single_column_restriction& restriction = *restr_it->second;
             bool regular_restriction_matches;
             if (result_view_opt) {
-                regular_restriction_matches = result_view_opt->with_linearized([&restriction, this](bytes_view data) {
-                    return restriction.is_satisfied_by(data, _options);
+                regular_restriction_matches = result_view_opt->with_linearized([&, this](bytes_view data) {
+                    const bool match = restriction.is_satisfied_by(data, _options);
+                    restrictions::wip::check_is_satisfied_by(
+                            restriction.wip_equivalent,
+                            partition_key, clustering_key, static_row, row, selection, _options,
+                            match);
+                    return match;
                 });
             } else {
                 regular_restriction_matches = restriction.is_satisfied_by(bytes(), _options);
+                restrictions::wip::check_is_satisfied_by(
+                        restriction.wip_equivalent,
+                        partition_key, clustering_key, static_row, row, selection, _options,
+                        regular_restriction_matches);
             }
             if (!regular_restriction_matches) {
                 _current_static_row_does_not_match = (cdef->kind == column_kind::static_column);
@@ -475,6 +488,9 @@ bool result_set_builder::restrictions_filter::do_filter(const selection& selecti
             restrictions::single_column_restriction& restriction = *restr_it->second;
             const bytes& value_to_check = partition_key[cdef->id];
             bool pk_restriction_matches = restriction.is_satisfied_by(value_to_check, _options);
+            restrictions::wip::check_is_satisfied_by(
+                    restriction.wip_equivalent, partition_key, clustering_key, static_row, row, selection, _options,
+                    pk_restriction_matches);
             if (!pk_restriction_matches) {
                 _current_partition_key_does_not_match = true;
                 return false;
@@ -496,6 +512,9 @@ bool result_set_builder::restrictions_filter::do_filter(const selection& selecti
             restrictions::single_column_restriction& restriction = *restr_it->second;
             const bytes& value_to_check = clustering_key[cdef->id];
             bool pk_restriction_matches = restriction.is_satisfied_by(value_to_check, _options);
+            restrictions::wip::check_is_satisfied_by(
+                    restriction.wip_equivalent, partition_key, clustering_key, static_row, row, selection, _options,
+                    pk_restriction_matches);
             if (!pk_restriction_matches) {
                 return false;
             }

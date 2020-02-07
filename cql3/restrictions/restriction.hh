@@ -52,9 +52,14 @@
 #include "cql3/term.hh"
 #include "cql3/statements/bound.hh"
 #include "index/secondary_index_manager.hh"
+#include "query-result-reader.hh"
 #include "types.hh"
 
 namespace cql3 {
+
+namespace selection {
+class selection;
+} // namespace selection
 
 namespace restrictions {
 
@@ -111,6 +116,15 @@ using children_t = std::vector<::shared_ptr<expression>>;
 struct conjunction {
     children_t children;
 };
+
+/// Checks if restr is satisfied by the given data, then throws if the result is different from
+/// expected.
+extern void check_is_satisfied_by(
+        shared_ptr<expression> restr,
+        const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
+        const query::result_row_view& static_row, const query::result_row_view* row,
+        const selection::selection&, const query_options&,
+        bool expected);
 
 } // namespace wip
 
