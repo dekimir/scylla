@@ -20,11 +20,11 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <boost/range/algorithm/transform.hpp>
 #include <boost/range/algorithm.hpp>
 #include <boost/range/adaptors.hpp>
 #include <boost/algorithm/cxx11/all_of.hpp>
 #include <boost/algorithm/cxx11/any_of.hpp>
+#include <boost/iterator/transform_iterator.hpp>
 #include <stdexcept>
 
 #include "query-result-reader.hh"
@@ -1178,6 +1178,45 @@ bool is_satisfied_by(
         }, restr);
 }
 
+bytes_opt get_bound(const expression& restr, const query_options& options, statements::bound bnd) {
+    return std::visit(overloaded_functor{
+            [&] (const conjunction& conj) {
+                if (!conj.children.empty()) {
+                    auto invoke_get_bound = [&] (const ::shared_ptr<expression>& p) {
+                        return get_bound(*p, options, bnd);
+                    };
+                    // For now, assume conjunction elements all have the same LHS.
+                    std::vector<bytes_opt> children_bounds(
+                            boost::make_transform_iterator(conj.children.cbegin(), invoke_get_bound),
+                            boost::make_transform_iterator(conj.children.cend(), invoke_get_bound));
+                    if (is_start(bnd)) {
+                        return *boost::max_element(children_bounds);
+                    } else {
+                        return *boost::min_element(children_bounds, [] (const bytes_opt& a, const bytes_opt& b) {
+                            // Default comparator ranks nullopt lower than any value; we want the opposite here.
+                            return (a && b) ? a < b : a.has_value();
+                        });
+                    }
+                }
+                return bytes_opt();
+            },
+            [&] (const binary_operator& opr) {
+                static const std::vector<std::vector<const operator_type*>> operators{
+                    {&operator_type::EQ, &operator_type::GT, &operator_type::GTE}, // These mean a lower bound.
+                    {&operator_type::EQ, &operator_type::LT, &operator_type::LTE}, // These mean an upper bound.
+                };
+                const auto zero_if_lower_one_if_upper = get_idx(bnd);
+                if (boost::algorithm::any_of_equal(operators[zero_if_lower_one_if_upper], &opr.op)) {
+                    return to_bytes_opt(opr.rhs->bind_and_get(options));
+                }
+                return bytes_opt();
+            },
+            [] (auto& default_case) -> bytes_opt {
+                throw exceptions::unsupported_operation_exception("Unknown wip::expression subtype");
+            }
+        }, restr);
+}
+
 } // anonymous namespace
 
 void check_is_satisfied_by(
@@ -1196,6 +1235,20 @@ void check_is_satisfied_by(
     if (expected != is_satisfied_by(*restr, partition_key, clustering_key, static_row, row, selection, options)) {
         throw std::logic_error("WIP restrictions mismatch");
     }
+}
+
+bytes_opt checked_bound(restriction& r, statements::bound b, const query_options& options) {
+    const auto res = r.bounds(b, options)[0];
+    if (options.get_cql_config().restrictions.use_wip) {
+        if (r.wip_equivalent) {
+            if (get_bound(*r.wip_equivalent, options, b) != res) {
+                throw std::logic_error("WIP restrictions mismatch");
+            }
+        } else {
+            rlogger.warn("Unimplemented wip restriction");
+        }
+    }
+    return res;
 }
 
 } // namespace wip

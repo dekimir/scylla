@@ -136,3 +136,15 @@ SEASTAR_THREAD_TEST_CASE(multi_col_slice) {
                      {{T("b"), F(2)}});
     }).get();
 }
+
+SEASTAR_THREAD_TEST_CASE(bounds) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int, c int, primary key (p, c))");
+        cquery_nofail(e, "insert into t (p, c) values (1, 11);");
+        cquery_nofail(e, "insert into t (p, c) values (2, 12);");
+        cquery_nofail(e, "insert into t (p, c) values (3, 13);");
+        require_rows(e, "select p from t where p=1 and c > 10", {{I(1)}});
+        require_rows(e, "select c from t where p in (1,2,3) and c > 11 and c < 13", {{I(12)}});
+        require_rows(e, "select c from t where p in (1,2,3) and c >= 11 and c < 13", {{I(11)}, {I(12)}});
+    }).get();
+}
