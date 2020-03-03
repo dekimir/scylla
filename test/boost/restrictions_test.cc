@@ -261,6 +261,32 @@ SEASTAR_THREAD_TEST_CASE(multi_col_slice) {
     }).get();
 }
 
+SEASTAR_THREAD_TEST_CASE(bounds) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int, c int, primary key (p, c))");
+        cquery_nofail(e, "insert into t (p, c) values (1, 11);");
+        cquery_nofail(e, "insert into t (p, c) values (2, 12);");
+        cquery_nofail(e, "insert into t (p, c) values (3, 13);");
+        wip_require_rows(e, "select p from t where p=1 and c > 10", {{I(1)}});
+        wip_require_rows(e, "select c from t where p in (1,2,3) and c > 11 and c < 13", {{I(12)}});
+        wip_require_rows(e, "select c from t where p in (1,2,3) and c >= 11 and c < 13", {{I(11)}, {I(12)}});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(token) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int, q int, r int, primary key ((p, q)))");
+        cquery_nofail(e, "insert into t (p,q,r) values (1,11,101);");
+        cquery_nofail(e, "insert into t (p,q,r) values (2,12,102);");
+        cquery_nofail(e, "insert into t (p,q,r) values (3,13,103);");
+        wip_require_rows(e, "select p from t where token(p,q) = token(1,11)", {{I(1)}});
+        wip_require_rows(e, "select p from t where token(p,q) >= token(1,11) and token(p,q) <= token(1,11)", {{I(1)}});
+        wip_require_rows(e, "select p from t where token(p,q) <= token(1,11) and r<102 allow filtering",
+                         {{I(1), I(101)}});
+        wip_require_rows(e, "select p from t where token(p,q) = token(2,12) and r<102 allow filtering", {});
+    }).get();
+}
+
 SEASTAR_THREAD_TEST_CASE(set_contains) {
     do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table t (p frozen<set<int>>, c frozen<set<int>>, s set<text>, st set<int> static, primary key (p, c))");

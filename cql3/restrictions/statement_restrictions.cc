@@ -23,9 +23,10 @@
 #include <algorithm>
 #include <boost/algorithm/cxx11/all_of.hpp>
 #include <boost/algorithm/cxx11/any_of.hpp>
-#include <boost/range/algorithm/transform.hpp>
-#include <boost/range/algorithm.hpp>
+#include <boost/iterator/transform_iterator.hpp>
 #include <boost/range/adaptors.hpp>
+#include <boost/range/algorithm.hpp>
+#include <boost/range/algorithm/transform.hpp>
 #include <stdexcept>
 
 #include "query-result-reader.hh"
@@ -1394,6 +1395,94 @@ bool is_satisfied_by(
         }, restr);
 }
 
+/// A column's bound, from WHERE restrictions.
+class bound_t {
+    bool _unbounded;
+    bytes_opt _value; // Invalid when _unbounded is true.
+    const abstract_type& _value_type;
+  public:
+    explicit bound_t(const abstract_type& t) : _unbounded(true), _value_type(t) {}
+    bound_t(const abstract_type& t, const bytes_opt& v) : _unbounded(false), _value(v), _value_type(t) {}
+
+    /// True iff *this is a tighter lower bound than \p that.
+    bool is_tighter_lb_than(const bound_t& that) const {
+        if (that._unbounded) {
+            return true; // Anything is tighter than no bound.
+        } else if (this->_unbounded || !this->_value || !that._value) {
+            return false;
+        } else {
+            // *this is a tighter lower bound if it's larger.
+            return _value_type.compare(*this->_value, *that._value) > 0;
+        }
+    }
+
+    /// True iff *this is a tighter upper bound than \p that.
+    bool is_tighter_ub_than(const bound_t& that) const {
+        if (that._unbounded) {
+            return true; // Anything is tighter than no bound.
+        } else if (this->_unbounded || !this->_value || !that._value) {
+            return false;
+        } else {
+            // *this is a tighter upper bound if it's smaller.
+            return _value_type.compare(*this->_value, *that._value) < 0;
+        }
+    }
+
+    bytes_view_opt value() const {
+        if (_unbounded) {
+            throw std::logic_error("bound_t::value() called on unbounded");
+        }
+        return _value;
+    }
+};
+
+bound_t get_bound(const expression& restr, const query_options& options, statements::bound bnd) {
+    return std::visit(overloaded_functor{
+            [&] (const conjunction& conj) {
+                if (conj.children.empty()) {
+                    throw std::logic_error("Empty conjunction");
+                }
+                auto invoke_get_bound = [&] (const ::shared_ptr<expression>& p) {
+                    return get_bound(*p, options, bnd);
+                };
+                // All conjunction elements have the same LHS; this is how
+                // single_column_restrictions::add_restriction constructs it.
+                std::vector<bound_t> children_bounds(
+                        boost::make_transform_iterator(conj.children.cbegin(), invoke_get_bound),
+                        boost::make_transform_iterator(conj.children.cend(), invoke_get_bound));
+                if (is_start(bnd)) {
+                    return *boost::max_element(children_bounds, [&] (const bound_t& a, const bound_t& b) {
+                        return b.is_tighter_lb_than(a);
+                    });
+                } else {
+                    return *boost::min_element(children_bounds, [&] (const bound_t& a, const bound_t& b) {
+                        return a.is_tighter_ub_than(b);
+                    });
+                }
+            },
+            [&] (const binary_operator& opr) {
+                // lhs must be column_values; CQL forbids token.
+                auto cv = std::get<0>(opr.lhs);
+                if (cv.size() != 1) {
+                    throw std::logic_error("get_bound invoked on multi-column restriction");
+                }
+                const auto cmptype = comparator(cv[0]);
+                static const std::vector<std::vector<const operator_type*>> operators{
+                    {&operator_type::EQ, &operator_type::GT, &operator_type::GTE}, // These mean a lower bound.
+                    {&operator_type::EQ, &operator_type::LT, &operator_type::LTE}, // These mean an upper bound.
+                };
+                const auto zero_if_lower_one_if_upper = get_idx(bnd);
+                if (boost::algorithm::any_of_equal(operators[zero_if_lower_one_if_upper], &opr.op)) {
+                    return bound_t(*cmptype, to_bytes_opt(opr.rhs->bind_and_get(options)));
+                }
+                return bound_t(*cmptype);
+            },
+            [] (auto& default_case) {
+                throw exceptions::unsupported_operation_exception("Unknown wip::expression subtype");
+            }
+        }, restr);
+}
+
 } // anonymous namespace
 
 void check_is_satisfied_by(
@@ -1410,8 +1499,22 @@ void check_is_satisfied_by(
         return;
     }
     if (expected != is_satisfied_by(*restr, partition_key, clustering_key, static_row, row, selection, options)) {
-        throw std::logic_error("WIP restrictions mismatch");
+        throw std::logic_error("WIP restrictions mismatch: is_satisfied_by");
     }
+}
+
+bytes_opt checked_bound(restriction& r, statements::bound b, const query_options& options) {
+    const auto res = r.bounds(b, options)[0];
+    if (options.get_cql_config().restrictions.use_wip) {
+        if (r.expression) {
+            if (get_bound(*r.expression, options, b).value() != res) {
+                throw std::logic_error("WIP restrictions mismatch: bounds");
+            }
+        } else {
+            rlogger.warn("Unimplemented wip restriction");
+        }
+    }
+    return res;
 }
 
 } // namespace wip
