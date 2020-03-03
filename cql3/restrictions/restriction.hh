@@ -61,6 +61,8 @@ class selection;
 
 namespace restrictions {
 
+class restriction;
+
 struct allow_local_index_tag {};
 using allow_local_index = bool_class<allow_local_index_tag>;
 
@@ -119,6 +121,9 @@ extern void check_is_satisfied_by(
         const query::result_row_view& static_row, const query::result_row_view* row,
         const selection::selection&, const query_options&,
         bool expected);
+
+/// Returns a restriction's bounds, but throws if the result is different from the wip result.
+bytes_opt checked_bound(restriction&, statements::bound, const query_options&);
 
 } // namespace wip
 
