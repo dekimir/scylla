@@ -274,7 +274,7 @@ private:
                         if (!r->has_bound(b)) {
                             return {};
                         }
-                        auto value = r->bounds(b, options)[0];
+                        auto value = wip::checked_bound(*r, b, options);
                         if (!value) {
                             throw exceptions::invalid_request_exception(sprint(invalid_null_msg, r->to_string()));
                         }
@@ -296,7 +296,7 @@ private:
                 for (auto&& prefix : make_cartesian_product(vec_of_values)) {
                     auto read_bound = [r, &prefix, &options, this](statements::bound bound) -> range_bound {
                         if (r->has_bound(bound)) {
-                            auto value = std::move(r->bounds(bound, options)[0]);
+                            auto value = wip::checked_bound(*r, bound, options);
                             if (!value) {
                                 throw exceptions::invalid_request_exception(sprint(invalid_null_msg, r->to_string()));
                             }
