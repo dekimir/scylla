@@ -538,7 +538,9 @@ private:
      */
     std::vector<bytes_opt> component_bounds(statements::bound b, const query_options& options) const {
         auto value = static_pointer_cast<tuples::value>(_slice.bound(b)->bind(options));
-        return value->get_elements();
+        const auto elems = value->get_elements();
+        check_multicolumn_bound(expression, options, b, elems);
+        return elems;
     }
 
     std::vector<bytes_opt> read_bound_components(const query_options& options, statements::bound b) const {

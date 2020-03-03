@@ -762,3 +762,62 @@ SEASTAR_THREAD_TEST_CASE(multi_col_in) {
         wip_require_rows(e, stmt, {}, {I(11), F(21)}, {{I(11), F(21)}, {I(13), F(23)}});
     }).get();
 }
+
+SEASTAR_THREAD_TEST_CASE(bounds) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int, c int, primary key (p, c))");
+        cquery_nofail(e, "insert into t (p, c) values (1, 11);");
+        cquery_nofail(e, "insert into t (p, c) values (2, 12);");
+        cquery_nofail(e, "insert into t (p, c) values (3, 13);");
+        wip_require_rows(e, "select p from t where p=1 and c > 10", {{I(1)}});
+        wip_require_rows(e, "select p from t where p=1 and c = 11", {{I(1)}});
+        wip_require_rows(e, "select p from t where p=1 and (c) >= (10)", {{I(1)}});
+        wip_require_rows(e, "select p from t where p=1 and (c) = (11)", {{I(1)}});
+        wip_require_rows(e, "select c from t where p in (1,2,3) and c > 11 and c < 13", {{I(12)}});
+        wip_require_rows(e, "select c from t where p in (1,2,3) and c >= 11 and c < 13", {{I(11)}, {I(12)}});
+        auto stmt = e.prepare("select c from t where p in (1,2,3) and c >= 11 and c < ?").get0();
+        wip_require_rows(e, stmt, {}, {I(13)}, {{I(11)}, {I(12)}});
+        wip_require_rows(e, stmt, {}, {I(10)}, {});
+        stmt = e.prepare("select c from t where p in (1,2,3) and (c) < ?").get0();
+        wip_require_rows(e, stmt, {}, {make_tuple({int32_type}, {13})}, {{I(11)}, {I(12)}});
+        wip_require_rows(e, stmt, {}, {make_tuple({int32_type}, {11})}, {});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(bounds_reversed) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (pk int, ck1 int, ck2 int, primary key (pk, ck1, ck2)) "
+                      "with clustering order by (ck1 asc, ck2 desc)");
+        cquery_nofail(e, "insert into t (pk,ck1,ck2) values (1,11,21);");
+        cquery_nofail(e, "insert into t (pk,ck1,ck2) values (2,12,22);");
+        wip_require_rows(e, "select pk from t where pk=1 and ck1>10", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and ck1=11", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1)>=(10)", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,30)", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,30) and (ck1)<(20)", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,30) and (ck1,ck2)<(20,0)", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,30) and (ck1,ck2)<=(11,20)", {});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1)=(11)", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1,ck2)=(11,21)", {{I(1)}});
+        cquery_nofail(e, "insert into t (pk,ck1,ck2) values (2,12,23);");
+        wip_require_rows(e, "select ck1 from t where pk in (1,2,3) and ck1=12 and ck2<23", {{I(12)}});
+        wip_require_rows(e, "select ck1 from t where pk in (1,2,3) and ck1=12 and ck2<24", {{I(12)}, {I(12)}});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(token) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int, q int, r int, primary key ((p, q)))");
+        cquery_nofail(e, "insert into t (p,q,r) values (1,11,101);");
+        cquery_nofail(e, "insert into t (p,q,r) values (2,12,102);");
+        cquery_nofail(e, "insert into t (p,q,r) values (3,13,103);");
+        wip_require_rows(e, "select p from t where token(p,q) = token(1,11)", {{I(1)}});
+        wip_require_rows(e, "select p from t where token(p,q) >= token(1,11) and token(p,q) <= token(1,11)", {{I(1)}});
+        wip_require_rows(e, "select p from t where token(p,q) <= token(1,11) and r<102 allow filtering",
+                         {{I(1), I(101)}});
+        wip_require_rows(e, "select p from t where token(p,q) = token(2,12) and r<102 allow filtering", {});
+        const auto stmt = e.prepare("select p from t where token(p,q) = token(1,?)").get0();
+        wip_require_rows(e, stmt, {}, {I(11)}, {{I(1)}});
+        wip_require_rows(e, stmt, {}, {I(10)}, {});
+    }).get();
+}

@@ -90,7 +90,7 @@ public:
             if (!has_bound(b)) {
                 return is_start(b) ? dht::minimum_token() : dht::maximum_token();
             }
-            auto buf= bounds(b, options).front();
+            auto buf = wip::checked_bound(*this, b, options);
             if (!buf) {
                 throw exceptions::invalid_request_exception("Invalid null token value");
             }
