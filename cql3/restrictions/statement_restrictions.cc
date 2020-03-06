@@ -1139,34 +1139,33 @@ bool is_satisfied_by(
         const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
         const query::result_row_view& static_row, const query::result_row_view* row,
         const selection& selection, const query_options& options) {
-    bool satisfies = false;
-    std::visit(overloaded_functor{
+    return std::visit(overloaded_functor{
             [&] (const conjunction& conj) {
                 for (auto& c : conj.children) {
                     if (!is_satisfied_by(*c, partition_key, clustering_key, static_row, row, selection, options)) {
-                        satisfies = false;
-                        return;
+                        return false;
                     }
                 }
-                satisfies = true;
+                return true;
             },
             [&] (const binary_operator& opr) {
-                std::visit(overloaded_functor{
+                return std::visit(overloaded_functor{
                         [&] (const idents& ids) {
                             auto other_columns = get_non_pkc_values(selection, static_row, row);
                             if (opr.op == operator_type::EQ) {
-                                satisfies = equal(opr.rhs, ids, selection, partition_key, clustering_key, other_columns, options);
+                                return equal(opr.rhs, ids, selection, partition_key, clustering_key, other_columns, options);
                             } else if (opr.op == operator_type::NEQ) {
-                                satisfies = !equal(opr.rhs, ids, selection, partition_key, clustering_key, other_columns, options);
+                                return !equal(opr.rhs, ids, selection, partition_key, clustering_key, other_columns, options);
                             } else if (opr.op.is_slice()) {
-                                satisfies = limits(opr, selection, partition_key, clustering_key, other_columns, options);
+                                return limits(opr, selection, partition_key, clustering_key, other_columns, options);
                             } else {
                                 throw exceptions::unsupported_operation_exception("Unhandled wip::oper operator");
                             }
                         },
-                        [] (const token& tok) { /*TODO: implement*/ },
-                        [] (const subscript& sub) { /*TODO: implement*/ },
-                        [] (auto& default_case) {
+                        // TODO: implement.
+                        [] (const token& tok) -> bool { throw exceptions::unsupported_operation_exception(); },
+                        [] (const subscript& sub) -> bool { throw exceptions::unsupported_operation_exception(); },
+                        [] (auto& default_case) -> bool {
                             throw exceptions::unsupported_operation_exception("Unknown wip::binary_operator subtype");
                         }
                     }, opr.lhs);
@@ -1175,7 +1174,6 @@ bool is_satisfied_by(
                 throw exceptions::unsupported_operation_exception("Unknown wip::expression subtype");
             }
         }, restr);
-    return satisfies;
 }
 
 bytes_opt get_bound(const expression& restr, const query_options& options, statements::bound bnd) {
