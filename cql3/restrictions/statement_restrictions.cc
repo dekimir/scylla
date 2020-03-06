@@ -1023,13 +1023,16 @@ bool equal(::shared_ptr<term> t, const idents& columns, const selection& selecti
 
 /// True iff lhs is limited by rhs in the manner prescribed by op.
 bool limits(const bytes& lhs, const operator_type& op, const bytes& rhs, const abstract_type& type) {
+    if (!op.is_compare()) {
+        throw std::logic_error("limits() called on non-compare op");
+    }
     const auto cmp = type.as_tri_comparator()(lhs, rhs);
     if (cmp < 0) {
-        return op == operator_type::LT || op == operator_type::LTE;
+        return op == operator_type::LT || op == operator_type::LTE || op == operator_type::NEQ;
     } else if (cmp > 0) {
-        return op == operator_type::GT || op == operator_type::GTE;
+        return op == operator_type::GT || op == operator_type::GTE || op == operator_type::NEQ;
     } else {
-        return op == operator_type::LTE || op == operator_type::GTE;
+        return op == operator_type::LTE || op == operator_type::GTE || op == operator_type::EQ;
     }
 }
 
@@ -1037,6 +1040,9 @@ bool limits(const bytes& lhs, const operator_type& op, const bytes& rhs, const a
 bool limits(const binary_operator& opr, const selection& selection,
             const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
             const std::vector<bytes_opt>& other_columns, const query_options& options) {
+    if (!opr.op.is_slice()) { // For EQ or NEQ, use equals().
+        throw std::logic_error("limits() called on non-slice op");
+    }
     const auto& columns = std::get<idents>(opr.lhs);
     if (auto multi = dynamic_pointer_cast<multi_item_terminal>(opr.rhs)) {
         const auto& rhs = multi->get_elements();
