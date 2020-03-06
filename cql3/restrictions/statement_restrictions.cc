@@ -1179,8 +1179,7 @@ bool is_satisfied_by(
 }
 
 bytes_opt get_bound(const expression& restr, const query_options& options, statements::bound bnd) {
-    bytes_opt bound;
-    std::visit(overloaded_functor{
+    return std::visit(overloaded_functor{
             [&] (const conjunction& conj) {
                 if (!conj.children.empty()) {
                     auto invoke_get_bound = [&] (const ::shared_ptr<expression>& p) {
@@ -1191,14 +1190,15 @@ bytes_opt get_bound(const expression& restr, const query_options& options, state
                             boost::make_transform_iterator(conj.children.cbegin(), invoke_get_bound),
                             boost::make_transform_iterator(conj.children.cend(), invoke_get_bound));
                     if (is_start(bnd)) {
-                        bound = *boost::max_element(children_bounds);
+                        return *boost::max_element(children_bounds);
                     } else {
-                        bound = *boost::min_element(children_bounds, [] (const bytes_opt& a, const bytes_opt& b) {
+                        return *boost::min_element(children_bounds, [] (const bytes_opt& a, const bytes_opt& b) {
                             // Default comparator ranks nullopt lower than any value; we want the opposite here.
                             return (a && b) ? a < b : a.has_value();
                         });
                     }
                 }
+                return bytes_opt();
             },
             [&] (const binary_operator& opr) {
                 static const std::vector<std::vector<const operator_type*>> operators{
@@ -1207,14 +1207,14 @@ bytes_opt get_bound(const expression& restr, const query_options& options, state
                 };
                 const auto zero_if_lower_one_if_upper = get_idx(bnd);
                 if (boost::algorithm::any_of_equal(operators[zero_if_lower_one_if_upper], &opr.op)) {
-                    bound = to_bytes_opt(opr.rhs->bind_and_get(options));
+                    return to_bytes_opt(opr.rhs->bind_and_get(options));
                 }
+                return bytes_opt();
             },
-            [] (auto& default_case) {
+            [] (auto& default_case) -> bytes_opt {
                 throw exceptions::unsupported_operation_exception("Unknown wip::expression subtype");
             }
         }, restr);
-    return bound;
 }
 
 } // anonymous namespace
