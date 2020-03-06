@@ -22,6 +22,7 @@
 
 #include <boost/range/algorithm.hpp>
 #include <boost/range/adaptors.hpp>
+#include <boost/algorithm/cxx11/all_of.hpp>
 #include <boost/algorithm/cxx11/any_of.hpp>
 #include <boost/iterator/transform_iterator.hpp>
 #include <stdexcept>
@@ -1141,12 +1142,9 @@ bool is_satisfied_by(
         const selection& selection, const query_options& options) {
     return std::visit(overloaded_functor{
             [&] (const conjunction& conj) {
-                for (auto& c : conj.children) {
-                    if (!is_satisfied_by(*c, partition_key, clustering_key, static_row, row, selection, options)) {
-                        return false;
-                    }
-                }
-                return true;
+                return boost::algorithm::all_of(conj.children, [&] (const ::shared_ptr<expression>& c) {
+                    return is_satisfied_by(*c, partition_key, clustering_key, static_row, row, selection, options);
+                });
             },
             [&] (const binary_operator& opr) {
                 return std::visit(overloaded_functor{
