@@ -1161,8 +1161,12 @@ bool is_satisfied_by(
                             }
                         },
                         // TODO: implement.
-                        [] (const token& tok) -> bool { throw exceptions::unsupported_operation_exception(); },
-                        [] (const subscript& sub) -> bool { throw exceptions::unsupported_operation_exception(); },
+                        [] (const token& tok) -> bool {
+                            throw exceptions::unsupported_operation_exception("wip::token");
+                        },
+                        [] (const subscript& sub) -> bool {
+                            throw exceptions::unsupported_operation_exception("wip::subscript");
+                        },
                         [] (auto& default_case) -> bool {
                             throw exceptions::unsupported_operation_exception("Unknown wip::binary_operator subtype");
                         }
