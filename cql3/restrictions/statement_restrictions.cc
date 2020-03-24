@@ -981,25 +981,30 @@ namespace {
 
 using cql3::selection::selection;
 
-/// Returns cdef's value from the fetched data.
-bytes_opt get_value(const column_definition* cdef, const selection& selection,
+/// Returns col's value from the fetched data.
+bytes_opt get_value(const column_value& col, const selection& selection,
                     const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
                     const std::vector<bytes_opt>& other_columns) {
-    switch (cdef->kind) {
-    case column_kind::partition_key:
-        return partition_key[cdef->id];
-    case column_kind::clustering_key:
-        return clustering_key[cdef->id];
-    case column_kind::static_column:
-    case column_kind::regular_column:
-        return other_columns[selection.index_of(*cdef)];
-    default:
-        throw exceptions::unsupported_operation_exception("Unknown column kind");
+    if (col.sub) {
+        throw exceptions::unsupported_operation_exception("restrictions::wip subscripted column");
+    } else {
+        auto cdef = col.col;
+        switch (cdef->kind) {
+        case column_kind::partition_key:
+            return partition_key[cdef->id];
+        case column_kind::clustering_key:
+            return clustering_key[cdef->id];
+        case column_kind::static_column:
+        case column_kind::regular_column:
+            return other_columns[selection.index_of(*cdef)];
+        default:
+            throw exceptions::unsupported_operation_exception("Unknown column kind");
+        }
     }
 }
 
 /// True iff columns' values equal t.
-bool equal(::shared_ptr<term> t, const idents& columns, const selection& selection,
+bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const selection& selection,
            const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
            const std::vector<bytes_opt>& other_columns, const query_options& options) {
     if (auto multi = dynamic_pointer_cast<multi_item_terminal>(t)) {
@@ -1044,14 +1049,14 @@ bool limits(const binary_operator& opr, const selection& selection,
     if (!opr.op.is_slice()) { // For EQ or NEQ, use equals().
         throw std::logic_error("limits() called on non-slice op");
     }
-    const auto& columns = std::get<idents>(opr.lhs);
+    const auto& columns = std::get<0>(opr.lhs);
     if (auto multi = dynamic_pointer_cast<multi_item_terminal>(opr.rhs)) {
         const auto& rhs = multi->get_elements();
         if (rhs.size() != columns.size()) {
             throw std::logic_error("LHS and RHS size mismatch");
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
-            const auto cmp = columns[i]->type->as_tri_comparator()(
+            const auto cmp = columns[i].col->type->as_tri_comparator()(
                     *get_value(columns[i], selection, partition_key, clustering_key, other_columns),
                     *rhs[i]);
             // If the components aren't equal, then we just learned the LHS/RHS order.
@@ -1088,7 +1093,7 @@ bool limits(const binary_operator& opr, const selection& selection,
         if (!rhs) {
             return false;
         }
-        return limits(*lhs, opr.op, *rhs, *columns[0]->type);
+        return limits(*lhs, opr.op, *rhs, *columns[0].col->type);
     }
 }
 
@@ -1148,12 +1153,12 @@ bool is_satisfied_by(
             },
             [&] (const binary_operator& opr) {
                 return std::visit(overloaded_functor{
-                        [&] (const idents& ids) {
+                        [&] (const std::vector<column_value>& cvs) {
                             auto other_columns = get_non_pkc_values(selection, static_row, row);
                             if (opr.op == operator_type::EQ) {
-                                return equal(opr.rhs, ids, selection, partition_key, clustering_key, other_columns, options);
+                                return equal(opr.rhs, cvs, selection, partition_key, clustering_key, other_columns, options);
                             } else if (opr.op == operator_type::NEQ) {
-                                return !equal(opr.rhs, ids, selection, partition_key, clustering_key, other_columns, options);
+                                return !equal(opr.rhs, cvs, selection, partition_key, clustering_key, other_columns, options);
                             } else if (opr.op.is_slice()) {
                                 return limits(opr, selection, partition_key, clustering_key, other_columns, options);
                             } else {
@@ -1163,9 +1168,6 @@ bool is_satisfied_by(
                         // TODO: implement.
                         [] (const token& tok) -> bool {
                             throw exceptions::unsupported_operation_exception("wip::token");
-                        },
-                        [] (const subscript& sub) -> bool {
-                            throw exceptions::unsupported_operation_exception("wip::subscript");
                         },
                         [] (auto& default_case) -> bool {
                             throw exceptions::unsupported_operation_exception("Unknown wip::binary_operator subtype");

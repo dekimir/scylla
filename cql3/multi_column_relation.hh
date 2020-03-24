@@ -147,7 +147,8 @@ protected:
         auto t = to_term(col_specs, *get_value(), db, schema->ks_name(), bound_names);
         auto restr = ::make_shared<restrictions::multi_column_restriction::EQ>(schema, rs, t);
         using namespace restrictions::wip;
-        restr->wip_equivalent = ::make_shared<expression>(binary_operator{rs, _relation_type, t});
+        std::vector<column_value> wip_rs(rs.cbegin(), rs.cend());
+        restr->wip_equivalent = ::make_shared<expression>(binary_operator{wip_rs, _relation_type, t});
         return restr;
     }
 
@@ -170,7 +171,8 @@ protected:
             if (ts.size() == 1) {
                 auto restr = ::make_shared<restrictions::multi_column_restriction::EQ>(schema, rs, ts[0]);
                 using namespace restrictions::wip;
-                restr->wip_equivalent = ::make_shared<expression>(binary_operator{rs, operator_type::EQ, ts[0]});
+                std::vector<column_value> wip_rs(rs.cbegin(), rs.cend());
+                restr->wip_equivalent = ::make_shared<expression>(binary_operator{wip_rs, operator_type::EQ, ts[0]});
                 return restr;
             }
             return ::make_shared<restrictions::multi_column_restriction::IN_with_values>(schema, rs, ts);
@@ -188,7 +190,8 @@ protected:
         auto t = to_term(col_specs, *get_value(), db, schema->ks_name(), bound_names);
         auto restr = ::make_shared<restrictions::multi_column_restriction::slice>(schema, rs, bound, inclusive, t);
         using namespace restrictions::wip;
-        restr->wip_equivalent = ::make_shared<expression>(binary_operator{rs, _relation_type, t});
+        std::vector<column_value> wip_rs(rs.cbegin(), rs.cend());
+        restr->wip_equivalent = ::make_shared<expression>(binary_operator{wip_rs, _relation_type, t});
         return restr;
     }
 

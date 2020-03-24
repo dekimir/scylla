@@ -67,12 +67,13 @@ single_column_relation::to_term(const std::vector<::shared_ptr<column_specificat
 
 ::shared_ptr<restrictions::restriction>
 single_column_relation::new_EQ_restriction(database& db, schema_ptr schema, variable_specifications& bound_names) {
+    using namespace wip;
     const column_definition& column_def = to_column_definition(*schema, *_entity);
     if (!_map_key) {
         auto term = to_term(to_receivers(*schema, column_def), *_value, db, schema->ks_name(), bound_names);
         auto restr = ::make_shared<single_column_restriction::EQ>(column_def, term);
         restr->wip_equivalent = ::make_shared<wip::expression>(
-                wip::binary_operator{wip::idents{&column_def}, _relation_type, term});
+                binary_operator{std::vector{column_value(&column_def)}, _relation_type, term});
         return restr;
     }
     auto&& receivers = to_receivers(*schema, column_def);
@@ -80,7 +81,7 @@ single_column_relation::new_EQ_restriction(database& db, schema_ptr schema, vari
     auto&& entry_value = to_term({receivers[1]}, *_value, db, schema->ks_name(), bound_names);
     auto restr = make_shared<single_column_restriction::contains>(column_def, entry_key, entry_value);
     restr->wip_equivalent = ::make_shared<wip::expression>(
-            wip::binary_operator{wip::subscript{{&column_def}, {entry_key}}, _relation_type, entry_value});
+            binary_operator{std::vector{column_value(&column_def, entry_key)}, _relation_type, entry_value});
     return restr;
 }
 
@@ -99,7 +100,7 @@ single_column_relation::new_IN_restriction(database& db, schema_ptr schema, vari
         auto restr = ::make_shared<single_column_restriction::EQ>(column_def, terms[0]);
         using namespace restrictions::wip;
         restr->wip_equivalent = ::make_shared<expression>(
-                binary_operator{restrictions::wip::idents{&column_def}, operator_type::EQ, terms[0]});
+                binary_operator{std::vector{column_value(&column_def)}, operator_type::EQ, terms[0]});
         return restr;
     }
     return ::make_shared<single_column_restriction::IN_with_values>(column_def, std::move(terms));
@@ -115,8 +116,9 @@ single_column_relation::new_LIKE_restriction(
     }
     auto term = to_term(to_receivers(*schema, column_def), *_value, db, schema->ks_name(), bound_names);
     auto restr = ::make_shared<single_column_restriction::LIKE>(column_def, term);
-    restr->wip_equivalent = ::make_shared<wip::expression>(
-            wip::binary_operator{wip::idents{&column_def}, _relation_type, term});
+    using namespace wip;
+    restr->wip_equivalent = ::make_shared<expression>(
+            binary_operator{std::vector{column_value(&column_def)}, _relation_type, term});
     return restr;
 }
 

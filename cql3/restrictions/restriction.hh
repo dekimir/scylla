@@ -79,44 +79,36 @@ namespace wip {
 // single-column restrictions.  Instead of the old merge_with mechanism for combining restrictions,
 // we will simply add them into a conjunction expression that will be processed using visitors.
 
-// Forward declare these, so std::variant can take them as arguments:
-struct binary_operator;
-struct conjunction;
-struct subscript;
-struct token;
+class binary_operator;
+class conjunction;
 
 /// A restriction expression -- union of all possible restriction types.
 using expression = std::variant<binary_operator, conjunction>;
 
-/// Identifier(s) on LHS of an operator restriction.
-using idents = std::vector<const column_definition*>;
-
-/// LHS of an operator restriction.
-using lhs_t = std::variant<idents, token, subscript>;
+/// A column, optionally subscripted by a term (eg, c1 or c2['abc']).
+struct column_value {
+    const column_definition* col;
+    ::shared_ptr<term> sub; ///< If present, this LHS is col[sub], otherwise just col.
+    /// For easy creation of vector<column_value> from vector<column_definition*>.
+    column_value(const column_definition* col) : col(col) {}
+    /// The compiler doesn't auto-generate this due to the other constructor's existence.
+    column_value(const column_definition* col, ::shared_ptr<term> sub) : col(col), sub(sub) {}
+};
 
 /// Represents token function on LHS of an operator relation.  No need to list column definitions
 /// here -- token takes exactly the partition key as its argument.
 struct token {};
 
-/// Subscripted column(s) on LHS of an operator restriction.  Eg: `m[123] > 456`.  Able to represent
-/// multiple columns, eg, `(x[1], y[2]) = (3, 4)`.
-struct subscript {
-    idents columns;
-    std::vector<::shared_ptr<term>> subs; ///< Corresponding subscripts.
-};
-
 /// Operator restriction: LHS op RHS.
 struct binary_operator {
-    lhs_t lhs;
+    std::variant<std::vector<column_value>, token> lhs;
     const operator_type& op;
     ::shared_ptr<term> rhs;
 };
 
-using children_t = std::vector<::shared_ptr<expression>>;
-
 /// A conjunction of restrictions.
 struct conjunction {
-    children_t children;
+    std::vector<::shared_ptr<expression>> children;
 };
 
 /// Checks if restr is satisfied by the given data, then throws if the result is different from
