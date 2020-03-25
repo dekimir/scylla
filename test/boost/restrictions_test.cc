@@ -103,6 +103,12 @@ SEASTAR_THREAD_TEST_CASE(map_entry_eq) {
         const auto m3 = my_map_type->decompose(
                 make_map_value(my_map_type, typename map_type_impl::native_type({{1, 31}, {2, 32}, {3, 33}})));
         require_rows(e, "select m from t where m[1]=31 allow filtering", {{m3}});
+        cquery_nofail(e, "update t set m={1:111} where p=3");
+        require_rows(e, "select p from t where m[1]=31 allow filtering", {});
+        require_rows(e, "select p from t where m[1]=21 allow filtering", {});
+        const auto m3new = my_map_type->decompose(
+                make_map_value(my_map_type, typename map_type_impl::native_type({{1, 111}})));
+        require_rows(e, "select p from t where m[1]=111 allow filtering", {{I(3), m3new}});
     }).get();
 }
 
