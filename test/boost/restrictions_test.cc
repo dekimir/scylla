@@ -97,7 +97,12 @@ SEASTAR_THREAD_TEST_CASE(map_entry_eq) {
         require_rows(e, "select p from t where m[1]=21 and m[3]=23 allow filtering", {{I(2), m2}});
         require_rows(e, "select p from t where m[99]=21 allow filtering", {});
         require_rows(e, "select p from t where m[1]=99 allow filtering", {});
-        // TODO: tombstones.
+        cquery_nofail(e, "delete from t where p=2");
+        require_rows(e, "select p from t where m[1]=21 allow filtering", {});
+        require_rows(e, "select p from t where m[1]=21 and m[3]=23 allow filtering", {});
+        const auto m3 = my_map_type->decompose(
+                make_map_value(my_map_type, typename map_type_impl::native_type({{1, 31}, {2, 32}, {3, 33}})));
+        require_rows(e, "select m from t where m[1]=31 allow filtering", {{m3}});
         // TODO: frozen.
     }).get();
 }
