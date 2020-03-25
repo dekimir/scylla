@@ -1180,7 +1180,7 @@ bool is_satisfied_by(
                             } else if (opr.op.is_slice()) {
                                 return limits(opr, selection, partition_key, clustering_key, other_columns, options);
                             } else {
-                                throw exceptions::unsupported_operation_exception("Unhandled wip::oper operator");
+                                throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
                             }
                         },
                         // TODO: implement.
