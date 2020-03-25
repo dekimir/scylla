@@ -26,6 +26,7 @@
 #include "cql3/cql_config.hh"
 #include "test/lib/cql_assertions.hh"
 #include "test/lib/cql_test_env.hh"
+#include "types/map.hh"
 
 namespace {
 
@@ -80,6 +81,21 @@ SEASTAR_THREAD_TEST_CASE(regular_col_eq) {
         require_rows(e, "select r from t where q=12 and p=2 allow filtering", {{I(22), I(12)}});
         require_rows(e, "select p from t where q=12 and r=22 allow filtering", {{I(2), I(12), I(22)}});
         require_rows(e, "select r from t where q=12 and p=2 and r=99 allow filtering", {});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(map_entry_eq) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int primary key, m map<int,int>)");
+        cquery_nofail(e, "insert into t (p, m) values (1, {1:11, 2:12, 3:13})");
+        cquery_nofail(e, "insert into t (p, m) values (2, {1:21, 2:22, 3:23})");
+        cquery_nofail(e, "insert into t (p, m) values (3, {1:31, 2:32, 3:33})");
+        const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
+        const auto m2 = make_map_value(my_map_type, typename map_type_impl::native_type({{1, 21}, {2, 22}, {3, 23}}));
+        require_rows(e, "select p from t where m[1]=21 allow filtering", {{I(2), my_map_type->decompose(m2)}});
+        // TODO: absent keys.
+        // TODO: tombstones.
+        // TODO: frozen.
     }).get();
 }
 

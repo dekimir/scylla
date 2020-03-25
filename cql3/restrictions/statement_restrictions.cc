@@ -984,11 +984,24 @@ using cql3::selection::selection;
 /// Returns col's value from the fetched data.
 bytes_opt get_value(const column_value& col, const selection& selection,
                     const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
-                    const std::vector<bytes_opt>& other_columns) {
+                    const std::vector<bytes_opt>& other_columns, const query_options& options) {
+    auto cdef = col.col;
     if (col.sub) {
-        throw exceptions::unsupported_operation_exception("restrictions::wip subscripted column");
+        auto col_type = static_pointer_cast<const collection_type_impl>(cdef->type);
+        if (!col_type->is_map()) {
+            throw exceptions::invalid_request_exception("subscripting non-map column");
+        }
+        const auto deserialized = cdef->type->deserialize(*other_columns[selection.index_of(*cdef)]);
+        const auto& data_map = value_cast<map_type_impl::native_type>(deserialized);
+        const auto key = col.sub->bind_and_get(options);
+        auto&& key_type = col_type->name_comparator();
+        const auto found = with_linearized(*key, [&] (bytes_view key_bv) {
+            return std::find_if(data_map.cbegin(), data_map.cend(), [&] (auto&& element) {
+                return key_type->compare(element.first.serialize_nonnull(), key_bv) == 0;
+            });
+        });
+        return found == data_map.cend() ? bytes_opt() : bytes_opt(found->second.serialize_nonnull());
     } else {
-        auto cdef = col.col;
         switch (cdef->kind) {
         case column_kind::partition_key:
             return partition_key[cdef->id];
@@ -1013,7 +1026,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
             throw std::logic_error("LHS and RHS size mismatch");
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
-            if (rhs[i] != get_value(columns[i], selection, partition_key, clustering_key, other_columns)) {
+            if (rhs[i] != get_value(columns[i], selection, partition_key, clustering_key, other_columns, options)) {
                 return false;
             }
         }
@@ -1023,7 +1036,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
             throw std::logic_error("RHS for multi-column is not a tuple");
         }
         return to_bytes_opt(t->bind_and_get(options)) ==
-                get_value(columns[0], selection, partition_key, clustering_key, other_columns);
+                get_value(columns[0], selection, partition_key, clustering_key, other_columns, options);
     }
 }
 
@@ -1057,7 +1070,7 @@ bool limits(const binary_operator& opr, const selection& selection,
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
             const auto cmp = columns[i].col->type->as_tri_comparator()(
-                    *get_value(columns[i], selection, partition_key, clustering_key, other_columns),
+                    *get_value(columns[i], selection, partition_key, clustering_key, other_columns, options),
                     *rhs[i]);
             // If the components aren't equal, then we just learned the LHS/RHS order.
             if (cmp < 0) {
@@ -1085,7 +1098,7 @@ bool limits(const binary_operator& opr, const selection& selection,
         if (columns.size() != 1) {
             throw std::logic_error("RHS for multi-column is not a tuple");
         }
-        auto lhs = get_value(columns[0], selection, partition_key, clustering_key, other_columns);
+        auto lhs = get_value(columns[0], selection, partition_key, clustering_key, other_columns, options);
         if (!lhs) {
             return false;
         }
@@ -1101,7 +1114,12 @@ bool limits(const binary_operator& opr, const selection& selection,
 /// otherwise, returns nullopt.
 bytes_opt next_value(query::result_row_view::iterator_type& iter, const column_definition* cdef) {
     if (cdef->type->is_multi_cell()) {
-        iter.next_collection_cell();
+        auto cell = iter.next_collection_cell();
+        if (cell) {
+            return cell->with_linearized([] (bytes_view data) {
+                return bytes(data.cbegin(), data.cend());
+            });
+        }
     } else {
         auto cell = iter.next_atomic_cell();
         if (cell) {
@@ -1113,10 +1131,10 @@ bytes_opt next_value(query::result_row_view::iterator_type& iter, const column_d
     return std::nullopt;
 }
 
-/// Returns values of non-primary-key, non-collection columns from selection.  The kth element of
-/// the result corresponds to the kth column in selection.
-std::vector<bytes_opt> get_non_pkc_values(const selection& selection, const query::result_row_view& static_row,
-                                          const query::result_row_view* row) {
+/// Returns values of non-primary-key columns from selection.  The kth element of the result
+/// corresponds to the kth column in selection.
+std::vector<bytes_opt> get_non_pk_values(const selection& selection, const query::result_row_view& static_row,
+                                         const query::result_row_view* row) {
     const auto& cols = selection.get_columns();
     std::vector<bytes_opt> vals(cols.size());
     auto static_row_iterator = static_row.iterator();
@@ -1154,7 +1172,7 @@ bool is_satisfied_by(
             [&] (const binary_operator& opr) {
                 return std::visit(overloaded_functor{
                         [&] (const std::vector<column_value>& cvs) {
-                            auto other_columns = get_non_pkc_values(selection, static_row, row);
+                            auto other_columns = get_non_pk_values(selection, static_row, row);
                             if (opr.op == operator_type::EQ) {
                                 return equal(opr.rhs, cvs, selection, partition_key, clustering_key, other_columns, options);
                             } else if (opr.op == operator_type::NEQ) {
