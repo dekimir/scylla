@@ -284,3 +284,36 @@ SEASTAR_THREAD_TEST_CASE(set_contains) {
         require_rows(e, "select p from t where s contains 22 and s contains 32 allow filtering", {});
     }).get();
 }
+
+SEASTAR_THREAD_TEST_CASE(list_contains) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int primary key, s list<int>)");
+        cquery_nofail(e, "insert into t (p, s) values (1, [11,12,13])");
+        cquery_nofail(e, "insert into t (p, s) values (2, [21,22,23])");
+        cquery_nofail(e, "insert into t (p, s) values (3, [31,32,33])");
+        require_rows(e, "select p from t where s contains 222 allow filtering", {});
+        const auto my_list_type = list_type_impl::get_instance(int32_type, true);
+        const auto s2 = my_list_type->decompose(
+                make_list_value(my_list_type, list_type_impl::native_type({21, 22, 23})));
+        require_rows(e, "select p from t where s contains 22 allow filtering", {{I(2), s2}});
+        require_rows(e, "select p from t where s contains 22 and s contains 23 allow filtering", {{I(2), s2}});
+        require_rows(e, "select p from t where s contains 22 and s contains 32 allow filtering", {});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(map_contains) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int primary key, m map<int,int>)");
+        cquery_nofail(e, "insert into t (p, m) values (1, {1:11, 2:12})");
+        require_rows(e, "select * from t where m contains 22 allow filtering", {});
+        cquery_nofail(e, "insert into t (p, m) values (2, {1:21, 2:22})");
+        const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
+        const auto m2 = my_map_type->decompose(
+                make_map_value(my_map_type, map_type_impl::native_type({{1, 21}, {2, 22}})));
+        require_rows(e, "select m from t where m contains 22 allow filtering", {{m2}});
+        const auto m1 = my_map_type->decompose(
+                make_map_value(my_map_type, map_type_impl::native_type({{1, 11}, {2, 12}})));
+        require_rows(e, "select m from t where m contains 11 allow filtering", {{m1}});
+        require_rows(e, "select m from t where m contains 11 and m contains 12 allow filtering", {{m1}});
+    }).get();
+}
