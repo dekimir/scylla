@@ -85,6 +85,32 @@ SEASTAR_THREAD_TEST_CASE(regular_col_eq) {
     }).get();
 }
 
+SEASTAR_THREAD_TEST_CASE(map_eq) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int primary key, m frozen<map<int,int>>)");
+        cquery_nofail(e, "insert into t (p, m) values (1, {1:11, 2:12, 3:13})");
+        cquery_nofail(e, "insert into t (p, m) values (2, {1:21, 2:22, 3:23})");
+        const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
+        const auto m1 = my_map_type->decompose(
+                make_map_value(my_map_type, map_type_impl::native_type({{1, 11}, {2, 12}, {3, 13}})));
+        require_rows(e, "select p from t where m={1:11, 2:12, 3:13} allow filtering", {{I(1), m1}});
+        require_rows(e, "select p from t where m={1:11, 2:12} allow filtering", {});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(set_eq) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int primary key, m frozen<set<int>>)");
+        cquery_nofail(e, "insert into t (p, m) values (1, {11,12,13})");
+        cquery_nofail(e, "insert into t (p, m) values (2, {21,22,23})");
+        const auto my_set_type = set_type_impl::get_instance(int32_type, true);
+        const auto s2 = my_set_type->decompose(
+                make_set_value(my_set_type, set_type_impl::native_type({21, 22, 23})));
+        require_rows(e, "select p from t where m={21,22,23} allow filtering", {{I(2), s2}});
+        require_rows(e, "select p from t where m={21,22,23,24} allow filtering", {});
+    }).get();
+}
+
 SEASTAR_THREAD_TEST_CASE(map_entry_eq) {
     do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table t (p int primary key, m map<int,int>)");
