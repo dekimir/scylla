@@ -280,5 +280,7 @@ SEASTAR_THREAD_TEST_CASE(set_contains) {
         const auto s2 = my_set_type->decompose(
                 make_set_value(my_set_type, set_type_impl::native_type({21, 22, 23})));
         require_rows(e, "select p from t where s contains 22 allow filtering", {{I(2), s2}});
+        require_rows(e, "select p from t where s contains 22 and s contains 23 allow filtering", {{I(2), s2}});
+        require_rows(e, "select p from t where s contains 22 and s contains 32 allow filtering", {});
     }).get();
 }
