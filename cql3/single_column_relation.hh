@@ -184,7 +184,13 @@ protected:
                                                  bool is_key) override {
         auto&& column_def = to_column_definition(*schema, *_entity);
         auto term = to_term(to_receivers(*schema, column_def), *_value, db, schema->ks_name(), bound_names);
-        return ::make_shared<restrictions::single_column_restriction::contains>(column_def, std::move(term), is_key);
+        auto restr = ::make_shared<restrictions::single_column_restriction::contains>(column_def, term, is_key);
+        using namespace restrictions::wip;
+        restr->wip_equivalent = ::make_shared<expression>(binary_operator{
+                std::vector{column_value(&column_def)},
+                is_key ? operator_type::CONTAINS_KEY : operator_type::CONTAINS,
+                term});
+        return restr;
     }
 
     virtual ::shared_ptr<restrictions::restriction> new_LIKE_restriction(

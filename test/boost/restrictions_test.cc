@@ -27,6 +27,7 @@
 #include "test/lib/cql_assertions.hh"
 #include "test/lib/cql_test_env.hh"
 #include "types/map.hh"
+#include "types/set.hh"
 
 namespace {
 
@@ -188,5 +189,19 @@ SEASTAR_THREAD_TEST_CASE(token) {
         require_rows(e, "select p from t where token(p,q) >= token(1,11) and token(p,q) <= token(1,11)", {{I(1)}});
         require_rows(e, "select p from t where token(p,q) <= token(1,11) and r<102 allow filtering", {{I(1), I(101)}});
         require_rows(e, "select p from t where token(p,q) = token(2,12) and r<102 allow filtering", {});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(set_contains) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int primary key, s set<int>)");
+        cquery_nofail(e, "insert into t (p, s) values (1, {11, 12, 13})");
+        cquery_nofail(e, "insert into t (p, s) values (2, {21, 22, 23})");
+        cquery_nofail(e, "insert into t (p, s) values (3, {31, 32, 33})");
+        require_rows(e, "select p from t where s contains 222 allow filtering", {});
+        const auto my_set_type = set_type_impl::get_instance(int32_type, true);
+        const auto s2 = my_set_type->decompose(
+                make_set_value(my_set_type, set_type_impl::native_type({21, 22, 23})));
+        require_rows(e, "select p from t where s contains 22 allow filtering", {{I(2), s2}});
     }).get();
 }
