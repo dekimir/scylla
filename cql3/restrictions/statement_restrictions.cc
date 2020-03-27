@@ -808,14 +808,13 @@ bool single_column_restriction::contains::is_satisfied_by(const schema& schema,
 namespace {
 
 /// True iff collection (list, set, or map) contains value.
-bool contains_value(const data_value& collection, term& value, const query_options& options) {
-    auto fragmented_val = value.bind_and_get(options);
-    if (!fragmented_val) {
+bool contains_value(const data_value& collection, const raw_value_view& value) {
+    if (!value) {
         return true;
     }
     auto col_type = static_pointer_cast<const collection_type_impl>(collection.type());
     auto&& element_type = col_type->is_set() ? col_type->name_comparator() : col_type->value_comparator();
-    return with_linearized(*fragmented_val, [&] (bytes_view val) {
+    return with_linearized(*value, [&] (bytes_view val) {
         auto exists_in = [&](auto&& range) {
             auto found = std::find_if(range.begin(), range.end(), [&] (auto&& element) {
                 return element_type->compare(element.serialize_nonnull(), val) == 0;
@@ -854,7 +853,7 @@ bool single_column_restriction::contains::is_satisfied_by(bytes_view collection_
 
     auto deserialized = _column_def.type->deserialize(collection_bv);
     for (auto&& value : _values) {
-        if (!contains_value(deserialized, *value, options)) {
+        if (!contains_value(deserialized, value->bind_and_get(options))) {
             return false;
         }
     }
@@ -1130,10 +1129,10 @@ bool limits(const binary_operator& opr, const selection& selection,
     }
 }
 
-/// True iff columns contains t.
-bool contains(::shared_ptr<term> t, const std::vector<column_value>& columns, const selection& selection,
+/// True iff columns is a single collection containing value.
+bool contains(const raw_value_view& value, const std::vector<column_value>& columns, const selection& selection,
               const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
-              const std::vector<bytes_opt>& other_columns, const query_options& options) {
+              const std::vector<bytes_opt>& other_columns) {
     if (columns.size() != 1) {
         throw exceptions::unsupported_operation_exception("tuple CONTAINS not allowed");
     }
@@ -1142,7 +1141,7 @@ bool contains(::shared_ptr<term> t, const std::vector<column_value>& columns, co
     }
     auto cdef = columns[0].col;
     const auto deserialized = cdef->type->deserialize(*other_columns[selection.index_of(*cdef)]);
-    return contains_value(deserialized, *t, options);
+    return contains_value(deserialized, value);
 }
 
 /// Fetches the next cell value from iter and returns its value as bytes_opt if the cell is atomic;
@@ -1215,7 +1214,8 @@ bool is_satisfied_by(
                             } else if (opr.op.is_slice()) {
                                 return limits(opr, selection, partition_key, clustering_key, other_columns, options);
                             } else if (opr.op == operator_type::CONTAINS) {
-                                return contains(opr.rhs, cvs, selection, partition_key, clustering_key, other_columns, options);
+                                return contains(opr.rhs->bind_and_get(options), cvs,
+                                                selection, partition_key, clustering_key, other_columns);
                             } else {
                                 throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
                             }
