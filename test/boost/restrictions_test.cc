@@ -26,6 +26,7 @@
 #include "cql3/cql_config.hh"
 #include "test/lib/cql_assertions.hh"
 #include "test/lib/cql_test_env.hh"
+#include "types/list.hh"
 #include "types/map.hh"
 #include "types/set.hh"
 
@@ -108,6 +109,56 @@ SEASTAR_THREAD_TEST_CASE(set_eq) {
                 make_set_value(my_set_type, set_type_impl::native_type({21, 22, 23})));
         require_rows(e, "select p from t where m={21,22,23} allow filtering", {{I(2), s2}});
         require_rows(e, "select p from t where m={21,22,23,24} allow filtering", {});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(list_eq) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int primary key, li frozen<list<int>>)");
+        cquery_nofail(e, "insert into t (p, li) values (1, [11,12,13])");
+        cquery_nofail(e, "insert into t (p, li) values (2, [21,22,23])");
+        const auto my_list_type = list_type_impl::get_instance(int32_type, true);
+        const auto li2 = my_list_type->decompose(
+                make_list_value(my_list_type, list_type_impl::native_type({21, 22, 23})));
+        require_rows(e, "select p from t where li=[21,22,23] allow filtering", {{I(2), li2}});
+        require_rows(e, "select p from t where li=[23,22,21] allow filtering", {});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(list_slice) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int primary key, li frozen<list<int>>)");
+        cquery_nofail(e, "insert into t (p, li) values (1, [11,12,13])");
+        cquery_nofail(e, "insert into t (p, li) values (2, [21,22,23])");
+        const auto my_list_type = list_type_impl::get_instance(int32_type, true);
+        const auto li1 = my_list_type->decompose(
+                make_list_value(my_list_type, list_type_impl::native_type({11, 12, 13})));
+        const auto li2 = my_list_type->decompose(
+                make_list_value(my_list_type, list_type_impl::native_type({21, 22, 23})));
+        require_rows(e, "select li from t where li<[23,22,21] allow filtering", {{li1}, {li2}});
+        require_rows(e, "select li from t where li>=[11,12,13] allow filtering", {{li1}, {li2}});
+        require_rows(e, "select li from t where li>[11,12,13] allow filtering", {{li2}});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(tuple_of_list) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int, l1 frozen<list<int>>, l2 frozen<list<int>>, primary key(p,l1,l2))");
+        cquery_nofail(e, "insert into t (p, l1, l2) values (1, [11,12], [101,102])");
+        cquery_nofail(e, "insert into t (p, l1, l2) values (2, [21,22], [201,202])");
+        require_rows(e, "select * from t where (l1,l2)<([],[]) allow filtering", {});
+        const auto my_list_type = list_type_impl::get_instance(int32_type, true);
+        const auto l11 = my_list_type->decompose(
+                make_list_value(my_list_type, list_type_impl::native_type({11, 12})));
+        const auto l21 = my_list_type->decompose(
+                make_list_value(my_list_type, list_type_impl::native_type({101, 102})));
+        require_rows(e, "select l1 from t where (l1,l2)<([20],[200]) allow filtering", {{l11, l21}});
+        const auto l12 = my_list_type->decompose(
+                make_list_value(my_list_type, list_type_impl::native_type({21, 22})));
+        const auto l22 = my_list_type->decompose(
+                make_list_value(my_list_type, list_type_impl::native_type({201, 202})));
+        require_rows(e, "select l1 from t where (l1,l2)>=([11,12],[101,102]) allow filtering", {{l11, l21}, {l12, l22}});
+        require_rows(e, "select l1 from t where (l1,l2)<([11,12],[101,103]) allow filtering", {{l11, l21}});
     }).get();
 }
 

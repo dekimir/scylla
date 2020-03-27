@@ -1026,11 +1026,20 @@ bytes_opt get_value(const column_value& col, const selection& selection,
     }
 }
 
+// True iff lhs is a single list column.  In this case, rhs holds list elements, not tuple values for
+// multi-column comparison.
+//
+// TODO: eliminate this; the front-end should make a more sensible representation for this.
+bool is_special_list_case(const std::vector<column_value>& columns) {
+    return columns.size() == 1 && columns[0].col->type->is_list();
+}
+
 /// True iff columns' values equal t.
 bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const selection& selection,
            const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
            const std::vector<bytes_opt>& other_columns, const query_options& options) {
-    if (auto multi = dynamic_pointer_cast<multi_item_terminal>(t)) {
+    auto multi = dynamic_pointer_cast<multi_item_terminal>(t);
+    if (multi && !is_special_list_case(columns)) {
         const auto& rhs = multi->get_elements();
         if (rhs.size() != columns.size()) {
             throw std::logic_error("LHS and RHS size mismatch");
@@ -1041,7 +1050,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
             }
         }
         return true;
-    } else  {
+    } else {
         if (columns.size() != 1) {
             throw std::logic_error("RHS for multi-column is not a tuple");
         }
@@ -1073,7 +1082,8 @@ bool limits(const binary_operator& opr, const selection& selection,
         throw std::logic_error("limits() called on non-slice op");
     }
     const auto& columns = std::get<0>(opr.lhs);
-    if (auto multi = dynamic_pointer_cast<multi_item_terminal>(opr.rhs)) {
+    auto multi = dynamic_pointer_cast<multi_item_terminal>(opr.rhs);
+    if (multi && !is_special_list_case(columns)) {
         const auto& rhs = multi->get_elements();
         if (rhs.size() != columns.size()) {
             throw std::logic_error("LHS and RHS size mismatch");
