@@ -1139,9 +1139,10 @@ bool contains(const raw_value_view& value, const std::vector<column_value>& colu
     if (columns[0].sub) {
         throw exceptions::unsupported_operation_exception("CONTAINS lhs is subscripted");
     }
-    auto cdef = columns[0].col;
-    const auto deserialized = cdef->type->deserialize(*other_columns[selection.index_of(*cdef)]);
-    return contains_value(deserialized, value);
+    const auto collection = columns[0].col->type->deserialize(
+            *get_value(columns[0], selection, partition_key, clustering_key, other_columns,
+                       query_options::DEFAULT /* unused when .sub is null */));
+    return contains_value(collection, value);
 }
 
 /// Fetches the next cell value from iter and returns its value as bytes_opt if the cell is atomic;

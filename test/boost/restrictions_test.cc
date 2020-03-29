@@ -317,3 +317,26 @@ SEASTAR_THREAD_TEST_CASE(map_contains) {
         require_rows(e, "select m from t where m contains 11 and m contains 12 allow filtering", {{m1}});
     }).get();
 }
+
+SEASTAR_THREAD_TEST_CASE(clustering_key_contains) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int, s frozen<set<int>>, m frozen<map<int,int>>, primary key(p,s,m))");
+        cquery_nofail(e, "insert into t (p, s, m) values (1, {11,12}, {1:11})");
+        cquery_nofail(e, "insert into t (p, s, m) values (2, {21,22}, {2:12})");
+        cquery_nofail(e, "insert into t (p, s, m) values (3, {31,32}, {3:13})");
+        const auto my_set_type = set_type_impl::get_instance(int32_type, true);
+        const auto s2 = my_set_type->decompose(make_set_value(my_set_type, set_type_impl::native_type({21, 22})));
+        require_rows(e, "select s from t where s contains 22 allow filtering", {{s2}});
+        require_rows(e, "select s from t where s contains 44 allow filtering", {});
+        const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
+        const auto m3 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{3, 13}})));
+        require_rows(e, "select m from t where m contains 13 allow filtering", {{m3}});
+        const auto s3 = my_set_type->decompose(make_set_value(my_set_type, set_type_impl::native_type({31, 32})));
+        require_rows(e, "select m from t where m contains 13 and s contains 31 allow filtering", {{m3, s3}});
+        cquery_nofail(e, "insert into t (p, s, m) values (4, {41,42,22}, {4:14})");
+        const auto s4 = my_set_type->decompose(make_set_value(my_set_type, set_type_impl::native_type({22, 41, 42})));
+        require_rows(e, "select s from t where s contains 22 allow filtering", {{s2}, {s4}});
+        cquery_nofail(e, "delete from t where p=2");
+        require_rows(e, "select s from t where s contains 22 allow filtering", {{s4}});
+    }).get();
+}
