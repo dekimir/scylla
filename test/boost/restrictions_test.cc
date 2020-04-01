@@ -340,3 +340,28 @@ SEASTAR_THREAD_TEST_CASE(clustering_key_contains) {
         require_rows(e, "select s from t where s contains 22 allow filtering", {{s4}});
     }).get();
 }
+
+SEASTAR_THREAD_TEST_CASE(contains_key) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e,
+                "create table t (p frozen<map<int,int>>, c frozen<map<text,int>>, m map<int,int>, primary key(p, c))");
+        cquery_nofail(e, "insert into t (p,c,m) values ({1:11, 2:12}, {'el':11, 'twel':12}, {11:11, 12:12})");
+        require_rows(e, "select * from t where p contains key 3 allow filtering", {});
+        require_rows(e, "select * from t where c contains key 'x' allow filtering", {});
+        require_rows(e, "select * from t where m contains key 3 allow filtering", {});
+        cquery_nofail(e, "insert into t (p,c,m) values ({3:33}, {'th':33}, {11:33})");
+        const auto int_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
+        const auto m1 = int_map_type->decompose(
+                make_map_value(int_map_type, map_type_impl::native_type({{11, 11}, {12, 12}})));
+        const auto m2 = int_map_type->decompose(make_map_value(int_map_type, map_type_impl::native_type({{11, 33}})));
+        require_rows(e, "select m from t where m contains key 12 allow filtering", {{m1}});
+        require_rows(e, "select m from t where m contains key 11 allow filtering", {{m1}, {m2}});
+        const auto text_map_type = map_type_impl::get_instance(utf8_type, int32_type, true);
+        const auto c1 = text_map_type->decompose(
+                make_map_value(text_map_type, map_type_impl::native_type({{"el", 11}, {"twel", 12}})));
+        require_rows(e, "select c from t where c contains key 'el' allow filtering", {{c1}});
+        require_rows(e, "select c from t where c contains key 'twel' allow filtering", {{c1}});
+        const auto p3 = int_map_type->decompose(make_map_value(int_map_type, map_type_impl::native_type({{3, 33}})));
+        require_rows(e, "select p from t where p contains key 3 allow filtering", {{p3}});
+    }).get();
+}

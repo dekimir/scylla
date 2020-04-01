@@ -1145,6 +1145,31 @@ bool contains(const raw_value_view& value, const std::vector<column_value>& colu
     return contains_value(collection, value);
 }
 
+/// True iff \p columns has a single element that's a map containing \p key.
+bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view key,
+                  const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
+                  const std::vector<bytes_opt>& other_columns,
+                  const selection& selection) {
+    if (columns.size() != 1) {
+        throw exceptions::unsupported_operation_exception("CONTAINS KEY on a tuple");
+    }
+    if (columns[0].sub) {
+        throw exceptions::unsupported_operation_exception("CONTAINS KEY lhs is subscripted");
+    }
+    auto cdef = columns[0].col;
+    const auto collection = cdef->type->deserialize(
+            *get_value(columns[0], selection, partition_key, clustering_key, other_columns,
+                       query_options::DEFAULT /* unused when .sub is null */));
+    const auto data_map = value_cast<map_type_impl::native_type>(collection);
+    auto key_type = static_pointer_cast<const collection_type_impl>(cdef->type)->name_comparator();
+    auto found = with_linearized(*key, [&] (bytes_view k_bv) {
+        return std::find_if(data_map.begin(), data_map.end(), [&] (auto&& element) {
+            return key_type->compare(element.first.serialize_nonnull(), k_bv) == 0;
+        });
+    });
+    return found != data_map.end();
+}
+
 /// Fetches the next cell value from iter and returns its value as bytes_opt if the cell is atomic;
 /// otherwise, returns nullopt.
 bytes_opt next_value(query::result_row_view::iterator_type& iter, const column_definition* cdef) {
@@ -1217,6 +1242,9 @@ bool is_satisfied_by(
                             } else if (opr.op == operator_type::CONTAINS) {
                                 return contains(opr.rhs->bind_and_get(options), cvs,
                                                 selection, partition_key, clustering_key, other_columns);
+                            } else if (opr.op == operator_type::CONTAINS_KEY) {
+                                return contains_key(std::get<0>(opr.lhs), opr.rhs->bind_and_get(options),
+                                                    partition_key, clustering_key, other_columns, selection);
                             } else {
                                 throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
                             }
