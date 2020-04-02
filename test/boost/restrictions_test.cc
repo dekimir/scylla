@@ -281,7 +281,7 @@ SEASTAR_THREAD_TEST_CASE(token) {
 
 SEASTAR_THREAD_TEST_CASE(set_contains) {
     do_with_cql_env_thread([](cql_test_env& e) {
-        cquery_nofail(e, "create table t (p frozen<set<int>>, c frozen<set<int>>, s set<text>, primary key (p, c))");
+        cquery_nofail(e, "create table t (p frozen<set<int>>, c frozen<set<int>>, s set<text>, st set<int> static, primary key (p, c))");
         require_rows(e, "select * from t where c contains 222 allow filtering", {});
         cquery_nofail(e, "insert into t (p, c, s) values ({1}, {11, 12}, {'a1', 'b1'})");
         cquery_nofail(e, "insert into t (p, c, s) values ({2}, {21, 22}, {'a2', 'b1'})");
@@ -298,6 +298,9 @@ SEASTAR_THREAD_TEST_CASE(set_contains) {
                      {{ST({"a1", "b1"})}, {ST({"a2", "b1"})}});
         require_rows(e, "select s from t where s contains 'b1' and s contains '' allow filtering", {});
         require_rows(e, "select s from t where s contains 'b1' and p contains 4 allow filtering", {});
+        cquery_nofail(e, "insert into t (p, c, st) values ({4}, {41}, {104})");
+        require_rows(e, "select st from t where st contains 4 allow filtering", {});
+        require_rows(e, "select st from t where st contains 104 allow filtering", {{SI({104})}});
     }).get();
 }
 
