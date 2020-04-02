@@ -1139,10 +1139,13 @@ bool contains(const raw_value_view& value, const std::vector<column_value>& colu
     if (columns[0].sub) {
         throw exceptions::unsupported_operation_exception("CONTAINS lhs is subscripted");
     }
-    const auto collection = columns[0].col->type->deserialize(
-            *get_value(columns[0], selection, partition_key, clustering_key, other_columns,
-                       query_options::DEFAULT /* unused when .sub is null */));
-    return contains_value(collection, value);
+    const auto collection = get_value(columns[0], selection, partition_key, clustering_key, other_columns,
+                                      query_options::DEFAULT /* unused when .sub is null */);
+    if (collection) {
+        return contains_value(columns[0].col->type->deserialize(*collection), value);
+    } else {
+        return false;
+    }
 }
 
 /// True iff \p columns has a single element that's a map containing \p key.
