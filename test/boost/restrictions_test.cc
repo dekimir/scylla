@@ -63,13 +63,13 @@ auto I(int32_t x) { return int32_type->decompose(x); }
 auto F(float f) { return float_type->decompose(f); }
 auto T(const char* t) { return utf8_type->decompose(t); }
 
-const auto int_set_type = set_type_impl::get_instance(int32_type, true);
 auto SI(const set_type_impl::native_type& val) {
+    const auto int_set_type = set_type_impl::get_instance(int32_type, true);
     return int_set_type->decompose(make_set_value(int_set_type, val));
 };
 
-const auto text_set_type = set_type_impl::get_instance(utf8_type, true);
 auto ST(const set_type_impl::native_type& val) {
+    const auto text_set_type = set_type_impl::get_instance(utf8_type, true);
     return text_set_type->decompose(make_set_value(text_set_type, val));
 };
 
