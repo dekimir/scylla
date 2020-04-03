@@ -73,6 +73,16 @@ auto ST(const set_type_impl::native_type& val) {
     return text_set_type->decompose(make_set_value(text_set_type, val));
 };
 
+auto LI(const list_type_impl::native_type& val) {
+    const auto int_list_type = list_type_impl::get_instance(int32_type, true);
+    return int_list_type->decompose(make_list_value(int_list_type, val));
+}
+
+auto LT(const list_type_impl::native_type& val) {
+    const auto text_list_type = list_type_impl::get_instance(utf8_type, true);
+    return text_list_type->decompose(make_list_value(text_list_type, val));
+}
+
 /// Creates a table t with int columns p, q, and r.  Inserts data (i,10+i,20+i) for i = 0 to n.
 void create_t_with_p_q_r(cql_test_env& e, size_t n) {
     cquery_nofail(e, "create table t (p int primary key, q int, r int)");
@@ -312,17 +322,24 @@ SEASTAR_THREAD_TEST_CASE(set_contains) {
 
 SEASTAR_THREAD_TEST_CASE(list_contains) {
     do_with_cql_env_thread([](cql_test_env& e) {
-        cquery_nofail(e, "create table t (p int primary key, s list<int>)");
-        cquery_nofail(e, "insert into t (p, s) values (1, [11,12,13])");
-        cquery_nofail(e, "insert into t (p, s) values (2, [21,22,23])");
-        cquery_nofail(e, "insert into t (p, s) values (3, [31,32,33])");
-        require_rows(e, "select p from t where s contains 222 allow filtering", {});
-        const auto my_list_type = list_type_impl::get_instance(int32_type, true);
-        const auto s2 = my_list_type->decompose(
-                make_list_value(my_list_type, list_type_impl::native_type({21, 22, 23})));
-        require_rows(e, "select p from t where s contains 22 allow filtering", {{I(2), s2}});
-        require_rows(e, "select p from t where s contains 22 and s contains 23 allow filtering", {{I(2), s2}});
-        require_rows(e, "select p from t where s contains 22 and s contains 32 allow filtering", {});
+        cquery_nofail(e, "create table t (p frozen<list<int>>, c frozen<list<int>>, ls list<int>, st list<text> static,"
+                      "primary key(p, c))");
+        cquery_nofail(e, "insert into t (p, c) values ([1], [11,12,13])");
+        cquery_nofail(e, "insert into t (p, c, ls) values ([2], [21,22,23], [102])");
+        cquery_nofail(e, "insert into t (p, c, ls, st) values ([3], [21,32,33], [103], ['a', 'b'])");
+        cquery_nofail(e, "insert into t (p, c, st) values ([4], [41,42,43], ['a'])");
+        cquery_nofail(e, "insert into t (p, c) values ([4], [41,42])");
+        require_rows(e, "select p from t where p contains 222 allow filtering", {});
+        require_rows(e, "select p from t where c contains 222 allow filtering", {});
+        require_rows(e, "select p from t where ls contains 222 allow filtering", {});
+        require_rows(e, "select p from t where st contains 'xyz' allow filtering", {});
+        require_rows(e, "select p from t where p contains 1 allow filtering", {{LI({1})}});
+        require_rows(e, "select p from t where p contains 4 allow filtering", {{LI({4})}, {LI({4})}});
+        require_rows(e, "select c from t where c contains 22 allow filtering", {{LI({21,22,23})}});
+        require_rows(e, "select c from t where c contains 21 allow filtering", {{LI({21,22,23})}, {LI({21,32,33})}});
+        require_rows(e, "select ls from t where ls contains 102 allow filtering", {{LI({102})}});
+        require_rows(e, "select st from t where st contains 'a' allow filtering", {{LT({"a"})}, {LT({"a"})}, {LT({"a", "b"})}});
+        require_rows(e, "select st from t where st contains 'b' allow filtering", {{LT({"a", "b"})}});
     }).get();
 }
 
