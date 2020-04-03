@@ -284,6 +284,8 @@ SEASTAR_THREAD_TEST_CASE(set_contains) {
         require_rows(e, "select * from t where p contains 999 allow filtering", {});
         require_rows(e, "select p from t where p contains 3 allow filtering", {{SI({1, 3})}});
         require_rows(e, "select p from t where p contains 1 allow filtering", {{SI({1, 3})}, {SI({1})}});
+        require_rows(e, "select p from t where p contains 1 and s contains 'a1' allow filtering",
+                     {{SI({1}), ST({"a1", "b1"})}});
         require_rows(e, "select c from t where c contains 31 allow filtering", {{SI({31, 32})}});
         require_rows(e, "select c from t where c contains 11 and p contains 1 allow filtering",
                      {{SI({11, 12}), SI({1})}});
@@ -295,12 +297,15 @@ SEASTAR_THREAD_TEST_CASE(set_contains) {
         cquery_nofail(e, "insert into t (p, c, st) values ({4}, {41}, {104})");
         require_rows(e, "select st from t where st contains 4 allow filtering", {});
         require_rows(e, "select st from t where st contains 104 allow filtering", {{SI({104})}});
-        cquery_nofail(e, "insert into t (p, c, st) values ({4}, {42}, {104})");
-        require_rows(e, "select c from t where st contains 104 allow filtering",
-                     {{SI({41}), SI({104})}, {SI({42}), SI({104})}});
+        cquery_nofail(e, "insert into t (p, c, st) values ({4}, {42}, {105})");
+        require_rows(e, "select c from t where st contains 104 allow filtering", {});
+        require_rows(e, "select c from t where st contains 105 allow filtering",
+                     {{SI({41}), SI({105})}, {SI({42}), SI({105})}});
         cquery_nofail(e, "insert into t (p, c, st) values ({5}, {52}, {104, 105})");
-        require_rows(e, "select p from t where st contains 104 allow filtering",
-                     {{SI({4}), SI({104})}, {SI({5}), SI({104, 105})}, {SI({5}), SI({104, 105})}});
+        require_rows(e, "select p from t where st contains 105 allow filtering",
+                     {{SI({4}), SI({105})}, {SI({4}), SI({105})}, {SI({5}), SI({104, 105})}});
+        cquery_nofail(e, "delete from t where p={4}");
+        require_rows(e, "select p from t where st contains 105 allow filtering", {{SI({5}), SI({104, 105})}});
     }).get();
 }
 
@@ -321,45 +326,42 @@ SEASTAR_THREAD_TEST_CASE(list_contains) {
         require_rows(e, "select p from t where p contains 4 allow filtering", {{LI({4})}, {LI({4})}});
         require_rows(e, "select c from t where c contains 22 allow filtering", {{LI({21,22,23})}});
         require_rows(e, "select c from t where c contains 21 allow filtering", {{LI({21,22,23})}, {LI({21,32,33})}});
+        require_rows(e, "select c from t where c contains 21 and ls contains 102 allow filtering",
+                     {{LI({21,22,23}), LI({102})}});
         require_rows(e, "select ls from t where ls contains 102 allow filtering", {{LI({102})}});
         require_rows(e, "select st from t where st contains 'a' allow filtering", {{LT({"a"})}, {LT({"a"})}, {LT({"a", "b"})}});
         require_rows(e, "select st from t where st contains 'b' allow filtering", {{LT({"a", "b"})}});
+        cquery_nofail(e, "delete from t where p=[2]");
+        require_rows(e, "select c from t where c contains 21 allow filtering", {{LI({21,32,33})}});
     }).get();
 }
 
 SEASTAR_THREAD_TEST_CASE(map_contains) {
     do_with_cql_env_thread([](cql_test_env& e) {
-        cquery_nofail(e, "create table t (p int primary key, m map<int,int>)");
-        cquery_nofail(e, "insert into t (p, m) values (1, {1:11, 2:12})");
-        require_rows(e, "select * from t where m contains 22 allow filtering", {});
-        cquery_nofail(e, "insert into t (p, m) values (2, {1:21, 2:22})");
+        cquery_nofail(e, "create table t (p frozen<map<int,int>>, c frozen<map<int,int>>, m map<int,int>,"
+                      "s map<int,int> static, primary key(p, c))");
+        cquery_nofail(e, "insert into t (p, c, m) values ({1:1}, {10:10}, {1:11, 2:12})");
+        require_rows(e, "select * from t where m contains 21 allow filtering", {});
+        cquery_nofail(e, "insert into t (p, c, m) values ({2:2}, {20:20}, {1:21, 2:12})");
+        cquery_nofail(e, "insert into t (p, c) values ({3:3}, {30:30})");
+        cquery_nofail(e, "insert into t (p, c, s) values ({3:3}, {31:31}, {3:100})");
+        cquery_nofail(e, "insert into t (p, c, s) values ({4:4}, {40:40}, {4:100})");
         const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
         const auto m2 = my_map_type->decompose(
-                make_map_value(my_map_type, map_type_impl::native_type({{1, 21}, {2, 22}})));
-        require_rows(e, "select m from t where m contains 22 allow filtering", {{m2}});
+                make_map_value(my_map_type, map_type_impl::native_type({{1, 21}, {2, 12}})));
+        require_rows(e, "select m from t where m contains 21 allow filtering", {{m2}});
         const auto m1 = my_map_type->decompose(
                 make_map_value(my_map_type, map_type_impl::native_type({{1, 11}, {2, 12}})));
         require_rows(e, "select m from t where m contains 11 allow filtering", {{m1}});
+        require_rows(e, "select m from t where m contains 12 allow filtering", {{m1}, {m2}});
         require_rows(e, "select m from t where m contains 11 and m contains 12 allow filtering", {{m1}});
-    }).get();
-}
-
-SEASTAR_THREAD_TEST_CASE(clustering_key_contains) {
-    do_with_cql_env_thread([](cql_test_env& e) {
-        cquery_nofail(e, "create table t (p int, s frozen<set<int>>, m frozen<map<int,int>>, primary key(p,s,m))");
-        cquery_nofail(e, "insert into t (p, s, m) values (1, {11,12}, {1:11})");
-        cquery_nofail(e, "insert into t (p, s, m) values (2, {21,22}, {2:12})");
-        cquery_nofail(e, "insert into t (p, s, m) values (3, {31,32}, {3:13})");
-        require_rows(e, "select s from t where s contains 22 allow filtering", {{SI({21, 22})}});
-        require_rows(e, "select s from t where s contains 44 allow filtering", {});
-        const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
-        const auto m3 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{3, 13}})));
-        require_rows(e, "select m from t where m contains 13 allow filtering", {{m3}});
-        require_rows(e, "select m from t where m contains 13 and s contains 31 allow filtering", {{m3, SI({31, 32})}});
-        cquery_nofail(e, "insert into t (p, s, m) values (4, {41,42,22}, {4:14})");
-        require_rows(e, "select s from t where s contains 22 allow filtering", {{SI({21, 22})}, {SI({22, 41, 42})}});
-        cquery_nofail(e, "delete from t where p=2");
-        require_rows(e, "select s from t where s contains 22 allow filtering", {{SI({22, 41, 42})}});
+        cquery_nofail(e, "delete from t where p={2:2}");
+        require_rows(e, "select m from t where m contains 12 allow filtering", {{m1}});
+        const auto s3 = my_map_type->decompose(
+                make_map_value(my_map_type, map_type_impl::native_type({{3, 100}})));
+        const auto s4 = my_map_type->decompose(
+                make_map_value(my_map_type, map_type_impl::native_type({{4, 100}})));
+        require_rows(e, "select s from t where s contains 100 allow filtering", {{s3}, {s3}, {s4}});
     }).get();
 }
 
