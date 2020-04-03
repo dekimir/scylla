@@ -124,10 +124,7 @@ SEASTAR_THREAD_TEST_CASE(set_eq) {
         cquery_nofail(e, "create table t (p int primary key, m frozen<set<int>>)");
         cquery_nofail(e, "insert into t (p, m) values (1, {11,12,13})");
         cquery_nofail(e, "insert into t (p, m) values (2, {21,22,23})");
-        const auto my_set_type = set_type_impl::get_instance(int32_type, true);
-        const auto s2 = my_set_type->decompose(
-                make_set_value(my_set_type, set_type_impl::native_type({21, 22, 23})));
-        require_rows(e, "select p from t where m={21,22,23} allow filtering", {{I(2), s2}});
+        require_rows(e, "select p from t where m={21,22,23} allow filtering", {{I(2), SI({21, 22, 23})}});
         require_rows(e, "select p from t where m={21,22,23,24} allow filtering", {});
     }).get();
 }
@@ -137,10 +134,7 @@ SEASTAR_THREAD_TEST_CASE(list_eq) {
         cquery_nofail(e, "create table t (p int primary key, li frozen<list<int>>)");
         cquery_nofail(e, "insert into t (p, li) values (1, [11,12,13])");
         cquery_nofail(e, "insert into t (p, li) values (2, [21,22,23])");
-        const auto my_list_type = list_type_impl::get_instance(int32_type, true);
-        const auto li2 = my_list_type->decompose(
-                make_list_value(my_list_type, list_type_impl::native_type({21, 22, 23})));
-        require_rows(e, "select p from t where li=[21,22,23] allow filtering", {{I(2), li2}});
+        require_rows(e, "select p from t where li=[21,22,23] allow filtering", {{I(2), LI({21, 22, 23})}});
         require_rows(e, "select p from t where li=[23,22,21] allow filtering", {});
     }).get();
 }
@@ -150,14 +144,11 @@ SEASTAR_THREAD_TEST_CASE(list_slice) {
         cquery_nofail(e, "create table t (p int primary key, li frozen<list<int>>)");
         cquery_nofail(e, "insert into t (p, li) values (1, [11,12,13])");
         cquery_nofail(e, "insert into t (p, li) values (2, [21,22,23])");
-        const auto my_list_type = list_type_impl::get_instance(int32_type, true);
-        const auto li1 = my_list_type->decompose(
-                make_list_value(my_list_type, list_type_impl::native_type({11, 12, 13})));
-        const auto li2 = my_list_type->decompose(
-                make_list_value(my_list_type, list_type_impl::native_type({21, 22, 23})));
-        require_rows(e, "select li from t where li<[23,22,21] allow filtering", {{li1}, {li2}});
-        require_rows(e, "select li from t where li>=[11,12,13] allow filtering", {{li1}, {li2}});
-        require_rows(e, "select li from t where li>[11,12,13] allow filtering", {{li2}});
+        require_rows(e, "select li from t where li<[23,22,21] allow filtering",
+                     {{LI({11, 12, 13})}, {LI({21, 22, 23})}});
+        require_rows(e, "select li from t where li>=[11,12,13] allow filtering",
+                     {{LI({11, 12, 13})}, {LI({21, 22, 23})}});
+        require_rows(e, "select li from t where li>[11,12,13] allow filtering", {{LI({21, 22, 23})}});
     }).get();
 }
 
@@ -167,18 +158,11 @@ SEASTAR_THREAD_TEST_CASE(tuple_of_list) {
         cquery_nofail(e, "insert into t (p, l1, l2) values (1, [11,12], [101,102])");
         cquery_nofail(e, "insert into t (p, l1, l2) values (2, [21,22], [201,202])");
         require_rows(e, "select * from t where (l1,l2)<([],[]) allow filtering", {});
-        const auto my_list_type = list_type_impl::get_instance(int32_type, true);
-        const auto l11 = my_list_type->decompose(
-                make_list_value(my_list_type, list_type_impl::native_type({11, 12})));
-        const auto l21 = my_list_type->decompose(
-                make_list_value(my_list_type, list_type_impl::native_type({101, 102})));
-        require_rows(e, "select l1 from t where (l1,l2)<([20],[200]) allow filtering", {{l11, l21}});
-        const auto l12 = my_list_type->decompose(
-                make_list_value(my_list_type, list_type_impl::native_type({21, 22})));
-        const auto l22 = my_list_type->decompose(
-                make_list_value(my_list_type, list_type_impl::native_type({201, 202})));
-        require_rows(e, "select l1 from t where (l1,l2)>=([11,12],[101,102]) allow filtering", {{l11, l21}, {l12, l22}});
-        require_rows(e, "select l1 from t where (l1,l2)<([11,12],[101,103]) allow filtering", {{l11, l21}});
+        require_rows(e, "select l1 from t where (l1,l2)<([20],[200]) allow filtering", {{LI({11, 12}), LI({101, 102})}});
+        require_rows(e, "select l1 from t where (l1,l2)>=([11,12],[101,102]) allow filtering",
+                     {{LI({11, 12}), LI({101, 102})}, {LI({21, 22}), LI({201, 202})}});
+        require_rows(e, "select l1 from t where (l1,l2)<([11,12],[101,103]) allow filtering",
+                     {{LI({11, 12}), LI({101, 102})}});
     }).get();
 }
 
@@ -366,20 +350,16 @@ SEASTAR_THREAD_TEST_CASE(clustering_key_contains) {
         cquery_nofail(e, "insert into t (p, s, m) values (1, {11,12}, {1:11})");
         cquery_nofail(e, "insert into t (p, s, m) values (2, {21,22}, {2:12})");
         cquery_nofail(e, "insert into t (p, s, m) values (3, {31,32}, {3:13})");
-        const auto my_set_type = set_type_impl::get_instance(int32_type, true);
-        const auto s2 = my_set_type->decompose(make_set_value(my_set_type, set_type_impl::native_type({21, 22})));
-        require_rows(e, "select s from t where s contains 22 allow filtering", {{s2}});
+        require_rows(e, "select s from t where s contains 22 allow filtering", {{SI({21, 22})}});
         require_rows(e, "select s from t where s contains 44 allow filtering", {});
         const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
         const auto m3 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{3, 13}})));
         require_rows(e, "select m from t where m contains 13 allow filtering", {{m3}});
-        const auto s3 = my_set_type->decompose(make_set_value(my_set_type, set_type_impl::native_type({31, 32})));
-        require_rows(e, "select m from t where m contains 13 and s contains 31 allow filtering", {{m3, s3}});
+        require_rows(e, "select m from t where m contains 13 and s contains 31 allow filtering", {{m3, SI({31, 32})}});
         cquery_nofail(e, "insert into t (p, s, m) values (4, {41,42,22}, {4:14})");
-        const auto s4 = my_set_type->decompose(make_set_value(my_set_type, set_type_impl::native_type({22, 41, 42})));
-        require_rows(e, "select s from t where s contains 22 allow filtering", {{s2}, {s4}});
+        require_rows(e, "select s from t where s contains 22 allow filtering", {{SI({21, 22})}, {SI({22, 41, 42})}});
         cquery_nofail(e, "delete from t where p=2");
-        require_rows(e, "select s from t where s contains 22 allow filtering", {{s4}});
+        require_rows(e, "select s from t where s contains 22 allow filtering", {{SI({22, 41, 42})}});
     }).get();
 }
 
