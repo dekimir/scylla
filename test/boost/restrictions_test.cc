@@ -301,6 +301,9 @@ SEASTAR_THREAD_TEST_CASE(set_contains) {
         cquery_nofail(e, "insert into t (p, c, st) values ({4}, {41}, {104})");
         require_rows(e, "select st from t where st contains 4 allow filtering", {});
         require_rows(e, "select st from t where st contains 104 allow filtering", {{SI({104})}});
+        cquery_nofail(e, "insert into t (p, c, st) values ({4}, {42}, {104})");
+        require_rows(e, "select c from t where st contains 104 allow filtering",
+                     {{SI({41}), SI({104})}, {SI({42}), SI({104})}});
     }).get();
 }
 
@@ -389,9 +392,15 @@ SEASTAR_THREAD_TEST_CASE(contains_key) {
         require_rows(e, "select m from t where m contains key 12 allow filtering", {});
         require_rows(e, "select s from t where s contains key 55 allow filtering", {});
         cquery_nofail(e, "insert into t (p,c,s) values ({5:55}, {'aaaa':55}, {55:'aaaa'})");
+        cquery_nofail(e, "insert into t (p,c,s) values ({5:55}, {'aaa':55}, {55:'aaaa'})");
         const auto int_text_map_type = map_type_impl::get_instance(int32_type, utf8_type, true);
         const auto s5 = int_text_map_type->decompose(
                 make_map_value(int_text_map_type, map_type_impl::native_type({{55, "aaaa"}})));
-        require_rows(e, "select s from t where s contains key 55 allow filtering", {{s5}});
+        require_rows(e, "select s from t where s contains key 55 allow filtering", {{s5}, {s5}});
+        const auto c51 = text_map_type->decompose(
+                make_map_value(text_map_type, map_type_impl::native_type({{"aaaa", 55}})));
+        const auto c52 = text_map_type->decompose(
+                make_map_value(text_map_type, map_type_impl::native_type({{"aaa", 55}})));
+        require_rows(e, "select c from t where s contains key 55 allow filtering", {{c51, s5}, {c52, s5}});
     }).get();
 }
