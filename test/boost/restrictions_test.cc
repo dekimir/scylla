@@ -363,7 +363,8 @@ SEASTAR_THREAD_TEST_CASE(clustering_key_contains) {
 SEASTAR_THREAD_TEST_CASE(contains_key) {
     do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e,
-                "create table t (p frozen<map<int,int>>, c frozen<map<text,int>>, m map<int,int>, primary key(p, c))");
+                      "create table t (p frozen<map<int,int>>, c frozen<map<text,int>>, m map<int,int>, "
+                      "s map<int,text> static, primary key(p, c))");
         cquery_nofail(e, "insert into t (p,c,m) values ({1:11, 2:12}, {'el':11, 'twel':12}, {11:11, 12:12})");
         require_rows(e, "select * from t where p contains key 3 allow filtering", {});
         require_rows(e, "select * from t where c contains key 'x' allow filtering", {});
@@ -386,5 +387,11 @@ SEASTAR_THREAD_TEST_CASE(contains_key) {
         require_rows(e, "select m from t where m contains key 12 allow filtering", {{m1}});
         cquery_nofail(e, "delete from t where p={1:11, 2:12}");
         require_rows(e, "select m from t where m contains key 12 allow filtering", {});
+        require_rows(e, "select s from t where s contains key 55 allow filtering", {});
+        cquery_nofail(e, "insert into t (p,c,s) values ({5:55}, {'aaaa':55}, {55:'aaaa'})");
+        const auto int_text_map_type = map_type_impl::get_instance(int32_type, utf8_type, true);
+        const auto s5 = int_text_map_type->decompose(
+                make_map_value(int_text_map_type, map_type_impl::native_type({{55, "aaaa"}})));
+        require_rows(e, "select s from t where s contains key 55 allow filtering", {{s5}});
     }).get();
 }
