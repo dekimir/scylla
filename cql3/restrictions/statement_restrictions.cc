@@ -1160,10 +1160,12 @@ bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view
         throw exceptions::unsupported_operation_exception("CONTAINS KEY lhs is subscripted");
     }
     auto cdef = columns[0].col;
-    const auto collection = cdef->type->deserialize(
-            *get_value(columns[0], selection, partition_key, clustering_key, other_columns,
-                       query_options::DEFAULT /* unused when .sub is null */));
-    const auto data_map = value_cast<map_type_impl::native_type>(collection);
+    const auto collection = get_value(columns[0], selection, partition_key, clustering_key, other_columns,
+                                      query_options::DEFAULT /* unused when .sub is null */);
+    if (!collection) {
+        return false;
+    }
+    const auto data_map = value_cast<map_type_impl::native_type>(cdef->type->deserialize(*collection));
     auto key_type = static_pointer_cast<const collection_type_impl>(cdef->type)->name_comparator();
     auto found = with_linearized(*key, [&] (bytes_view k_bv) {
         return std::find_if(data_map.begin(), data_map.end(), [&] (auto&& element) {

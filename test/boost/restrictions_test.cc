@@ -382,5 +382,9 @@ SEASTAR_THREAD_TEST_CASE(contains_key) {
         require_rows(e, "select c from t where c contains key 'twel' allow filtering", {{c1}});
         const auto p3 = int_map_type->decompose(make_map_value(int_map_type, map_type_impl::native_type({{3, 33}})));
         require_rows(e, "select p from t where p contains key 3 allow filtering", {{p3}});
+        cquery_nofail(e, "insert into t (p,c) values ({4:44}, {'aaaa':44})");
+        require_rows(e, "select m from t where m contains key 12 allow filtering", {{m1}});
+        cquery_nofail(e, "delete from t where p={1:11, 2:12}");
+        require_rows(e, "select m from t where m contains key 12 allow filtering", {});
     }).get();
 }
