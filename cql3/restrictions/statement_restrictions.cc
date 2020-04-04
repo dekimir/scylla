@@ -1045,7 +1045,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
     auto multi = dynamic_pointer_cast<multi_item_terminal>(t);
     if (multi && !is_special_list_case(columns)) {
         const auto& rhs = multi->get_elements();
-        if (rhs.size() != columns.size()) {
+        if (__builtin_expect(rhs.size() != columns.size(), false)) {
             throw std::logic_error("LHS and RHS size mismatch");
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
