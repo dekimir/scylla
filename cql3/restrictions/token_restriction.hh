@@ -233,8 +233,7 @@ public:
                         "More than one restriction was found for the end bound on %s");
             }
             _slice.merge(other_slice->_slice);
-            wip_equivalent = ::make_shared<wip::expression>(
-                    wip::conjunction{std::vector{wip_equivalent, restriction->wip_equivalent}});
+            wip_equivalent = make_conjunction(wip_equivalent, restriction->wip_equivalent);
         } catch (exceptions::invalid_request_exception & e) {
             throw exceptions::invalid_request_exception(
                     sprint(e.what(), join(", ", get_column_defs())));

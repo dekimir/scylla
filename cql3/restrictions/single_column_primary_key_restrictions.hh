@@ -187,8 +187,7 @@ public:
                             join(", ", get_column_defs())));
         }
         do_merge_with(::static_pointer_cast<single_column_restriction>(restriction));
-        this->wip_equivalent = ::make_shared<wip::expression>(
-                wip::conjunction{std::vector{this->wip_equivalent, restriction->wip_equivalent}});
+        this->wip_equivalent = make_conjunction(this->wip_equivalent, restriction->wip_equivalent);
     }
 
     virtual std::vector<ValueType> values_as_keys(const query_options& options) const override {
