@@ -990,17 +990,23 @@ namespace {
 
 using cql3::selection::selection;
 
+/// Serialized values for all types of cells.
+struct row_data {
+    const std::vector<bytes>& partition_key;
+    const std::vector<bytes>& clustering_key;
+    const std::vector<bytes_opt>& other_columns;
+};
+
 /// Returns col's value from the fetched data.
-bytes_opt get_value(const column_value& col, const selection& selection,
-                    const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
-                    const std::vector<bytes_opt>& other_columns, const query_options& options) {
+bytes_opt get_value(const column_value& col, const selection& selection, row_data& cells,
+                    const query_options& options) {
     auto cdef = col.col;
     if (col.sub) {
         auto col_type = static_pointer_cast<const collection_type_impl>(cdef->type);
         if (!col_type->is_map()) {
             throw exceptions::invalid_request_exception("subscripting non-map column");
         }
-        const auto deserialized = cdef->type->deserialize(*other_columns[selection.index_of(*cdef)]);
+        const auto deserialized = cdef->type->deserialize(*cells.other_columns[selection.index_of(*cdef)]);
         const auto& data_map = value_cast<map_type_impl::native_type>(deserialized);
         const auto key = col.sub->bind_and_get(options);
         auto&& key_type = col_type->name_comparator();
@@ -1013,12 +1019,12 @@ bytes_opt get_value(const column_value& col, const selection& selection,
     } else {
         switch (cdef->kind) {
         case column_kind::partition_key:
-            return partition_key[cdef->id];
+            return cells.partition_key[cdef->id];
         case column_kind::clustering_key:
-            return clustering_key[cdef->id];
+            return cells.clustering_key[cdef->id];
         case column_kind::static_column:
         case column_kind::regular_column:
-            return other_columns[selection.index_of(*cdef)];
+            return cells.other_columns[selection.index_of(*cdef)];
         default:
             throw exceptions::unsupported_operation_exception("Unknown column kind");
         }
@@ -1035,8 +1041,7 @@ bool is_special_list_case(const std::vector<column_value>& columns) {
 
 /// True iff columns' values equal t.
 bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const selection& selection,
-           const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
-           const std::vector<bytes_opt>& other_columns, const query_options& options) {
+           row_data& cells, const query_options& options) {
     auto multi = dynamic_pointer_cast<multi_item_terminal>(t);
     if (multi && !is_special_list_case(columns)) {
         const auto& rhs = multi->get_elements();
@@ -1044,7 +1049,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
             throw std::logic_error("LHS and RHS size mismatch");
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
-            if (rhs[i] != get_value(columns[i], selection, partition_key, clustering_key, other_columns, options)) {
+            if (rhs[i] != get_value(columns[i], selection, cells, options)) {
                 return false;
             }
         }
@@ -1053,8 +1058,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
         if (columns.size() != 1) {
             throw std::logic_error("RHS for multi-column is not a tuple");
         }
-        return to_bytes_opt(t->bind_and_get(options)) ==
-                get_value(columns[0], selection, partition_key, clustering_key, other_columns, options);
+        return to_bytes_opt(t->bind_and_get(options)) == get_value(columns[0], selection, cells, options);
     }
 }
 
@@ -1074,9 +1078,8 @@ bool limits(const bytes& lhs, const operator_type& op, const bytes& rhs, const a
 }
 
 /// True iff the value of opr.lhs is limited by opr.rhs in the manner prescribed by opr.op.
-bool limits(const binary_operator& opr, const selection& selection,
-            const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
-            const std::vector<bytes_opt>& other_columns, const query_options& options) {
+bool limits(const binary_operator& opr, const selection& selection, row_data& cells,
+            const query_options& options) {
     if (!opr.op.is_slice()) { // For EQ or NEQ, use equals().
         throw std::logic_error("limits() called on non-slice op");
     }
@@ -1089,7 +1092,7 @@ bool limits(const binary_operator& opr, const selection& selection,
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
             const auto cmp = columns[i].col->type->as_tri_comparator()(
-                    *get_value(columns[i], selection, partition_key, clustering_key, other_columns, options),
+                    *get_value(columns[i], selection, cells, options),
                     *rhs[i]);
             // If the components aren't equal, then we just learned the LHS/RHS order.
             if (cmp < 0) {
@@ -1117,7 +1120,7 @@ bool limits(const binary_operator& opr, const selection& selection,
         if (columns.size() != 1) {
             throw std::logic_error("RHS for multi-column is not a tuple");
         }
-        auto lhs = get_value(columns[0], selection, partition_key, clustering_key, other_columns, options);
+        auto lhs = get_value(columns[0], selection, cells, options);
         if (!lhs) {
             return false;
         }
@@ -1131,16 +1134,15 @@ bool limits(const binary_operator& opr, const selection& selection,
 
 /// True iff columns is a single collection containing value.
 bool contains(const raw_value_view& value, const std::vector<column_value>& columns, const selection& selection,
-              const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
-              const std::vector<bytes_opt>& other_columns) {
+              row_data cells) {
     if (columns.size() != 1) {
         throw exceptions::unsupported_operation_exception("tuple CONTAINS not allowed");
     }
     if (columns[0].sub) {
         throw exceptions::unsupported_operation_exception("CONTAINS lhs is subscripted");
     }
-    const auto collection = get_value(columns[0], selection, partition_key, clustering_key, other_columns,
-                                      query_options::DEFAULT /* unused when .sub is null */);
+    const auto collection = get_value(columns[0], selection, cells,
+                                      query_options::DEFAULT /*unused when .sub is null*/);
     if (collection) {
         return contains_value(columns[0].col->type->deserialize(*collection), value);
     } else {
@@ -1149,9 +1151,7 @@ bool contains(const raw_value_view& value, const std::vector<column_value>& colu
 }
 
 /// True iff \p columns has a single element that's a map containing \p key.
-bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view key,
-                  const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
-                  const std::vector<bytes_opt>& other_columns,
+bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view key, row_data cells,
                   const selection& selection) {
     if (columns.size() != 1) {
         throw exceptions::unsupported_operation_exception("CONTAINS KEY on a tuple");
@@ -1160,8 +1160,8 @@ bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view
         throw exceptions::unsupported_operation_exception("CONTAINS KEY lhs is subscripted");
     }
     auto cdef = columns[0].col;
-    const auto collection = get_value(columns[0], selection, partition_key, clustering_key, other_columns,
-                                      query_options::DEFAULT /* unused when .sub is null */);
+    const auto collection = get_value(columns[0], selection, cells,
+                                      query_options::DEFAULT /*unused when .sub is null*/);
     if (!collection) {
         return false;
     }
@@ -1237,19 +1237,22 @@ bool is_satisfied_by(
             [&] (const binary_operator& opr) {
                 return std::visit(overloaded_functor{
                         [&] (const std::vector<column_value>& cvs) {
-                            auto other_columns = get_non_pk_values(selection, static_row, row);
+                            row_data cells{
+                                partition_key, clustering_key,
+                                get_non_pk_values(selection, static_row, row)
+                            };
                             if (opr.op == operator_type::EQ) {
-                                return equal(opr.rhs, cvs, selection, partition_key, clustering_key, other_columns, options);
+                                return equal(opr.rhs, cvs, selection, cells, options);
                             } else if (opr.op == operator_type::NEQ) {
-                                return !equal(opr.rhs, cvs, selection, partition_key, clustering_key, other_columns, options);
+                                return !equal(opr.rhs, cvs, selection, cells, options);
                             } else if (opr.op.is_slice()) {
-                                return limits(opr, selection, partition_key, clustering_key, other_columns, options);
+                                return limits(opr, selection, cells, options);
                             } else if (opr.op == operator_type::CONTAINS) {
                                 return contains(opr.rhs->bind_and_get(options), cvs,
-                                                selection, partition_key, clustering_key, other_columns);
+                                                selection, cells);
                             } else if (opr.op == operator_type::CONTAINS_KEY) {
-                                return contains_key(std::get<0>(opr.lhs), opr.rhs->bind_and_get(options),
-                                                    partition_key, clustering_key, other_columns, selection);
+                                return contains_key(
+                                        std::get<0>(opr.lhs), opr.rhs->bind_and_get(options), cells, selection);
                             } else {
                                 throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
                             }
