@@ -103,6 +103,9 @@ SEASTAR_THREAD_TEST_CASE(regular_col_eq) {
         require_rows(e, "select r from t where q=12 and p=2 allow filtering", {{I(22), I(12)}});
         require_rows(e, "select p from t where q=12 and r=22 allow filtering", {{I(2), I(12), I(22)}});
         require_rows(e, "select r from t where q=12 and p=2 and r=99 allow filtering", {});
+        cquery_nofail(e, "insert into t(p) values (100)");
+        require_rows(e, "select q from t where q=12 allow filtering", {{I(12)}});
+        require_rows(e, "select p from t where q=null allow filtering", {});
     }).get();
 }
 

@@ -1058,7 +1058,15 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
         if (columns.size() != 1) {
             throw std::logic_error("RHS for multi-column is not a tuple");
         }
-        return to_bytes_opt(t->bind_and_get(options)) == get_value(columns[0], selection, cells, options);
+        const auto term_val = to_bytes_opt(t->bind_and_get(options));
+        if (!term_val) {
+            return false;
+        }
+        const auto col_val = get_value(columns[0], selection, cells, options);
+        if (!col_val) {
+            return false;
+        }
+        return *term_val == *col_val;
     }
 }
 
