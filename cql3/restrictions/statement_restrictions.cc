@@ -1134,7 +1134,7 @@ bool limits(const binary_operator& opr, const selection& selection, row_data& ce
         }
         auto rhs = to_bytes_opt(opr.rhs->bind_and_get(options));
         if (!rhs) {
-            return false;
+            return true; // Compatible with old code, which creates an unbounded slice containing all points.
         }
         return limits(*lhs, opr.op, *rhs, *columns[0].col->type);
     }

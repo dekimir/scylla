@@ -207,6 +207,7 @@ SEASTAR_THREAD_TEST_CASE(regular_col_slice) {
         // TODO: enable when #5799 is fixed:
         //require_rows(e, "select * from t where q<11 and q>11 allow filtering", {});
         require_rows(e, "select q from t where q<=12 and r>=21 allow filtering", {{I(11), I(21)}, {I(12), I(22)}});
+        require_rows(e, "select q from t where q < null allow filtering", {{I(10)}, {I(11)}, {I(12)}, {I(13)}});
     }).get();
 }
 
