@@ -1335,7 +1335,7 @@ void check_is_satisfied_by(
         return;
     }
     if (expected != is_satisfied_by(*restr, partition_key, clustering_key, static_row, row, selection, options)) {
-        throw std::logic_error("WIP restrictions mismatch");
+        throw std::logic_error("WIP restrictions mismatch: is_satisfied_by");
     }
 }
 
@@ -1344,7 +1344,7 @@ bytes_opt checked_bound(restriction& r, statements::bound b, const query_options
     if (options.get_cql_config().restrictions.use_wip) {
         if (r.wip_equivalent) {
             if (get_bound(*r.wip_equivalent, options, b) != res) {
-                throw std::logic_error("WIP restrictions mismatch");
+                throw std::logic_error("WIP restrictions mismatch: bounds");
             }
         } else {
             rlogger.warn("Unimplemented wip restriction");
