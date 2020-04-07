@@ -1060,7 +1060,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
         }
         const auto term_val = to_bytes_opt(t->bind_and_get(options));
         if (!term_val) {
-            return false;
+            return columns[0].col->type->is_map(); // Old code returns true for m[k]=null, false for c=null.
         }
         const auto col_val = get_value(columns[0], selection, cells, options);
         if (!col_val) {

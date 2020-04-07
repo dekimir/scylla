@@ -194,6 +194,9 @@ SEASTAR_THREAD_TEST_CASE(map_entry_eq) {
         const auto m3new = my_map_type->decompose(
                 make_map_value(my_map_type, map_type_impl::native_type({{1, 111}})));
         require_rows(e, "select p from t where m[1]=111 allow filtering", {{I(3), m3new}});
+        const auto m1 = my_map_type->decompose(
+                make_map_value(my_map_type, map_type_impl::native_type({{1, 11}, {2, 12}, {3, 13}})));
+        require_rows(e, "select p from t where m[1]=null allow filtering", {{I(1), m1}, {I(3), m3new}});
     }).get();
 }
 
