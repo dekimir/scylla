@@ -1130,7 +1130,7 @@ bool limits(const binary_operator& opr, const selection& selection, row_data& ce
         }
         auto lhs = get_value(columns[0], selection, cells, options);
         if (!lhs) {
-            return false;
+            lhs = bytes();
         }
         auto rhs = to_bytes_opt(opr.rhs->bind_and_get(options));
         if (!rhs) {
