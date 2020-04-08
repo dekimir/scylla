@@ -1039,6 +1039,21 @@ bool is_special_list_case(const std::vector<column_value>& columns) {
     return columns.size() == 1 && columns[0].col->type->is_list();
 }
 
+/// True iff lhs's value equals rhs.
+bool equal(const bytes_opt& rhs, const column_value& lhs,
+           const selection& selection, row_data& cells, const query_options& options) {
+    if (!rhs) {
+        return false;
+    }
+    const auto& val_type = lhs.sub ?
+            static_pointer_cast<const collection_type_impl>(lhs.col->type)->value_comparator() : lhs.col->type;
+    const auto value = get_value(lhs, selection, cells, options);
+    if (!value) {
+        return false;
+    }
+    return val_type->equal(*value, *rhs);
+}
+
 /// True iff columns' values equal t.
 bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const selection& selection,
            row_data& cells, const query_options& options) {
@@ -1049,7 +1064,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
             throw std::logic_error("LHS and RHS size mismatch");
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
-            if (rhs[i] != get_value(columns[i], selection, cells, options)) {
+            if (!equal(rhs[i], columns[i], selection, cells, options)) {
                 return false;
             }
         }
@@ -1058,15 +1073,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
         if (columns.size() != 1) {
             throw std::logic_error("RHS for multi-column is not a tuple");
         }
-        const auto term_val = to_bytes_opt(t->bind_and_get(options));
-        if (!term_val) {
-            return columns[0].col->type->is_map(); // Old code returns true for m[k]=null, false for c=null.
-        }
-        const auto col_val = get_value(columns[0], selection, cells, options);
-        if (!col_val) {
-            return false;
-        }
-        return *term_val == *col_val;
+        return equal(to_bytes_opt(t->bind_and_get(options)), columns[0], selection, cells, options);
     }
 }
 
