@@ -805,42 +805,6 @@ bool single_column_restriction::contains::is_satisfied_by(const schema& schema,
     return true;
 }
 
-namespace {
-
-/// True iff collection (list, set, or map) contains value.
-bool contains_value(const data_value& collection, const raw_value_view& value) {
-    if (!value) {
-        return true;
-    }
-    auto col_type = static_pointer_cast<const collection_type_impl>(collection.type());
-    auto&& element_type = col_type->is_set() ? col_type->name_comparator() : col_type->value_comparator();
-    return with_linearized(*value, [&] (bytes_view val) {
-        auto exists_in = [&](auto&& range) {
-            auto found = std::find_if(range.begin(), range.end(), [&] (auto&& element) {
-                return element_type->compare(element.serialize_nonnull(), val) == 0;
-            });
-            return found != range.end();
-        };
-        if (col_type->is_list()) {
-            if (!exists_in(value_cast<list_type_impl::native_type>(collection))) {
-                return false;
-            }
-        } else if (col_type->is_set()) {
-            if (!exists_in(value_cast<set_type_impl::native_type>(collection))) {
-                return false;
-            }
-        } else {
-            auto data_map = value_cast<map_type_impl::native_type>(collection);
-            if (!exists_in(data_map | boost::adaptors::transformed([] (auto&& p) { return p.second; }))) {
-                return false;
-            }
-        }
-        return true;
-    });
-}
-
-} // anonymous namespace
-
 bool single_column_restriction::contains::is_satisfied_by(bytes_view collection_bv, const query_options& options) const {
     assert(_column_def.type->is_collection());
     auto col_type = static_pointer_cast<const collection_type_impl>(_column_def.type);
@@ -853,7 +817,34 @@ bool single_column_restriction::contains::is_satisfied_by(bytes_view collection_
 
     auto deserialized = _column_def.type->deserialize(collection_bv);
     for (auto&& value : _values) {
-        if (!contains_value(deserialized, value->bind_and_get(options))) {
+        auto fragmented_val = value->bind_and_get(options);
+        if (!fragmented_val) {
+            continue;
+        }
+        const bool value_matches = with_linearized(*fragmented_val, [&] (bytes_view val) {
+            auto exists_in = [&](auto&& range) {
+                auto found = std::find_if(range.begin(), range.end(), [&] (auto&& element) {
+                    return element_type->compare(element.serialize_nonnull(), val) == 0;
+                });
+                return found != range.end();
+            };
+            if (col_type->is_list()) {
+                if (!exists_in(value_cast<list_type_impl::native_type>(deserialized))) {
+                    return false;
+                }
+            } else if (col_type->is_set()) {
+                if (!exists_in(value_cast<set_type_impl::native_type>(deserialized))) {
+                    return false;
+                }
+            } else {
+                auto data_map = value_cast<map_type_impl::native_type>(deserialized);
+                if (!exists_in(data_map | boost::adaptors::transformed([] (auto&& p) { return p.second; }))) {
+                    return false;
+                }
+            }
+            return true;
+        });
+        if (!value_matches) {
             return false;
         }
     }
@@ -1147,6 +1138,38 @@ bool limits(const binary_operator& opr, const selection& selection, row_data& ce
     }
 }
 
+/// True iff collection (list, set, or map) contains value.
+bool contains(const data_value& collection, const raw_value_view& value) {
+    if (!value) {
+        return true;
+    }
+    auto col_type = static_pointer_cast<const collection_type_impl>(collection.type());
+    auto&& element_type = col_type->is_set() ? col_type->name_comparator() : col_type->value_comparator();
+    return with_linearized(*value, [&] (bytes_view val) {
+        auto exists_in = [&](auto&& range) {
+            auto found = std::find_if(range.begin(), range.end(), [&] (auto&& element) {
+                return element_type->compare(element.serialize_nonnull(), val) == 0;
+            });
+            return found != range.end();
+        };
+        if (col_type->is_list()) {
+            if (!exists_in(value_cast<list_type_impl::native_type>(collection))) {
+                return false;
+            }
+        } else if (col_type->is_set()) {
+            if (!exists_in(value_cast<set_type_impl::native_type>(collection))) {
+                return false;
+            }
+        } else {
+            auto data_map = value_cast<map_type_impl::native_type>(collection);
+            if (!exists_in(data_map | boost::adaptors::transformed([] (auto&& p) { return p.second; }))) {
+                return false;
+            }
+        }
+        return true;
+    });
+}
+
 /// True iff columns is a single collection containing value.
 bool contains(const raw_value_view& value, const std::vector<column_value>& columns, const selection& selection,
               row_data cells) {
@@ -1159,7 +1182,7 @@ bool contains(const raw_value_view& value, const std::vector<column_value>& colu
     const auto collection = get_value(columns[0], selection, cells,
                                       query_options::DEFAULT /*unused when .sub is null*/);
     if (collection) {
-        return contains_value(columns[0].col->type->deserialize(*collection), value);
+        return contains(columns[0].col->type->deserialize(*collection), value);
     } else {
         return false;
     }
