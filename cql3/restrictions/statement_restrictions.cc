@@ -1317,7 +1317,8 @@ bytes_opt get_bound(const expression& restr, const query_options& options, state
                     auto invoke_get_bound = [&] (const ::shared_ptr<expression>& p) {
                         return get_bound(*p, options, bnd);
                     };
-                    // For now, assume conjunction elements all have the same LHS.
+                    // All conjunction elements have the same LHS; this is how
+                    // single_column_restrictions::add_restriction constructs it.
                     std::vector<bytes_opt> children_bounds(
                             boost::make_transform_iterator(conj.children.cbegin(), invoke_get_bound),
                             boost::make_transform_iterator(conj.children.cend(), invoke_get_bound));
