@@ -1030,19 +1030,23 @@ bool is_special_list_case(const std::vector<column_value>& columns) {
     return columns.size() == 1 && columns[0].col->type->is_list();
 }
 
+/// The comparator type for cv.
+data_type comparator(const column_value& cv) {
+    return cv.sub ?
+            static_pointer_cast<const collection_type_impl>(cv.col->type)->value_comparator() : cv.col->type;
+}
+
 /// True iff lhs's value equals rhs.
 bool equal(const bytes_opt& rhs, const column_value& lhs,
            const selection& selection, row_data& cells, const query_options& options) {
     if (!rhs) {
         return false;
     }
-    const auto& val_type = lhs.sub ?
-            static_pointer_cast<const collection_type_impl>(lhs.col->type)->value_comparator() : lhs.col->type;
     const auto value = get_value(lhs, selection, cells, options);
     if (!value) {
         return false;
     }
-    return val_type->equal(*value, *rhs);
+    return comparator(lhs)->equal(*value, *rhs);
 }
 
 /// True iff columns' values equal t.
@@ -1097,7 +1101,7 @@ bool limits(const binary_operator& opr, const selection& selection, row_data& ce
             throw std::logic_error("LHS and RHS size mismatch");
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
-            const auto cmp = columns[i].col->type->as_tri_comparator()(
+            const auto cmp = comparator(columns[i])->as_tri_comparator()(
                     *get_value(columns[i], selection, cells, options),
                     *rhs[i]);
             // If the components aren't equal, then we just learned the LHS/RHS order.
