@@ -211,6 +211,8 @@ SEASTAR_THREAD_TEST_CASE(regular_col_slice) {
         //wip_require_rows(e, "select q from t where q < null allow filtering", {{I(10)}, {I(11)}, {I(12)}, {I(13)}});
         cquery_nofail(e, "insert into t(p) values (4)");
         wip_require_rows(e, "select q from t where q<12 allow filtering", {{std::nullopt}, {I(10)}, {I(11)}});
+        wip_require_rows(e, "select q from t where q>10 allow filtering", {{I(11)}, {I(12)}, {I(13)}});
+        wip_require_rows(e, "select q from t where q<12 and q>10 allow filtering", {{I(11)}});
         // TODO: enable when supported:
         // wip_require_rows(e, "select q from t where q < null allow filtering",
         //              {{std::nullopt}, {I(10)}, {I(11)}, {I(12)}, {I(13)}});

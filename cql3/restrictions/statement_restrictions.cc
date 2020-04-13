@@ -1178,11 +1178,11 @@ bool limits(const binary_operator& opr, const selection& selection, row_data& ce
     } else if (columns.size() == 1) {
         auto lhs = get_value(columns[0], selection, cells, options);
         if (!lhs) {
-            lhs = bytes();
+            lhs = bytes(); // Compatible with old code, which feeds null to type comparators.
         }
         auto rhs = to_bytes_opt(opr.rhs->bind_and_get(options));
         if (!rhs) {
-            return true; // Compatible with old code, which creates an unbounded slice containing all points.
+            return false;
         }
         return limits(*lhs, opr.op, *rhs, *columns[0].col->type);
     } else {
