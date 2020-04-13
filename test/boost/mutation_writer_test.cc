@@ -34,10 +34,9 @@
 #include "test/lib/mutation_assertions.hh"
 #include "test/lib/random_utils.hh"
 #include "test/lib/random_schema.hh"
+#include "test/lib/log.hh"
 
 using namespace mutation_writer;
-
-logging::logger tlog("mutation_writer_test");
 
 struct generate_error_tag { };
 using generate_error = bool_class<generate_error_tag>;
@@ -63,23 +62,23 @@ SEASTAR_TEST_CASE(test_multishard_writer) {
                 schema_ptr s = gen.schema();
 
                 for (auto& m : muts) {
-                    auto shard = s->get_partitioner().shard_of(m.token());
+                    auto shard = s->get_sharder().shard_of(m.token());
                     shards_before[shard]++;
                 }
                 auto source_reader = partition_nr > 0 ? flat_mutation_reader_from_mutations(muts) : make_empty_flat_reader(s);
-                auto& partitioner = s->get_partitioner();
+                auto& sharder = s->get_sharder();
                 size_t partitions_received = distribute_reader_and_consume_on_shards(s,
                     std::move(source_reader),
-                    [&partitioner, &shards_after, error] (flat_mutation_reader reader) mutable {
+                    [&sharder, &shards_after, error] (flat_mutation_reader reader) mutable {
                         if (error) {
                             return make_exception_future<>(std::runtime_error("Failed to write"));
                         }
-                        return repeat([&partitioner, &shards_after, reader = std::move(reader), error] () mutable {
-                            return reader(db::no_timeout).then([&partitioner, &shards_after, error] (mutation_fragment_opt mf_opt) mutable {
+                        return repeat([&sharder, &shards_after, reader = std::move(reader), error] () mutable {
+                            return reader(db::no_timeout).then([&sharder, &shards_after, error] (mutation_fragment_opt mf_opt) mutable {
                                 if (mf_opt) {
                                     if (mf_opt->is_partition_start()) {
-                                        auto shard = partitioner.shard_of(mf_opt->as_partition_start().key().token());
-                                        BOOST_REQUIRE_EQUAL(shard, engine().cpu_id());
+                                        auto shard = sharder.shard_of(mf_opt->as_partition_start().key().token());
+                                        BOOST_REQUIRE_EQUAL(shard, this_shard_id());
                                         shards_after[shard]++;
                                     }
                                     return make_ready_future<stop_iteration>(stop_iteration::no);
@@ -240,7 +239,7 @@ SEASTAR_THREAD_TEST_CASE(test_timestamp_based_splitting_mutation_writer) {
             std::uniform_int_distribution<size_t>(2, 8));
     auto random_schema = tests::random_schema{tests::random::get_int<uint32_t>(), *random_spec};
 
-    tlog.info("Random schema:\n{}", random_schema.cql());
+    testlog.info("Random schema:\n{}", random_schema.cql());
 
     auto ts_gen = [&, underlying = tests::default_timestamp_generator()] (std::mt19937& engine,
             tests::timestamp_destination ts_dest, api::timestamp_type min_timestamp) -> api::timestamp_type {
@@ -271,7 +270,7 @@ SEASTAR_THREAD_TEST_CASE(test_timestamp_based_splitting_mutation_writer) {
 
     segregate_by_timestamp(flat_mutation_reader_from_mutations(muts), classify_fn, std::move(consumer)).get();
 
-    tlog.debug("Data split into {} buckets: {}", buckets.size(), boost::copy_range<std::vector<int64_t>>(buckets | boost::adaptors::map_keys));
+    testlog.debug("Data split into {} buckets: {}", buckets.size(), boost::copy_range<std::vector<int64_t>>(buckets | boost::adaptors::map_keys));
 
     auto bucket_readers = boost::copy_range<std::vector<flat_mutation_reader>>(buckets | boost::adaptors::map_values |
             boost::adaptors::transformed([] (std::vector<mutation> muts) { return flat_mutation_reader_from_mutations(std::move(muts)); }));
@@ -291,7 +290,7 @@ SEASTAR_THREAD_TEST_CASE(test_timestamp_based_splitting_mutation_writer) {
 
     BOOST_REQUIRE_EQUAL(combined_mutations.size(), muts.size());
     for (size_t i = 0; i < muts.size(); ++i) {
-        tlog.debug("Comparing mutation #{}", i);
+        testlog.debug("Comparing mutation #{}", i);
         assert_that(combined_mutations[i]).is_equal_to(muts[i]);
     }
 

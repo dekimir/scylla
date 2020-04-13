@@ -34,6 +34,7 @@ simple_strategy::simple_strategy(const sstring& keyspace_name, token_metadata& t
         auto& val = config_pair.second;
 
         if (boost::iequals(key, "replication_factor")) {
+            validate_replication_factor(val);
             _replication_factor = std::stol(val);
 
             break;
@@ -53,13 +54,13 @@ std::vector<inet_address> simple_strategy::calculate_natural_endpoints(const tok
     endpoints.reserve(replicas);
 
     for (auto& token : tm.ring_range(t)) {
+        if (endpoints.size() == replicas) {
+           break;
+        }
         auto ep = tm.get_endpoint(token);
         assert(ep);
 
         endpoints.push_back(*ep);
-        if (endpoints.size() == replicas) {
-           break;
-        }
     }
 
     return std::move(endpoints.get_vector());

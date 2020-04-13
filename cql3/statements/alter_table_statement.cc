@@ -43,7 +43,6 @@
 #include "index/secondary_index_manager.hh"
 #include "prepared_statement.hh"
 #include "service/migration_manager.hh"
-#include "service/storage_service.hh"
 #include "validation.hh"
 #include "db/extensions.hh"
 #include <boost/range/adaptor/filtered.hpp>
@@ -51,6 +50,7 @@
 #include "cql3/util.hh"
 #include "view_info.hh"
 #include "database.hh"
+#include "db/view/view.hh"
 
 namespace cql3 {
 
@@ -69,7 +69,7 @@ alter_table_statement::alter_table_statement(shared_ptr<cf_name> name,
 {
 }
 
-future<> alter_table_statement::check_access(const service::client_state& state) const {
+future<> alter_table_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const {
     return state.has_column_family_access(keyspace(), column_family(), auth::permission::ALTER);
 }
 
@@ -338,21 +338,24 @@ future<shared_ptr<cql_transport::event::schema_change>> alter_table_statement::a
             throw exceptions::invalid_request_exception("ALTER COLUMNFAMILY WITH invoked, but no parameters found");
         }
 
-        _properties->validate(db.extensions());
+        {
+            auto schema_extensions = _properties->make_schema_extensions(db.extensions());
+            _properties->validate(db, schema_extensions);
 
-        if (!cf.views().empty() && _properties->get_gc_grace_seconds() == 0) {
-            throw exceptions::invalid_request_exception(
-                    "Cannot alter gc_grace_seconds of the base table of a "
-                    "materialized view to 0, since this value is used to TTL "
-                    "undelivered updates. Setting gc_grace_seconds too low might "
-                    "cause undelivered updates to expire "
-                    "before being replayed.");
-        }
+            if (!cf.views().empty() && _properties->get_gc_grace_seconds() == 0) {
+                throw exceptions::invalid_request_exception(
+                        "Cannot alter gc_grace_seconds of the base table of a "
+                        "materialized view to 0, since this value is used to TTL "
+                        "undelivered updates. Setting gc_grace_seconds too low might "
+                        "cause undelivered updates to expire "
+                        "before being replayed.");
+            }
 
-        if (s->is_counter() && _properties->get_default_time_to_live() > 0) {
-            throw exceptions::invalid_request_exception("Cannot set default_time_to_live on a table with counters");
+            if (s->is_counter() && _properties->get_default_time_to_live() > 0) {
+                throw exceptions::invalid_request_exception("Cannot set default_time_to_live on a table with counters");
+            }
+            _properties->apply_to_builder(cfm, std::move(schema_extensions));
         }
-        _properties->apply_to_builder(cfm, db);
         break;
 
     case alter_table_statement::type::rename:
@@ -391,7 +394,7 @@ future<shared_ptr<cql_transport::event::schema_change>> alter_table_statement::a
     return service::get_local_migration_manager().announce_column_family_update(cfm.build(), false, std::move(view_updates), is_local_only)
         .then([this] {
             using namespace cql_transport;
-            return make_shared<event::schema_change>(
+            return ::make_shared<event::schema_change>(
                     event::schema_change::change_type::UPDATED,
                     event::schema_change::target_type::TABLE,
                     keyspace(),

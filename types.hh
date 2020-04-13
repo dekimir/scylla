@@ -48,12 +48,18 @@
 #include <seastar/net/inet_address.hh>
 #include <seastar/util/backtrace.hh>
 #include "hashing.hh"
-#include <boost/multiprecision/cpp_int.hpp>  // FIXME: remove somehow
 #include "utils/fragmented_temporary_buffer.hh"
 #include "utils/exceptions.hh"
 
 class tuple_type_impl;
 class big_decimal;
+
+
+namespace utils {
+
+class multiprecision_int;
+
+}
 
 namespace cql3 {
 
@@ -392,7 +398,7 @@ public:
     data_value(time_native_type);
     data_value(timeuuid_native_type);
     data_value(date_type_native_type);
-    data_value(boost::multiprecision::cpp_int);
+    data_value(utils::multiprecision_int);
     data_value(big_decimal);
     data_value(cql_duration);
     explicit data_value(std::optional<bytes>);
@@ -698,11 +704,7 @@ bool less_compare(data_type t, bytes_view e1, bytes_view e2) {
 
 static inline
 int tri_compare(data_type t, bytes_view e1, bytes_view e2) {
-    try {
-        return t->compare(e1, e2);
-    } catch (const marshal_exception& e) {
-        on_types_internal_error(e.what());
-    }
+    return t->compare(e1, e2);
 }
 
 inline
@@ -981,7 +983,7 @@ shared_ptr<const abstract_type> data_type_for<double>() {
 
 template <>
 inline
-shared_ptr<const abstract_type> data_type_for<boost::multiprecision::cpp_int>() {
+shared_ptr<const abstract_type> data_type_for<utils::multiprecision_int>() {
     return varint_type;
 }
 
@@ -1160,7 +1162,7 @@ inline sstring read_simple_short_string(bytes_view& v) {
     if (v.size() < len) {
         throw_with_backtrace<marshal_exception>(format("read_simple_short_string - not enough bytes ({:d})", v.size()));
     }
-    sstring ret(sstring::initialized_later(), len);
+    sstring ret = uninitialized_string(len);
     std::copy(v.begin(), v.begin() + len, ret.begin());
     v.remove_prefix(len);
     return ret;

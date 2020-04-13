@@ -23,7 +23,6 @@
 
 #include <vector>
 
-#include "mutation.hh"
 #include "clustering_key_filter.hh"
 #include <seastar/core/future.hh>
 #include <seastar/core/future-util.hh>
@@ -485,7 +484,16 @@ public:
 /// The readers' life-cycles are managed through the supplied lifecycle policy.
 flat_mutation_reader make_multishard_combining_reader(
         shared_ptr<reader_lifecycle_policy> lifecycle_policy,
-        const dht::i_partitioner& partitioner,
+        schema_ptr schema,
+        const dht::partition_range& pr,
+        const query::partition_slice& ps,
+        const io_priority_class& pc,
+        tracing::trace_state_ptr trace_state = nullptr,
+        mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::no);
+
+flat_mutation_reader make_multishard_combining_reader_for_tests(
+        const dht::sharder& sharder,
+        shared_ptr<reader_lifecycle_policy> lifecycle_policy,
         schema_ptr schema,
         const dht::partition_range& pr,
         const query::partition_slice& ps,
@@ -531,3 +539,21 @@ public:
 };
 
 std::pair<flat_mutation_reader, queue_reader_handle> make_queue_reader(schema_ptr s);
+
+/// Creates a compacting reader.
+///
+/// The compaction is done with a \ref mutation_compactor, using compaction-type
+/// compaction (`compact_for_sstables::yes`).
+///
+/// \param source the reader whose output to compact.
+///
+/// Params \c compaction_time and \c get_max_purgeable are forwarded to the
+/// \ref mutation_compactor instance.
+///
+/// Inter-partition forwarding: `next_partition()` and
+/// `fast_forward_to(const dht::partition_range&)` is supported if the source
+/// reader supports it
+/// Intra-partition forwarding: `fast_forward_to(position_range)` is *not*
+/// supported.
+flat_mutation_reader make_compacting_reader(flat_mutation_reader source, gc_clock::time_point compaction_time,
+        std::function<api::timestamp_type(const dht::decorated_key&)> get_max_purgeable);

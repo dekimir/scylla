@@ -29,12 +29,11 @@ namespace dht {
 
 class murmur3_partitioner final : public i_partitioner {
 public:
-    murmur3_partitioner(unsigned shard_count = smp::count, unsigned sharding_ignore_msb_bits = 0)
-        : i_partitioner(shard_count, sharding_ignore_msb_bits) {}
+    murmur3_partitioner() = default;
     virtual const sstring name() const { return "org.apache.cassandra.dht.Murmur3Partitioner"; }
     virtual token get_token(const schema& s, partition_key_view key) const override;
     virtual token get_token(const sstables::key_view& key) const override;
-    virtual bool preserves_order() override { return false; }
+    virtual bool preserves_order() const override { return false; }
 private:
     token get_token(bytes_view key) const;
     token get_token(uint64_t value) const;

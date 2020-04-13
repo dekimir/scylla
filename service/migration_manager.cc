@@ -96,10 +96,11 @@ void migration_manager::init_messaging_service()
         });
     };
 
-    if (engine().cpu_id() == 0) {
+    if (this_shard_id() == 0) {
         _feature_listeners.push_back(_feat.cluster_supports_view_virtual_columns().when_enabled(update_schema));
         _feature_listeners.push_back(_feat.cluster_supports_digest_insensitive_to_expiry().when_enabled(update_schema));
         _feature_listeners.push_back(_feat.cluster_supports_cdc().when_enabled(update_schema));
+        _feature_listeners.push_back(_feat.cluster_supports_per_table_partitioners().when_enabled(update_schema));
     }
     _feature_listeners.push_back(_feat.cluster_supports_schema_tables_v3().when_enabled([this] {
         _cluster_upgraded = true;
@@ -112,11 +113,11 @@ void migration_manager::init_messaging_service()
         auto f = make_ready_future<>();
         if (cm) {
             f = do_with(std::move(*cm), get_local_shared_storage_proxy(), [src] (const std::vector<canonical_mutation>& mutations, shared_ptr<storage_proxy>& p) {
-                return service::get_local_migration_manager().merge_schema_from(src, mutations);
+                return service::get_local_migration_manager().merge_schema_in_background(src, mutations);
             });
         } else {
             f = do_with(std::move(fm), get_local_shared_storage_proxy(), [src] (const std::vector<frozen_mutation>& mutations, shared_ptr<storage_proxy>& p) {
-                return service::get_local_migration_manager().merge_schema_from(src, mutations);
+                return service::get_local_migration_manager().merge_schema_in_background(src, mutations);
             });
         }
         // Start a new fiber.
@@ -276,9 +277,9 @@ future<> migration_manager::maybe_schedule_schema_pull(const utils::UUID& their_
     }).finally([me = shared_from_this()] {});
 }
 
-future<> migration_manager::submit_migration_task(const gms::inet_address& endpoint)
+future<> migration_manager::submit_migration_task(const gms::inet_address& endpoint, bool can_ignore_down_node)
 {
-    return service::migration_task::run_may_throw(endpoint);
+    return service::migration_task::run_may_throw(endpoint, can_ignore_down_node);
 }
 
 future<> migration_manager::do_merge_schema_from(netw::messaging_service::msg_addr id)
@@ -1087,7 +1088,7 @@ static future<> maybe_sync(const schema_ptr& s, netw::messaging_service::msg_add
         };
 
         // Serialize schema sync by always doing it on shard 0.
-        if (engine().cpu_id() == 0) {
+        if (this_shard_id() == 0) {
             return merge();
         } else {
             return smp::submit_to(0, [gs = global_schema_ptr(s), endpoint, merge] {
@@ -1131,7 +1132,8 @@ future<> migration_manager::sync_schema(const database& db, const std::vector<gm
         }).then([this, &schema_map] {
             return parallel_for_each(schema_map, [this] (auto& x) {
                 mlogger.debug("Pulling schema {} from {}", x.first, x.second.front());
-                return submit_migration_task(x.second.front());
+                bool can_ignore_down_node = false;
+                return submit_migration_task(x.second.front(), can_ignore_down_node);
             });
         });
     });

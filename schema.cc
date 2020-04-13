@@ -19,6 +19,7 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <map>
 #include "utils/UUID_gen.hh"
 #include "cql3/column_identifier.hh"
 #include "cql3/util.hh"
@@ -37,6 +38,8 @@
 #include "database.hh"
 #include "service/storage_service.hh"
 #include "dht/i_partitioner.hh"
+#include "dht/token-sharding.hh"
+#include "cdc/cdc_extension.hh"
 
 constexpr int32_t schema::NAME_LENGTH;
 
@@ -101,8 +104,44 @@ std::ostream& operator<<(std::ostream& os, ordinal_column_id id)
     return os << static_cast<column_count_type>(id);
 }
 
-dht::i_partitioner& schema::get_partitioner() const {
-    return dht::global_partitioner();
+thread_local std::map<sstring, std::unique_ptr<dht::i_partitioner>> partitioners;
+thread_local std::map<std::pair<unsigned, unsigned>, std::unique_ptr<dht::sharder>> sharders;
+sstring default_partitioner_name = "org.apache.cassandra.dht.Murmur3Partitioner";
+unsigned default_partitioner_ignore_msb = 12;
+
+static const dht::i_partitioner& get_partitioner(const sstring& name) {
+    auto it = partitioners.find(name);
+    if (it == partitioners.end()) {
+        auto p = dht::make_partitioner(name);
+        it = partitioners.insert({name, std::move(p)}).first;
+    }
+    return *it->second;
+}
+
+void schema::set_default_partitioner(const sstring& class_name, unsigned ignore_msb) {
+    default_partitioner_name = class_name;
+    default_partitioner_ignore_msb = ignore_msb;
+}
+
+static const dht::sharder& get_sharder(unsigned shard_count, unsigned ignore_msb) {
+    auto it = sharders.find({shard_count, ignore_msb});
+    if (it == sharders.end()) {
+        auto sharder = std::make_unique<dht::sharder>(shard_count, ignore_msb);
+        it = sharders.insert({{shard_count, ignore_msb}, std::move(sharder)}).first;
+    }
+    return *it->second;
+}
+
+const dht::i_partitioner& schema::get_partitioner() const {
+    return _raw._partitioner.get();
+}
+
+const dht::sharder& schema::get_sharder() const {
+    return _raw._sharder.get();
+}
+
+bool schema::has_custom_partitioner() const {
+    return _raw._partitioner.get().name() != default_partitioner_name;
 }
 
 ::shared_ptr<cql3::column_specification>
@@ -257,6 +296,8 @@ const column_mapping& schema::get_column_mapping() const {
 
 schema::raw_schema::raw_schema(utils::UUID id)
     : _id(id)
+    , _partitioner(::get_partitioner(default_partitioner_name))
+    , _sharder(::get_sharder(smp::count, default_partitioner_ignore_msb))
 { }
 
 schema::schema(const raw_schema& raw, std::optional<raw_view_info> raw_view_info)
@@ -448,7 +489,7 @@ bool operator==(const schema& x, const schema& y)
         && x._raw._compaction_strategy == y._raw._compaction_strategy
         && x._raw._compaction_strategy_options == y._raw._compaction_strategy_options
         && x._raw._compaction_enabled == y._raw._compaction_enabled
-        && x._raw._cdc_options == y._raw._cdc_options
+        && x.cdc_options() == y.cdc_options()
         && x._raw._caching_options == y._raw._caching_options
         && x._raw._dropped_columns == y._raw._dropped_columns
         && x._raw._collections == y._raw._collections
@@ -603,7 +644,7 @@ std::ostream& operator<<(std::ostream& os, const schema& s) {
     os << ",bloomFilterFpChance=" << s._raw._bloom_filter_fp_chance;
     os << ",memtableFlushPeriod=" << s._raw._memtable_flush_period;
     os << ",caching=" << s._raw._caching_options.to_sstring();
-    os << ",cdc=" << s._raw._cdc_options.to_sstring();
+    os << ",cdc=" << s.cdc_options().to_sstring();
     os << ",defaultTimeToLive=" << s._raw._default_time_to_live.count();
     os << ",minIndexInterval=" << s._raw._min_index_interval;
     os << ",maxIndexInterval=" << s._raw._max_index_interval;
@@ -837,6 +878,16 @@ bool thrift_schema::has_compound_comparator() const {
 
 bool thrift_schema::is_dynamic() const {
     return _is_dynamic;
+}
+
+schema_builder& schema_builder::with_partitioner(sstring name) {
+    _raw._partitioner = get_partitioner(name);
+    return *this;
+}
+
+schema_builder& schema_builder::with_sharder(unsigned shard_count, unsigned sharding_ignore_msb_bits) {
+    _raw._sharder = get_sharder(shard_count, sharding_ignore_msb_bits);
+    return *this;
 }
 
 schema_builder::schema_builder(std::string_view ks_name, std::string_view cf_name,
@@ -1113,6 +1164,16 @@ schema_ptr schema_builder::build() {
     return make_lw_shared<schema>(schema(new_raw, _view_info));
 }
 
+const cdc::options& schema::cdc_options() const {
+    static const cdc::options default_cdc_options;
+    const auto& schema_extensions = _raw._extensions;
+
+    if (auto it = schema_extensions.find(cdc::cdc_extension::NAME); it != schema_extensions.end()) {
+        return dynamic_pointer_cast<cdc::cdc_extension>(it->second)->get_options();
+    }
+    return default_cdc_options;
+}
+
 schema_ptr schema_builder::build(compact_storage cp) {
     return with(cp).build();
 }
@@ -1361,6 +1422,21 @@ schema::const_iterator_range_type
 schema::regular_columns() const {
     return boost::make_iterator_range(_raw._columns.begin() + column_offset(column_kind::regular_column)
             , _raw._columns.end());
+}
+
+schema::const_iterator_range_type
+schema::columns(column_kind kind) const {
+    switch (kind) {
+    case column_kind::partition_key:
+        return partition_key_columns();
+    case column_kind::clustering_key:
+        return clustering_key_columns();
+    case column_kind::static_column:
+        return static_columns();
+    case column_kind::regular_column:
+        return regular_columns();
+    }
+    throw std::invalid_argument(std::to_string(int(kind)));
 }
 
 schema::select_order_range schema::all_columns_in_select_order() const {

@@ -441,7 +441,7 @@ public:
         return make_ready_future<>();
     }
     virtual future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) override {
-        throw std::bad_function_call();
+        return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
     }
     virtual size_t buffer_size() const override {
         if (_reader) {
@@ -717,7 +717,7 @@ public:
         return make_ready_future<>();
     }
     virtual future<> fast_forward_to(position_range cr, db::timeout_clock::time_point timeout) override {
-        throw std::bad_function_call();
+        return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
     }
     virtual size_t buffer_size() const override {
         if (_reader) {
@@ -1309,7 +1309,7 @@ std::ostream& operator<<(std::ostream& out, row_cache& rc) {
 }
 
 future<> row_cache::do_update(row_cache::external_updater eu, row_cache::internal_updater iu) noexcept {
-    return futurize_apply([this] {
+    return futurize_invoke([this] {
         return get_units(_update_sem, 1);
     }).then([this, eu = std::move(eu), iu = std::move(iu)] (auto permit) mutable {
         auto pos = dht::ring_position::min();
@@ -1319,7 +1319,7 @@ future<> row_cache::do_update(row_cache::external_updater eu, row_cache::interna
             _prev_snapshot = std::exchange(_underlying, _snapshot_source());
             ++_underlying_phase;
         }();
-        return futurize_apply([&iu] {
+        return futurize_invoke([&iu] {
             return iu();
         }).then_wrapped([this, permit = std::move(permit)] (auto f) {
             _prev_snapshot_pos = {};

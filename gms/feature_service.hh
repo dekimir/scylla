@@ -26,22 +26,23 @@
 #include <seastar/core/shared_future.hh>
 #include <unordered_map>
 #include <functional>
+#include <set>
+#include <any>
 #include "seastarx.hh"
 #include "db/schema_features.hh"
+#include "gms/feature.hh"
 
 namespace db { class config; }
 namespace service { class storage_service; }
 
 namespace gms {
 
-class feature;
-
 struct feature_config {
-    bool enable_sstables_mc_format;
-    bool enable_user_defined_functions;
-    bool enable_cdc;
-    bool enable_lwt;
+    bool enable_sstables_mc_format = false;
+    bool enable_user_defined_functions = false;
+    bool enable_cdc = false;
     std::set<sstring> disabled_features;
+    feature_config();
 };
 
 feature_config feature_config_from_db_config(db::config& cfg);
@@ -58,16 +59,14 @@ class feature_service final {
 
     feature_config _config;
 public:
-    /* config-less initialization is for testing */
-    feature_service() : feature_service(feature_config{}) {}
     explicit feature_service(feature_config cfg);
     ~feature_service() = default;
     future<> stop();
     // Has to run inside seastar::async context
     void enable(const sstring& name);
-    void enable(const std::set<sstring>& list);
+    void enable(const std::set<std::string_view>& list);
     db::schema_features cluster_schema_features() const;
-    std::set<sstring> known_feature_set();
+    std::set<std::string_view> known_feature_set();
 
 private:
     gms::feature _range_tombstones_feature;
@@ -83,7 +82,6 @@ private:
     gms::feature _xxhash_feature;
     gms::feature _udf_feature;
     gms::feature _roles_feature;
-    gms::feature _la_sstable_feature;
     gms::feature _stream_with_rpc_stream_feature;
     gms::feature _mc_sstable_feature;
     gms::feature _row_level_repair_feature;
@@ -97,6 +95,7 @@ private:
     gms::feature _nonfrozen_udts;
     gms::feature _hinted_handoff_separate_connection;
     gms::feature _lwt_feature;
+    gms::feature _per_table_partitioners_feature;
 
 public:
     bool cluster_supports_range_tombstones() const {
@@ -151,10 +150,6 @@ public:
         return bool(_roles_feature);
     }
 
-    const feature& cluster_supports_la_sstable() const {
-        return _la_sstable_feature;
-    }
-
     bool cluster_supports_stream_with_rpc_stream() const {
         return bool(_stream_with_rpc_stream_feature);
     }
@@ -165,6 +160,10 @@ public:
 
     const feature& cluster_supports_cdc() const {
         return _cdc_feature;
+    }
+
+    const feature& cluster_supports_per_table_partitioners() const {
+        return _per_table_partitioners_feature;
     }
 
     bool cluster_supports_row_level_repair() const {

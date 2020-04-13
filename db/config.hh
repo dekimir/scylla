@@ -81,7 +81,7 @@ namespace db {
 
 /// Enumeration of all valid values for the `experimental` config entry.
 struct experimental_features_t {
-    enum feature { LWT, UDF, CDC };
+    enum feature { UNUSED, UDF, CDC };
     static std::unordered_map<sstring, feature> map(); // See enum_option.
     static std::vector<enum_option<experimental_features_t>> all();
 };
@@ -278,6 +278,7 @@ public:
     named_value<uint32_t> shutdown_announce_in_ms;
     named_value<bool> developer_mode;
     named_value<int32_t> skip_wait_for_gossip_to_settle;
+    named_value<int32_t> force_gossip_generation;
     named_value<bool> experimental;
     named_value<std::vector<enum_option<experimental_features_t>>> experimental_features;
     named_value<size_t> lsa_reclamation_step;

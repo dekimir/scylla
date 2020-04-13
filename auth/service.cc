@@ -194,7 +194,10 @@ future<> service::stop() {
     // Only one of the shards has the listener registered, but let's try to
     // unregister on each one just to make sure.
     return _mnotifier.unregister_listener(_migration_listener.get()).then([this] {
-        return _permissions_cache->stop();
+        if (_permissions_cache) {
+            return _permissions_cache->stop();
+        }
+        return make_ready_future<>();
     }).then([this] {
         return when_all_succeed(_role_manager->stop(), _authorizer->stop(), _authenticator->stop());
     });
@@ -416,7 +419,7 @@ future<> create_role(
             return make_ready_future<>();
         }
 
-        return futurize_apply(
+        return futurize_invoke(
                 &validate_authentication_options_are_supported,
                 options,
                 ser.underlying_authenticator().supported_options()).then([&ser, name, &options] {
@@ -440,7 +443,7 @@ future<> alter_role(
             return make_ready_future<>();
         }
 
-        return futurize_apply(
+        return futurize_invoke(
                 &validate_authentication_options_are_supported,
                 options,
                 ser.underlying_authenticator().supported_options()).then([&ser, name, &options] {

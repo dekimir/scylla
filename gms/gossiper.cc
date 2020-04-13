@@ -132,7 +132,7 @@ gossiper::gossiper(abort_source& as, feature_service& features, locator::token_m
                 std::chrono::milliseconds(cfg.fd_initial_value_ms()),
                 std::chrono::milliseconds(cfg.fd_max_interval_ms())) {
     // Gossiper's stuff below runs only on CPU0
-    if (engine().cpu_id() != 0) {
+    if (this_shard_id() != 0) {
         return;
     }
 
@@ -274,7 +274,7 @@ future<> gossiper::handle_syn_msg(msg_addr from, gossip_digest_syn syn_msg) {
 }
 
 future<> gossiper::do_send_ack_msg(msg_addr from, gossip_digest_syn syn_msg) {
-    return futurize_apply([this, from, syn_msg = std::move(syn_msg)] () mutable {
+    return futurize_invoke([this, from, syn_msg = std::move(syn_msg)] () mutable {
         auto g_digest_list = syn_msg.get_gossip_digests();
         do_sort(g_digest_list);
         utils::chunked_vector<gossip_digest> delta_gossip_digest_list;
@@ -379,7 +379,7 @@ future<> gossiper::handle_ack_msg(msg_addr id, gossip_digest_ack ack_msg) {
 }
 
 future<> gossiper::do_send_ack2_msg(msg_addr from, utils::chunked_vector<gossip_digest> ack_msg_digest) {
-    return futurize_apply([this, from, ack_msg_digest = std::move(ack_msg_digest)] () mutable {
+    return futurize_invoke([this, from, ack_msg_digest = std::move(ack_msg_digest)] () mutable {
         /* Get the state required to send to this gossipee - construct GossipDigestAck2Message */
         std::map<inet_address, endpoint_state> delta_ep_state_map;
         for (auto g_digest : ack_msg_digest) {
@@ -823,7 +823,7 @@ void gossiper::run() {
 
                 _the_gossiper.invoke_on_all([this, live_endpoint_changed, unreachable_endpoint_changed, es = endpoint_state_map] (gossiper& local_gossiper) {
                     // Don't copy gossiper(CPU0) maps into themselves!
-                    if (engine().cpu_id() != 0) {
+                    if (this_shard_id() != 0) {
                         if (live_endpoint_changed) {
                             local_gossiper._live_endpoints = _shadow_live_endpoints;
                         }
@@ -991,8 +991,8 @@ void gossiper::quarantine_endpoint(inet_address endpoint) {
     quarantine_endpoint(endpoint, now());
 }
 
-void gossiper::quarantine_endpoint(inet_address endpoint, clk::time_point quarantine_expiration) {
-    _just_removed_endpoints[endpoint] = quarantine_expiration;
+void gossiper::quarantine_endpoint(inet_address endpoint, clk::time_point quarantine_start) {
+    _just_removed_endpoints[endpoint] = quarantine_start;
 }
 
 void gossiper::replacement_quarantine(inet_address endpoint) {
@@ -1041,16 +1041,16 @@ void gossiper::make_random_gossip_digest(utils::chunked_vector<gossip_digest>& g
 }
 
 future<> gossiper::replicate(inet_address ep, const endpoint_state& es) {
-    return container().invoke_on_all([ep, es, orig = engine().cpu_id(), self = shared_from_this()] (gossiper& g) {
-        if (engine().cpu_id() != orig) {
+    return container().invoke_on_all([ep, es, orig = this_shard_id(), self = shared_from_this()] (gossiper& g) {
+        if (this_shard_id() != orig) {
             g.endpoint_state_map[ep].add_application_state(es);
         }
     });
 }
 
 future<> gossiper::replicate(inet_address ep, const std::map<application_state, versioned_value>& src, const utils::chunked_vector<application_state>& changed) {
-    return container().invoke_on_all([ep, &src, &changed, orig = engine().cpu_id(), self = shared_from_this()] (gossiper& g) {
-        if (engine().cpu_id() != orig) {
+    return container().invoke_on_all([ep, &src, &changed, orig = this_shard_id(), self = shared_from_this()] (gossiper& g) {
+        if (this_shard_id() != orig) {
             for (auto&& key : changed) {
                 g.endpoint_state_map[ep].add_application_state(key, src.at(key));
             }
@@ -1059,8 +1059,8 @@ future<> gossiper::replicate(inet_address ep, const std::map<application_state, 
 }
 
 future<> gossiper::replicate(inet_address ep, application_state key, const versioned_value& value) {
-    return container().invoke_on_all([ep, key, &value, orig = engine().cpu_id(), self = shared_from_this()] (gossiper& g) {
-        if (engine().cpu_id() != orig) {
+    return container().invoke_on_all([ep, key, &value, orig = this_shard_id(), self = shared_from_this()] (gossiper& g) {
+        if (this_shard_id() != orig) {
             g.endpoint_state_map[ep].add_application_state(key, value);
         }
     });
@@ -1725,8 +1725,12 @@ future<> gossiper::start_gossiping(int generation_nbr, std::map<application_stat
     // message on all cpus and forard them to cpu0 to process.
     return get_gossiper().invoke_on_all([do_bind] (gossiper& g) {
         g.init_messaging_service_handler(do_bind);
-    }).then([this, generation_nbr, preload_local_states] {
+    }).then([this, generation_nbr, preload_local_states] () mutable {
         build_seeds_list();
+        if (_cfg.force_gossip_generation() > 0) {
+            generation_nbr = _cfg.force_gossip_generation();
+            logger.warn("Use the generation number provided by user: generation = {}", generation_nbr);
+        }
         endpoint_state& local_state = endpoint_state_map[get_broadcast_address()];
         local_state.set_heart_beat_state_and_update_timestamp(heart_beat_state(generation_nbr));
         local_state.mark_alive();
@@ -1960,7 +1964,7 @@ future<> gossiper::do_stop_gossiping() {
         seastar::with_semaphore(_callback_running, 1, [] {
             logger.info("Disable and wait for gossip loop finished");
             return get_gossiper().invoke_on_all([] (gossiper& g) {
-                if (engine().cpu_id() == 0) {
+                if (this_shard_id() == 0) {
                     g.fd().unregister_failure_detection_event_listener(&g);
                 }
                 g._features_condvar.broken();
@@ -2174,25 +2178,24 @@ future<> gossiper::wait_for_range_setup() {
 }
 
 bool gossiper::is_safe_for_bootstrap(inet_address endpoint) {
+    // We allow to bootstrap a new node in only two cases:
+    // 1) The node is a completely new node and no state in gossip at all
+    // 2) The node has state in gossip and it is already removed from the
+    // cluster either by nodetool decommission or nodetool removenode
     auto* eps = get_endpoint_state_for_endpoint_ptr(endpoint);
-
-    // if there's no previous state, or the node was previously removed from the cluster, we're good
-    if (!eps || is_dead_state(*eps)) {
-        return true;
+    bool allowed = true;
+    if (!eps) {
+        logger.debug("is_safe_for_bootstrap: node={}, status=no state in gossip, allowed_to_bootstrap={}", endpoint, allowed);
+        return allowed;
     }
-
     sstring status = get_gossip_status(*eps);
-
-    logger.debug("is_safe_for_bootstrap: node {} status {}", endpoint, status);
-
-    // these states are not allowed to join the cluster as it would not be safe
-    std::unordered_set<sstring> unsafe_statuses{
-        sstring(versioned_value::STATUS_UNKNOWN), // failed bootstrap but we did start gossiping
-        sstring(versioned_value::STATUS_NORMAL), // node is legit in the cluster or it was stopped with kill -9
-        sstring(versioned_value::SHUTDOWN) // node was shutdown
+    std::unordered_set<sstring> allowed_statuses{
+        sstring(versioned_value::STATUS_LEFT),
+        sstring(versioned_value::REMOVED_TOKEN),
     };
-
-    return !unsafe_statuses.count(status);
+    allowed = allowed_statuses.count(status);
+    logger.debug("is_safe_for_bootstrap: node={}, status={}, allowed_to_bootstrap={}", endpoint, status, allowed);
+    return allowed;
 }
 
 std::set<sstring> to_feature_set(sstring features_string) {
@@ -2263,7 +2266,7 @@ std::set<sstring> gossiper::get_supported_features(const std::unordered_map<gms:
     return common_features;
 }
 
-void gossiper::check_knows_remote_features(std::set<sstring>& local_features, const std::unordered_map<inet_address, sstring>& loaded_peer_features) const {
+void gossiper::check_knows_remote_features(std::set<std::string_view>& local_features, const std::unordered_map<inet_address, sstring>& loaded_peer_features) const {
     auto local_endpoint = get_broadcast_address();
     auto common_features = get_supported_features(loaded_peer_features, ignore_features_of_local_node::yes);
     if (boost::range::includes(local_features, common_features)) {

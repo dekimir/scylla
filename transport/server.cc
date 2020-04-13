@@ -38,7 +38,7 @@
 #include "db/consistency_level_type.hh"
 #include "db/write_type.hh"
 #include <seastar/core/future-util.hh>
-#include <seastar/core/reactor.hh>
+#include <seastar/core/seastar.hh>
 #include "utils/UUID.hh"
 #include <seastar/net/byteorder.hh>
 #include <seastar/core/metrics.hh>
@@ -146,14 +146,13 @@ event::event_type parse_event_type(const sstring& value)
 }
 
 cql_server::cql_server(distributed<cql3::query_processor>& qp, auth::service& auth_service,
-        const cql3::cql_config& cql_config, service::migration_notifier& mn, cql_server_config config)
+        service::migration_notifier& mn, cql_server_config config)
     : _query_processor(qp)
     , _config(config)
     , _max_request_size(config.max_request_size)
     , _memory_available(config.get_service_memory_limiter_semaphore())
     , _notifier(std::make_unique<event_notifier>(mn))
     , _auth_service(auth_service)
-    , _cql_config(cql_config)
 {
     namespace sm = seastar::metrics;
 
@@ -217,7 +216,7 @@ cql_server::listen(socket_address addr, std::shared_ptr<seastar::tls::credential
     try {
         ss = creds
           ? seastar::tls::listen(creds->build_server_credentials(), addr, lo)
-          : engine().listen(addr, lo);
+          : seastar::listen(addr, lo);
     } catch (...) {
         throw std::runtime_error(format("CQLServer error while listening on {} -> {}", addr, std::current_exception()));
     }
@@ -246,7 +245,7 @@ cql_server::do_accepts(int which, bool keepalive, socket_address server_addr) {
             ++_connects;
             ++_connections;
             // Move the processing into the background.
-            (void)futurize_apply([this, conn] {
+            (void)futurize_invoke([this, conn] {
                 return advertise_new_connection(conn); // Notify any listeners about new connection.
             }).then_wrapped([this, conn] (future<> f) {
                 try {
@@ -395,7 +394,7 @@ future<foreign_ptr<std::unique_ptr<cql_server::response>>>
 
     auto linearization_buffer = std::make_unique<bytes_ostream>();
     auto linearization_buffer_ptr = linearization_buffer.get();
-    return futurize_apply([this, cqlop, stream, &fbuf, &client_state, linearization_buffer_ptr, permit = std::move(permit), trace_state] () mutable {
+    return futurize_invoke([this, cqlop, stream, &fbuf, &client_state, linearization_buffer_ptr, permit = std::move(permit), trace_state] () mutable {
         // When using authentication, we need to ensure we are doing proper state transitions,
         // i.e. we cannot simply accept any query/exec ops unless auth is complete
         switch (client_state.get_auth_state()) {
@@ -557,7 +556,7 @@ client_data cql_server::connection::make_client_data() const {
     cd.ip = _client_state.get_client_address().addr();
     cd.port = _client_state.get_client_port();
     cd.ct = client_type::cql;
-    cd.shard_id = engine().cpu_id();
+    cd.shard_id = this_shard_id();
     cd.protocol_version = _version;
     if (const auto user_ptr = _client_state.user(); user_ptr) {
         cd.username = user_ptr->name;
@@ -769,7 +768,7 @@ cql_server::connection::process_on_shard(unsigned shard, uint16_t stream, fragme
                                               (bytes_ostream& linearization_buffer, service::client_state& client_state) mutable {
             request_reader in(is, linearization_buffer);
             return process_fn(client_state, server._query_processor, in, stream, _version, _cql_serialization_format,
-                    server._cql_config, server.timeout_config(), /* FIXME */empty_service_permit(), std::move(trace_state), false).then([] (auto msg) {
+                    server.timeout_config(), /* FIXME */empty_service_permit(), std::move(trace_state), false).then([] (auto msg) {
                 // result here has to be foreign ptr
                 return std::get<foreign_ptr<std::unique_ptr<cql_server::response>>>(std::move(msg));
             });
@@ -784,7 +783,7 @@ cql_server::connection::process(uint16_t stream, request_reader in, service::cli
     fragmented_temporary_buffer::istream is = in.get_stream();
 
     return process_fn(client_state, _server._query_processor, in, stream,
-            _version, _cql_serialization_format,  _server._cql_config, _server.timeout_config(), permit, trace_state, true)
+            _version, _cql_serialization_format,  _server.timeout_config(), permit, trace_state, true)
             .then([stream, &client_state, this, is, permit, process_fn, trace_state]
                    (std::variant<foreign_ptr<std::unique_ptr<cql_server::response>>, unsigned> msg) mutable {
         unsigned* shard = std::get_if<unsigned>(&msg);
@@ -798,12 +797,12 @@ cql_server::connection::process(uint16_t stream, request_reader in, service::cli
 static future<std::variant<foreign_ptr<std::unique_ptr<cql_server::response>>, unsigned>>
 process_query_internal(service::client_state& client_state, distributed<cql3::query_processor>& qp, request_reader in,
         uint16_t stream, cql_protocol_version_type version, cql_serialization_format serialization_format,
-        const cql3::cql_config& cql_config, const ::timeout_config& timeout_config, service_permit permit, tracing::trace_state_ptr trace_state,
+        const ::timeout_config& timeout_config, service_permit permit, tracing::trace_state_ptr trace_state,
         bool init_trace) {
     auto query = in.read_long_string_view();
     auto q_state = std::make_unique<cql_query_state>(client_state, trace_state, std::move(permit));
     auto& query_state = q_state->query_state;
-    q_state->options = in.read_options(version, serialization_format, timeout_config, cql_config);
+    q_state->options = in.read_options(version, serialization_format, timeout_config, qp.local().get_cql_config());
     auto& options = *q_state->options;
     auto skip_metadata = options.skip_metadata();
 
@@ -839,7 +838,7 @@ future<std::unique_ptr<cql_server::response>> cql_server::connection::process_pr
     tracing::add_query(trace_state, query);
     tracing::begin(trace_state, "Preparing CQL3 query", client_state.get_client_address());
 
-    auto cpu_id = engine().cpu_id();
+    auto cpu_id = this_shard_id();
     auto cpus = boost::irange(0u, smp::count);
     return parallel_for_each(cpus.begin(), cpus.end(), [this, query, cpu_id, &client_state] (unsigned int c) mutable {
         if (c != cpu_id) {
@@ -863,7 +862,7 @@ future<std::unique_ptr<cql_server::response>> cql_server::connection::process_pr
 static future<std::variant<foreign_ptr<std::unique_ptr<cql_server::response>>, unsigned>>
 process_execute_internal(service::client_state& client_state, distributed<cql3::query_processor>& qp, request_reader in,
         uint16_t stream, cql_protocol_version_type version, cql_serialization_format serialization_format,
-        const cql3::cql_config& cql_config, const ::timeout_config& timeout_config, service_permit permit,
+        const ::timeout_config& timeout_config, service_permit permit,
         tracing::trace_state_ptr trace_state, bool init_trace) {
     cql3::prepared_cache_key_type cache_key(in.read_short_bytes());
     auto& id = cql3::prepared_cache_key_type::cql_id(cache_key);
@@ -887,10 +886,10 @@ process_execute_internal(service::client_state& client_state, distributed<cql3::
         std::vector<cql3::raw_value_view> values;
         in.read_value_view_list(version, values);
         auto consistency = in.read_consistency();
-        q_state->options = std::make_unique<cql3::query_options>(cql_config, consistency, timeout_config, std::nullopt, values, false,
+        q_state->options = std::make_unique<cql3::query_options>(qp.local().get_cql_config(), consistency, timeout_config, std::nullopt, values, false,
                                                                  cql3::query_options::specific_options::DEFAULT, serialization_format);
     } else {
-        q_state->options = in.read_options(version, serialization_format, timeout_config, cql_config);
+        q_state->options = in.read_options(version, serialization_format, timeout_config, qp.local().get_cql_config());
     }
     auto& options = *q_state->options;
     auto skip_metadata = options.skip_metadata();
@@ -942,7 +941,7 @@ future<foreign_ptr<std::unique_ptr<cql_server::response>>> cql_server::connectio
 static future<std::variant<foreign_ptr<std::unique_ptr<cql_server::response>>, unsigned>>
 process_batch_internal(service::client_state& client_state, distributed<cql3::query_processor>& qp, request_reader in,
         uint16_t stream, cql_protocol_version_type version, cql_serialization_format serialization_format,
-        const cql3::cql_config& cql_config, const ::timeout_config& timeout_config, service_permit permit,
+        const ::timeout_config& timeout_config, service_permit permit,
         tracing::trace_state_ptr trace_state, bool init_trace) {
     if (version == 1) {
         throw exceptions::protocol_exception("BATCH messages are not support in version 1 of the protocol");
@@ -1032,7 +1031,7 @@ process_batch_internal(service::client_state& client_state, distributed<cql3::qu
     auto& query_state = q_state->query_state;
     // #563. CQL v2 encodes query_options in v1 format for batch requests.
     q_state->options = std::make_unique<cql3::query_options>(cql3::query_options::make_batch_options(std::move(*in.read_options(version < 3 ? 1 : version, serialization_format,
-                                                                     timeout_config, cql_config)), std::move(values)));
+                                                                     timeout_config, qp.local().get_cql_config())), std::move(values)));
     auto& options = *q_state->options;
 
     if (init_trace) {
@@ -1197,7 +1196,7 @@ std::unique_ptr<cql_server::response> cql_server::connection::make_supported(int
     opts.insert({"COMPRESSION", "lz4"});
     opts.insert({"COMPRESSION", "snappy"});
     if (_server._config.allow_shard_aware_drivers) {
-        opts.insert({"SCYLLA_SHARD", format("{:d}", engine().cpu_id())});
+        opts.insert({"SCYLLA_SHARD", format("{:d}", this_shard_id())});
         opts.insert({"SCYLLA_NR_SHARDS", format("{:d}", smp::count)});
         opts.insert({"SCYLLA_SHARDING_ALGORITHM", dht::cpu_sharding_algorithm_name()});
         opts.insert({"SCYLLA_SHARDING_IGNORE_MSB", format("{:d}", _server._config.sharding_ignore_msb)});

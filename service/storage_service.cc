@@ -81,12 +81,11 @@
 #include <seastar/core/metrics.hh>
 #include "cdc/generation.hh"
 #include "repair/repair.hh"
+#include "service/priority_manager.hh"
 
 using token = dht::token;
 using UUID = utils::UUID;
 using inet_address = gms::inet_address;
-
-using namespace std::chrono_literals;
 
 extern logging::logger cdc_log;
 
@@ -99,18 +98,6 @@ static const sstring SSTABLE_FORMAT_PARAM_NAME = "sstable_format";
 distributed<storage_service> _the_storage_service;
 
 
-timeout_config make_timeout_config(const db::config& cfg) {
-    timeout_config tc;
-    tc.read_timeout = cfg.read_request_timeout_in_ms() * 1ms;
-    tc.write_timeout = cfg.write_request_timeout_in_ms() * 1ms;
-    tc.range_read_timeout = cfg.range_request_timeout_in_ms() * 1ms;
-    tc.counter_write_timeout = cfg.counter_write_request_timeout_in_ms() * 1ms;
-    tc.truncate_timeout = cfg.truncate_request_timeout_in_ms() * 1ms;
-    tc.cas_timeout = cfg.cas_contention_timeout_in_ms() * 1ms;
-    tc.other_timeout = cfg.request_timeout_in_ms() * 1ms;
-    return tc;
-}
-
 int get_generation_number() {
     using namespace std::chrono;
     auto now = high_resolution_clock::now().time_since_epoch();
@@ -118,20 +105,18 @@ int get_generation_number() {
     return generation_number;
 }
 
-storage_service::storage_service(abort_source& abort_source, distributed<database>& db, gms::gossiper& gossiper, sharded<auth::service>& auth_service, sharded<cql3::cql_config>& cql_config, sharded<db::system_distributed_keyspace>& sys_dist_ks,
+storage_service::storage_service(abort_source& abort_source, distributed<database>& db, gms::gossiper& gossiper, sharded<auth::service>& auth_service, sharded<db::system_distributed_keyspace>& sys_dist_ks,
         sharded<db::view::view_update_generator>& view_update_generator, gms::feature_service& feature_service, storage_service_config config, sharded<service::migration_notifier>& mn, locator::token_metadata& tm, bool for_testing)
         : _abort_source(abort_source)
         , _feature_service(feature_service)
         , _db(db)
         , _gossiper(gossiper)
         , _auth_service(auth_service)
-        , _cql_config(cql_config)
         , _mnotifier(mn)
         , _service_memory_total(config.available_memory / 10)
         , _service_memory_limiter(_service_memory_total)
         , _for_testing(for_testing)
         , _token_metadata(tm)
-        , _la_feature_listener(*this, _feature_listeners_sem, sstables::sstable_version_types::la)
         , _mc_feature_listener(*this, _feature_listeners_sem, sstables::sstable_version_types::mc)
         , _replicate_action([this] { return do_replicate_to_all_cores(); })
         , _update_pending_ranges_action([this] { return do_update_pending_ranges(); })
@@ -144,8 +129,7 @@ storage_service::storage_service(abort_source& abort_source, distributed<databas
     commit_error.connect([this] { isolate_on_commit_error(); });
 
     if (!for_testing) {
-        if (engine().cpu_id() == 0) {
-            _feature_service.cluster_supports_la_sstable().when_enabled(_la_feature_listener);
+        if (this_shard_id() == 0) {
             _feature_service.cluster_supports_mc_sstable().when_enabled(_mc_feature_listener);
         }
     } else {
@@ -185,7 +169,7 @@ static node_external_status map_operation_mode(storage_service::mode m) {
 }
 
 void storage_service::register_metrics() {
-    if (engine().cpu_id() != 0) {
+    if (this_shard_id() != 0) {
         // the relevant data is distributed between the shards,
         // We only need to register it once.
         return;
@@ -214,7 +198,7 @@ bool storage_service::is_auto_bootstrap() const {
 }
 
 // The features this node supports
-std::set<sstring> storage_service::get_known_features_set() {
+std::set<std::string_view> storage_service::get_known_features_set() {
     return _feature_service.known_feature_set();
 }
 
@@ -223,7 +207,7 @@ sstring storage_service::get_config_supported_features() {
 }
 
 // The features this node supports and is allowed to advertise to other nodes
-std::set<sstring> storage_service::get_config_supported_features_set() {
+std::set<std::string_view> storage_service::get_config_supported_features_set() {
     auto features = _feature_service.known_feature_set();
 
     if (sstables::is_later(sstables::sstable_version_types::mc, _sstables_format)) {
@@ -426,7 +410,7 @@ void storage_service::prepare_to_join(std::vector<inet_address> loaded_endpoints
     gossip_snitch_info().get();
 
     // gossip local partitioner information (shard count and ignore_msb_bits)
-    gossip_sharding_info().get();
+    gossip_sharder().get();
 
     // gossip Schema.emptyVersion forcing immediate check for schema updates (see MigrationManager#maybeScheduleSchemaPull)
 
@@ -952,6 +936,12 @@ void storage_service::bootstrap() {
 
     _gossiper.check_seen_seeds();
 
+    _db.invoke_on_all([this] (database& db) {
+        for (auto& cf : db.get_non_system_column_families()) {
+            cf->notify_bootstrap_or_replace_start();
+        }
+    }).get();
+
     set_mode(mode::JOINING, "Starting to bootstrap...", true);
     if (is_repair_based_node_ops_enabled()) {
         if (db().local().is_replacing()) {
@@ -964,6 +954,13 @@ void storage_service::bootstrap() {
         // Does the actual streaming of newly replicated token ranges.
         bs.bootstrap().get();
     }
+    _db.invoke_on_all([this] (database& db) {
+        for (auto& cf : db.get_non_system_column_families()) {
+            cf->notify_bootstrap_or_replace_end();
+        }
+    }).get();
+
+
     slogger.info("Bootstrap completed! for the tokens {}", _bootstrap_tokens);
 }
 
@@ -1648,7 +1645,7 @@ future<> storage_service::replicate_tm_only() {
 
     return do_with(std::move(tm), [] (token_metadata& tm) {
         return get_storage_service().invoke_on_all([&tm] (storage_service& local_ss){
-            if (engine().cpu_id() != 0) {
+            if (this_shard_id() != 0) {
                 local_ss._token_metadata = tm;
             }
         });
@@ -1658,7 +1655,7 @@ future<> storage_service::replicate_tm_only() {
 future<> storage_service::replicate_to_all_cores() {
     // sanity checks: this function is supposed to be run on shard 0 only and
     // when gossiper has already been initialized.
-    if (engine().cpu_id() != 0) {
+    if (this_shard_id() != 0) {
         auto err = format("replicate_to_all_cores is not ran on cpu zero");
         slogger.warn("{}", err);
         throw std::runtime_error(err);
@@ -1684,7 +1681,7 @@ future<> storage_service::gossip_snitch_info() {
     });
 }
 
-future<> storage_service::gossip_sharding_info() {
+future<> storage_service::gossip_sharder() {
     return _gossiper.add_local_application_state({
         { gms::application_state::SHARD_COUNT, value_factory.shard_count(smp::count) },
         { gms::application_state::IGNORE_MSB_BITS, value_factory.ignore_msb_bits(_db.local().get_config().murmur3_partitioner_ignore_msb_bits()) },
@@ -2210,7 +2207,7 @@ future<> storage_service::start_rpc_server() {
             return make_ready_future<>();
         }
 
-        ss._thrift_server = distributed<thrift_server>();
+        ss._thrift_server = std::make_unique<distributed<thrift_server>>();
         auto tserver = &*ss._thrift_server;
 
         auto& cfg = ss._db.local().get_config();
@@ -2223,7 +2220,7 @@ future<> storage_service::start_rpc_server() {
         tsc.timeout_config = make_timeout_config(cfg);
         tsc.max_request_size = cfg.thrift_max_message_length_in_mb() * (uint64_t(1) << 20);
         return gms::inet_address::lookup(addr, family, preferred).then([&ss, tserver, addr, port, keepalive, tsc] (gms::inet_address ip) {
-            return tserver->start(std::ref(ss._db), std::ref(cql3::get_query_processor()), std::ref(ss._auth_service), std::ref(ss._cql_config), tsc).then([tserver, port, addr, ip, keepalive] {
+            return tserver->start(std::ref(ss._db), std::ref(cql3::get_query_processor()), std::ref(ss._auth_service), tsc).then([tserver, port, addr, ip, keepalive] {
                 // #293 - do not stop anything
                 //engine().at_exit([tserver] {
                 //    return tserver->stop();
@@ -2237,8 +2234,7 @@ future<> storage_service::start_rpc_server() {
 }
 
 future<> storage_service::do_stop_rpc_server() {
-    return do_with(std::move(_thrift_server), [this] (std::optional<distributed<thrift_server>>& tserver) {
-        _thrift_server = std::nullopt;
+    return do_with(std::move(_thrift_server), [this] (std::unique_ptr<distributed<thrift_server>>& tserver) {
         if (tserver) {
             return tserver->stop().then([] {
                 slogger.info("Thrift server stopped");
@@ -2266,7 +2262,7 @@ future<> storage_service::start_native_transport() {
             return make_ready_future<>();
         }
         return seastar::async([&ss] {
-            ss._cql_server = distributed<cql_transport::cql_server>();
+            ss._cql_server = std::make_unique<distributed<cql_transport::cql_server>>();
             auto cserver = &*ss._cql_server;
 
             auto& cfg = ss._db.local().get_config();
@@ -2286,7 +2282,7 @@ future<> storage_service::start_native_transport() {
             cql_server_smp_service_group_config.max_nonlocal_requests = 5000;
             cql_server_config.bounce_request_smp_service_group = create_smp_service_group(cql_server_smp_service_group_config).get0();
             seastar::net::inet_address ip = gms::inet_address::lookup(addr, family, preferred).get0();
-            cserver->start(std::ref(cql3::get_query_processor()), std::ref(ss._auth_service), std::ref(ss._cql_config), std::ref(ss._mnotifier), cql_server_config).get();
+            cserver->start(std::ref(cql3::get_query_processor()), std::ref(ss._auth_service), std::ref(ss._mnotifier), cql_server_config).get();
             struct listen_cfg {
                 socket_address addr;
                 std::shared_ptr<seastar::tls::credentials_builder> cred;
@@ -2337,8 +2333,7 @@ future<> storage_service::start_native_transport() {
 }
 
 future<> storage_service::do_stop_native_transport() {
-    return do_with(std::move(_cql_server), [this] (std::optional<distributed<cql_transport::cql_server>>& cserver) {
-        _cql_server = std::nullopt;
+    return do_with(std::move(_cql_server), [this] (std::unique_ptr<distributed<cql_transport::cql_server>>& cserver) {
         if (cserver) {
             // FIXME: cql_server::stop() doesn't kill existing connections and wait for them
             return set_cql_ready(false).then([&cserver] {
@@ -3002,7 +2997,7 @@ future<> storage_service::load_new_sstables(sstring ks_name, sstring cf_name) {
         return _db.invoke_on_all([ks_name, cf_name, new_gen] (database& db) {
             auto& cf = db.find_column_family(ks_name, cf_name);
             auto disabled = std::chrono::duration_cast<std::chrono::microseconds>(cf.enable_sstable_write(new_gen)).count();
-            slogger.info("CF {}.{} at shard {} had SSTables writes disabled for {} usec", ks_name, cf_name, engine().cpu_id(), disabled);
+            slogger.info("CF {}.{} at shard {} had SSTables writes disabled for {} usec", ks_name, cf_name, this_shard_id(), disabled);
             return make_ready_future<>();
         }).then([new_tables = std::move(new_tables), eptr = std::move(eptr)] {
             if (eptr) {
@@ -3161,7 +3156,7 @@ std::chrono::milliseconds storage_service::get_ring_delay() {
 }
 
 future<> storage_service::do_update_pending_ranges() {
-    if (engine().cpu_id() != 0) {
+    if (this_shard_id() != 0) {
         return make_exception_future<>(std::runtime_error("do_update_pending_ranges should be called on cpu zero"));
     }
     // long start = System.currentTimeMillis();
@@ -3390,10 +3385,10 @@ storage_service::view_build_statuses(sstring keyspace, sstring view_name) const 
 }
 
 future<> init_storage_service(sharded<abort_source>& abort_source, distributed<database>& db, sharded<gms::gossiper>& gossiper, sharded<auth::service>& auth_service,
-        sharded<cql3::cql_config>& cql_config, sharded<db::system_distributed_keyspace>& sys_dist_ks,
+        sharded<db::system_distributed_keyspace>& sys_dist_ks,
         sharded<db::view::view_update_generator>& view_update_generator, sharded<gms::feature_service>& feature_service,
         storage_service_config config, sharded<service::migration_notifier>& mn, sharded<locator::token_metadata>& tm) {
-    return service::get_storage_service().start(std::ref(abort_source), std::ref(db), std::ref(gossiper), std::ref(auth_service), std::ref(cql_config), std::ref(sys_dist_ks), std::ref(view_update_generator), std::ref(feature_service), config, std::ref(mn), std::ref(tm));
+    return service::get_storage_service().start(std::ref(abort_source), std::ref(db), std::ref(gossiper), std::ref(auth_service), std::ref(sys_dist_ks), std::ref(view_update_generator), std::ref(feature_service), config, std::ref(mn), std::ref(tm));
 }
 
 future<> deinit_storage_service() {
@@ -3426,10 +3421,13 @@ void feature_enabled_listener::on_enabled() {
 
 future<> read_sstables_format(distributed<storage_service>& ss) {
     return db::system_keyspace::get_scylla_local_param(SSTABLE_FORMAT_PARAM_NAME).then([&ss] (std::optional<sstring> format_opt) {
-        sstables::sstable_version_types format = sstables::from_string(format_opt.value_or("ka"));
-        return ss.invoke_on_all([format] (storage_service& s) {
-            s._sstables_format = format;
-        });
+        if (format_opt) {
+            sstables::sstable_version_types format = sstables::from_string(*format_opt);
+            return ss.invoke_on_all([format] (storage_service& s) {
+                s._sstables_format = format;
+            });
+        }
+        return make_ready_future<>();
     });
 }
 

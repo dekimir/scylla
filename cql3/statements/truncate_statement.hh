@@ -50,7 +50,7 @@ namespace cql3 {
 
 namespace statements {
 
-class truncate_statement : public raw::cf_statement, public cql_statement_no_metadata, public ::enable_shared_from_this<truncate_statement> {
+class truncate_statement : public raw::cf_statement, public cql_statement_no_metadata {
 public:
     truncate_statement(::shared_ptr<cf_name> name);
 
@@ -64,7 +64,7 @@ public:
 
     virtual bool depends_on_column_family(const sstring& cf_name) const override;
 
-    virtual future<> check_access(const service::client_state& state) const override;
+    virtual future<> check_access(service::storage_proxy& proxy, const service::client_state& state) const override;
 
     virtual void validate(service::storage_proxy&, const service::client_state& state) const override;
 

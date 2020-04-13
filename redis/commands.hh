@@ -39,6 +39,15 @@ public:
     virtual future<redis_message> execute(service::storage_proxy&, redis_options&, service_permit) override;
 };
 
+class exists : public abstract_command {
+    std::vector<bytes> _keys;
+    size_t _count = 0;
+public:
+    static shared_ptr<abstract_command> prepare(service::storage_proxy& proxy, request&& req);
+    exists(bytes&& name, std::vector<bytes>&& keys);
+    virtual future<redis_message> execute(service::storage_proxy&, redis_options&, service_permit) override;
+};
+
 class set : public abstract_command {
     bytes _key;
     bytes _data;
@@ -90,6 +99,14 @@ class select : public abstract_command {
 public:
     static shared_ptr<abstract_command> prepare(service::storage_proxy& proxy, request&& req);
     select(bytes&& name, long index) : abstract_command(std::move(name)), _index(index) {}
+    virtual future<redis_message> execute(service::storage_proxy&, redis_options&, service_permit) override;
+};
+
+class lolwut : public abstract_command {
+    const int _cols, _squares_per_row, _squares_per_col;
+public:
+    static shared_ptr<abstract_command> prepare(service::storage_proxy& proxy, request&& req);
+    lolwut(bytes&& name, const int cols, const int squares_per_row, const int squares_per_col) : abstract_command(std::move(name)), _cols(cols), _squares_per_row(squares_per_row), _squares_per_col(squares_per_col) {}
     virtual future<redis_message> execute(service::storage_proxy&, redis_options&, service_permit) override;
 };
 

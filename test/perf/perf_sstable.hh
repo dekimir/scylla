@@ -20,7 +20,6 @@
  */
 
 #pragma once
-#include "test/boost/sstable_test.hh"
 #include "sstables/sstables.hh"
 #include "sstables/compaction_manager.hh"
 #include "cell_locking.hh"
@@ -49,11 +48,11 @@ public:
 
 private:
     sstring dir() {
-        return _cfg.dir + "/" + to_sstring(engine().cpu_id());
+        return _cfg.dir + "/" + to_sstring(this_shard_id());
     }
 
     sstring random_string(unsigned size) {
-        sstring str(sstring::initialized_later{}, size_t(size));
+        sstring str = uninitialized_string(size_t(size));
         for (auto& b: str) {
             b = _distribution(_generator);
         }
@@ -174,7 +173,13 @@ public:
                 auto cf = make_lw_shared<column_family>(s, column_family_test_config(), column_family::no_commitlog(), *cm, cl_stats, tracker);
 
                 auto start = perf_sstable_test_env::now();
-                auto ret = sstables::compact_sstables(sstables::compaction_descriptor(std::move(ssts)), *cf, sst_gen, sstables::replacer_fn_no_op()).get0();
+
+                auto descriptor = sstables::compaction_descriptor(std::move(ssts));
+                descriptor.creator = [sst_gen = std::move(sst_gen)] (unsigned dummy) mutable {
+                    return sst_gen();
+                };
+                descriptor.replacer = sstables::replacer_fn_no_op();
+                auto ret = sstables::compact_sstables(std::move(descriptor), *cf).get0();
                 auto end = perf_sstable_test_env::now();
 
                 auto partitions_per_sstable = _cfg.partitions / _cfg.sstables;

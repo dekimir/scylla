@@ -26,6 +26,7 @@
 #include <boost/test/unit_test.hpp>
 
 #include <seastar/core/thread.hh>
+#include <seastar/core/reactor.hh>
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
 
@@ -2999,12 +3000,14 @@ static flat_mutation_reader compacted_sstable_reader(test_env& env, schema_ptr s
     tmpdir tmp;
     auto sstables = open_sstables(env, s, format("test/resource/sstables/3.x/uncompressed/{}", table_name), generations);
     auto new_generation = generations.back() + 1;
-    auto new_sstable = [s, &tmp, &env, new_generation] {
+
+    auto desc = sstables::compaction_descriptor(std::move(sstables));
+    desc.creator = [s, &tmp, &env, new_generation] (shard_id dummy) {
         return env.make_sstable(s, tmp.path().string(), new_generation,
                          sstables::sstable_version_types::mc, sstable::format_types::big, 4096);
     };
-
-    sstables::compact_sstables(sstables::compaction_descriptor(std::move(sstables)), *cf, new_sstable, replacer_fn_no_op()).get();
+    desc.replacer = replacer_fn_no_op();
+    sstables::compact_sstables(std::move(desc), *cf).get();
 
     auto compacted_sst = open_sstable(env, s, tmp.path().string(), new_generation);
     return compacted_sst->as_mutation_source().make_reader(s, no_reader_permit(), query::full_partition_range, s->full_slice());

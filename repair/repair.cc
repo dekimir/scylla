@@ -275,16 +275,16 @@ void tracker::check_in_shutdown() {
 }
 
 void tracker::add_repair_info(int id, lw_shared_ptr<repair_info> ri) {
-    _repairs[engine().cpu_id()].emplace(id, ri);
+    _repairs[this_shard_id()].emplace(id, ri);
 }
 
 void tracker::remove_repair_info(int id) {
-    _repairs[engine().cpu_id()].erase(id);
+    _repairs[this_shard_id()].erase(id);
 }
 
 lw_shared_ptr<repair_info> tracker::get_repair_info(int id) {
-    auto it = _repairs[engine().cpu_id()].find(id);
-    if (it != _repairs[engine().cpu_id()].end()) {
+    auto it = _repairs[this_shard_id()].find(id);
+    if (it != _repairs[this_shard_id()].end()) {
         return it->second;
     }
     return {};
@@ -300,7 +300,7 @@ std::vector<int> tracker::get_active() const {
 
 size_t tracker::nr_running_repair_jobs() {
     size_t count = 0;
-    if (engine().cpu_id() != 0) {
+    if (this_shard_id() != 0) {
         return count;
     }
     for (auto& x : _status) {
@@ -314,7 +314,7 @@ size_t tracker::nr_running_repair_jobs() {
 
 void tracker::abort_all_repairs() {
     size_t count = nr_running_repair_jobs();
-    for (auto& x : _repairs[engine().cpu_id()]) {
+    for (auto& x : _repairs[this_shard_id()]) {
         auto& ri = x.second;
         ri->abort();
     }
@@ -322,7 +322,7 @@ void tracker::abort_all_repairs() {
 }
 
 named_semaphore& tracker::range_parallelism_semaphore() {
-    return _range_parallelism_semaphores[engine().cpu_id()];
+    return _range_parallelism_semaphores[this_shard_id()];
 }
 
 future<> tracker::run(int id, std::function<future<> ()> func) {
@@ -640,8 +640,8 @@ future<uint64_t> estimate_partitions(seastar::sharded<database>& db, const sstri
 }
 
 static
-const dht::i_partitioner&
-get_partitioner_for_tables(seastar::sharded<database>& db, const sstring& keyspace, const std::vector<sstring>& names) {
+const dht::sharder&
+get_sharder_for_tables(seastar::sharded<database>& db, const sstring& keyspace, const std::vector<sstring>& names) {
     schema_ptr last_s;
     for (auto& name : names) {
         schema_ptr s;
@@ -650,16 +650,20 @@ get_partitioner_for_tables(seastar::sharded<database>& db, const sstring& keyspa
         } catch(...) {
             throw std::runtime_error(format("No column family '{}' in keyspace '{}'", name, keyspace));
         }
-        if (last_s && last_s->get_partitioner() != s->get_partitioner()) {
+        if (last_s && last_s->get_sharder() != s->get_sharder()) {
             throw std::runtime_error(
-                    format("All tables repaired together have to have the same partitioner. "
-                        "Different partitioners found: {} (for table {}) and {} (for table {})",
-                        last_s->get_partitioner(), last_s->cf_name(),
-                        s->get_partitioner(), s->cf_name()));
+                    format("All tables repaired together have to have the same sharding logic. "
+                        "Different sharding logic found: {} (for table {}) and {} (for table {})",
+                        last_s->get_sharder(), last_s->cf_name(),
+                        s->get_sharder(), s->cf_name()));
         }
         last_s = std::move(s);
     }
-    return last_s->get_partitioner();
+    if (!last_s) {
+        throw std::runtime_error(format("Failed to find sharder for keyspace={}, tables={}, no table in this keyspace",
+                keyspace, names));
+    }
+    return last_s->get_sharder();
 }
 
 repair_info::repair_info(seastar::sharded<database>& db_,
@@ -670,12 +674,12 @@ repair_info::repair_info(seastar::sharded<database>& db_,
     const std::vector<sstring>& data_centers_,
     const std::vector<sstring>& hosts_)
     : db(db_)
-    , partitioner(get_partitioner_for_tables(db_, keyspace_, cfs_))
+    , sharder(get_sharder_for_tables(db_, keyspace_, cfs_))
     , keyspace(keyspace_)
     , ranges(ranges_)
     , cfs(cfs_)
     , id(id_)
-    , shard(engine().cpu_id())
+    , shard(this_shard_id())
     , data_centers(data_centers_)
     , hosts(hosts_)
     , _row_level_repair(db.local().features().cluster_supports_row_level_repair()) {
@@ -1325,7 +1329,7 @@ static future<> do_repair_ranges(lw_shared_ptr<repair_info> ri) {
             ri->ranges_index++;
             rlogger.info("Repair {} out of {} ranges, id={}, shard={}, keyspace={}, table={}, range={}",
                 ri->ranges_index, ri->ranges.size(), ri->id, ri->shard, ri->keyspace, ri->cfs, range);
-            return do_with(dht::selective_token_range_sharder(ri->partitioner, range, ri->shard), [ri] (auto& sharder) {
+            return do_with(dht::selective_token_range_sharder(ri->sharder, range, ri->shard), [ri] (auto& sharder) {
                 return repeat([ri, &sharder] () {
                     check_in_shutdown();
                     ri->check_in_abort();
@@ -1359,7 +1363,7 @@ static future<> repair_ranges(lw_shared_ptr<repair_info> ri) {
         repair_tracker().remove_repair_info(ri->id);
         return make_ready_future<>();
     }).handle_exception([ri] (std::exception_ptr eptr) {
-        rlogger.info("repair id {} on shard {} failed: {}", ri->id, engine().cpu_id(), eptr);
+        rlogger.info("repair id {} on shard {} failed: {}", ri->id, this_shard_id(), eptr);
         repair_tracker().remove_repair_info(ri->id);
         return make_exception_future<>(std::move(eptr));
     });
@@ -1529,6 +1533,10 @@ future<> sync_data_using_repair(seastar::sharded<database>& db,
         rlogger.info("repair id {} to sync data for keyspace={}, status=started", id, keyspace);
         return repair_tracker().run(id, [id, &db, keyspace, ranges = std::move(ranges), neighbors = std::move(neighbors)] () mutable {
             auto cfs = list_column_families(db.local(), keyspace);
+            if (cfs.empty()) {
+                rlogger.warn("repair id {} to sync data for keyspace={}, no table in this keyspace", id, keyspace);
+                return make_ready_future<>();
+            }
             std::vector<future<>> repair_results;
             repair_results.reserve(smp::count);
             for (auto shard : boost::irange(unsigned(0), smp::count)) {
@@ -1559,7 +1567,11 @@ future<> sync_data_using_repair(seastar::sharded<database>& db,
             });
         }).then([id, keyspace] {
             rlogger.info("repair id {} to sync data for keyspace={}, status=succeeded", id, keyspace);
-        }).handle_exception([id, keyspace] (std::exception_ptr ep) {
+        }).handle_exception([&db, id, keyspace] (std::exception_ptr ep) {
+            if (!db.local().has_keyspace(keyspace)) {
+                rlogger.warn("repair id {} to sync data for keyspace={}, status=failed: keyspace does not exist any more, ignoring it, {}", id, keyspace, ep);
+                return make_ready_future<>();
+            }
             rlogger.info("repair id {} to sync data for keyspace={}, status=failed: {}", id, keyspace,  ep);
             return make_exception_future<>(ep);
         });

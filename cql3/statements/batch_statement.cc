@@ -107,11 +107,11 @@ uint32_t batch_statement::get_bound_terms() const
     return _bound_terms;
 }
 
-future<> batch_statement::check_access(const service::client_state& state) const
+future<> batch_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const
 {
-    return parallel_for_each(_statements.begin(), _statements.end(), [&state](auto&& s) {
+    return parallel_for_each(_statements.begin(), _statements.end(), [&proxy, &state](auto&& s) {
         if (s.needs_authorization) {
-            return s.statement->check_access(state);
+            return s.statement->check_access(proxy, state);
         } else {
             return make_ready_future<>();
         }
@@ -219,13 +219,13 @@ future<std::vector<mutation>> batch_statement::get_mutations(service::storage_pr
     });
 }
 
-void batch_statement::verify_batch_size(const std::vector<mutation>& mutations) {
+void batch_statement::verify_batch_size(service::storage_proxy& proxy, const std::vector<mutation>& mutations) {
     if (mutations.size() <= 1) {
         return;     // We only warn for batch spanning multiple mutations
     }
 
-    size_t warn_threshold = service::get_local_storage_proxy().get_db().local().get_config().batch_size_warn_threshold_in_kb() * 1024;
-    size_t fail_threshold = service::get_local_storage_proxy().get_db().local().get_config().batch_size_fail_threshold_in_kb() * 1024;
+    size_t warn_threshold = proxy.get_db().local().get_config().batch_size_warn_threshold_in_kb() * 1024;
+    size_t fail_threshold = proxy.get_db().local().get_config().batch_size_fail_threshold_in_kb() * 1024;
 
     size_t size = 0;
     for (auto&m : mutations) {
@@ -318,7 +318,7 @@ future<> batch_statement::execute_without_conditions(
         }
     }));
 #endif
-    verify_batch_size(mutations);
+    verify_batch_size(storage, mutations);
 
     bool mutate_atomic = true;
     if (_type != type::LOGGED) {
@@ -378,7 +378,7 @@ future<shared_ptr<cql_transport::messages::result_message>> batch_statement::exe
     }
 
     auto shard = service::storage_proxy::cas_shard(*_statements[0].statement->s, request->key()[0].start()->value().as_decorated_key().token());
-    if (shard != engine().cpu_id()) {
+    if (shard != this_shard_id()) {
         proxy.get_stats().replica_cross_shard_ops++;
         return make_ready_future<shared_ptr<cql_transport::messages::result_message>>(
                 make_shared<cql_transport::messages::result_message::bounce_to_shard>(shard));
@@ -402,8 +402,8 @@ void batch_statement::build_cas_result_set_metadata() {
     // Add the mandatory [applied] column to result set metadata
     std::vector<shared_ptr<column_specification>> columns;
 
-    auto applied = make_shared<cql3::column_specification>(schema.ks_name(), schema.cf_name(),
-            make_shared<cql3::column_identifier>("[applied]", false), boolean_type);
+    auto applied = ::make_shared<cql3::column_specification>(schema.ks_name(), schema.cf_name(),
+            ::make_shared<cql3::column_identifier>("[applied]", false), boolean_type);
     columns.push_back(applied);
 
     for (const auto& def : boost::range::join(schema.partition_key_columns(), schema.clustering_key_columns())) {

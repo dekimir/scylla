@@ -37,7 +37,7 @@
 #include <seastar/core/do_with.hh>
 #include <seastar/core/scollectd_api.hh>
 #include <seastar/core/file.hh>
-#include <seastar/core/reactor.hh>
+#include <seastar/core/seastar.hh>
 #include "utils/UUID_gen.hh"
 #include "test/lib/tmpdir.hh"
 #include "db/commitlog/commitlog.hh"
@@ -52,7 +52,7 @@ static future<> cl_test(commitlog::config cfg, noncopyable_function<future<> (co
     cfg.commit_log_location = tmp.path().string();
     return commitlog::create_commitlog(cfg).then([f = std::move(f)](commitlog log) mutable {
         return do_with(std::move(log), [f = std::move(f)](commitlog& log) {
-            return futurize_apply(f, log).finally([&log] {
+            return futurize_invoke(f, log).finally([&log] {
                 return log.shutdown().then([&log] {
                     return log.clear();
                 });

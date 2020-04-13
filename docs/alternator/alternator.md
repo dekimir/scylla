@@ -21,10 +21,6 @@ DynamoDB API requests.
 For example., "`--alternator-port=8000`" on the command line will run
 Alternator on port 8000 - the traditional port used by DynamoDB.
 
-Alternator uses Scylla's LWT feature, which is currently considered
-experimental and needs to be seperately enabled as well, e.g. with the
-"`--experimental=on`" option.
-
 By default, Scylla listens on this port on all network interfaces.
 To listen only on a specific interface, pass also an "`alternator-address`"
 option.
@@ -104,9 +100,6 @@ Global Secondary Indexes (GSI) and Local Secondary Indexes (LSI) are
 implemented, with the following limitations:
 * GSIs and LSIs can be added only at CreateTable time: GSIs cannot be added
   or removed at a later time (UpdateTable is not yet supported).
-* Marking a read from an index as strongly-consistent currently changes
-  nothing. Such reads ought to be forbidden for GSI, and be strongly-
-  consistent for LSI (see https://github.com/scylladb/scylla/issues/4365)
 * DescribeTable lists the indexes for the table, but is missing some
   additional information on each index.
 * Projection of only a subset of the base-table attributes to the index is

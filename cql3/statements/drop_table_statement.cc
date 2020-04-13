@@ -54,7 +54,7 @@ drop_table_statement::drop_table_statement(::shared_ptr<cf_name> cf_name, bool i
 {
 }
 
-future<> drop_table_statement::check_access(const service::client_state& state) const
+future<> drop_table_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const
 {
     // invalid_request_exception is only thrown synchronously.
     try {
@@ -80,7 +80,7 @@ future<shared_ptr<cql_transport::event::schema_change>> drop_table_statement::an
         try {
             f.get();
             using namespace cql_transport;
-            return make_shared<event::schema_change>(
+            return ::make_shared<event::schema_change>(
                     event::schema_change::change_type::DROPPED,
                     event::schema_change::target_type::TABLE,
                     this->keyspace(),

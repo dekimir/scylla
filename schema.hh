@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <unordered_map>
 #include <boost/range/iterator_range.hpp>
@@ -46,6 +47,7 @@
 namespace dht {
 
 class i_partitioner;
+class sharder;
 
 }
 
@@ -627,7 +629,6 @@ private:
         std::map<sstring, sstring> _compaction_strategy_options;
         bool _compaction_enabled = true;
         caching_options _caching_options;
-        cdc::options _cdc_options;
         table_schema_version _version;
         std::unordered_map<sstring, dropped_column> _dropped_columns;
         std::map<bytes, data_type> _collections;
@@ -635,6 +636,10 @@ private:
         // The flag is not stored in the schema mutation and does not affects schema digest.
         // It is set locally on a system tables that should be extra durable
         bool _wait_for_sync = false; // true if all writes using this schema have to be synced immediately by commitlog
+        std::reference_wrapper<const dht::i_partitioner> _partitioner;
+        // Sharding info is not stored in the schema mutation and does not affect
+        // schema digest. It is also not set locally on a schema tables.
+        std::reference_wrapper<const dht::sharder> _sharder;
     };
     raw_schema _raw;
     thrift_schema _thrift;
@@ -803,9 +808,7 @@ public:
         return _raw._compaction_enabled;
     }
 
-    const cdc::options& cdc_options() const {
-        return _raw._cdc_options;
-    }
+    const cdc::options& cdc_options() const;
 
     const ::speculative_retry& speculative_retry() const {
         return _raw._speculative_retry;
@@ -815,7 +818,10 @@ public:
         return _raw._caching_options;
     }
 
-    dht::i_partitioner& get_partitioner() const;
+    static void set_default_partitioner(const sstring& class_name, unsigned ignore_msb = 0);
+    const dht::i_partitioner& get_partitioner() const;
+    const dht::sharder& get_sharder() const;
+    bool has_custom_partitioner() const;
 
     const column_definition* get_column_definition(const bytes& name) const;
     const column_definition& column_at(column_kind, column_id) const;
@@ -850,6 +856,8 @@ public:
     const_iterator_range_type static_columns() const;
     // Returns a range of column definitions
     const_iterator_range_type regular_columns() const;
+    // Returns a range of column definitions
+    const_iterator_range_type columns(column_kind) const;
     // Returns a range of column definitions
 
     typedef boost::range::joined_range<const_iterator_range_type, const_iterator_range_type>

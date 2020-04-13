@@ -23,7 +23,6 @@
 #include <boost/range/adaptor/map.hpp>
 #include "utils/fb_utilities.hh"
 #include "utils/sequenced_set.hh"
-#include "dht/murmur3_partitioner.hh"
 #include "locator/network_topology_strategy.hh"
 #include <seastar/testing/test_case.hh>
 #include <seastar/core/sstring.hh>
@@ -36,8 +35,8 @@
 #include <sstream>
 #include <boost/range/algorithm/adjacent_find.hpp>
 #include <boost/algorithm/cxx11/iota.hpp>
-
-static logging::logger nlogger("NetworkTopologyStrategyLogger");
+#include "test/lib/log.hh"
+#include "test/lib/cql_test_env.hh"
 
 using namespace locator;
 
@@ -47,7 +46,7 @@ struct ring_point {
 };
 
 void print_natural_endpoints(double point, const std::vector<inet_address> v) {
-    nlogger.debug("Natural endpoints for a token {}:", point);
+    testlog.debug("Natural endpoints for a token {}:", point);
     std::string str;
     std::ostringstream strm(str);
 
@@ -55,7 +54,7 @@ void print_natural_endpoints(double point, const std::vector<inet_address> v) {
         strm<<addr<<" ";
     }
 
-    nlogger.debug("{}", strm.str());
+    testlog.debug("{}", strm.str());
 }
 
 #ifndef SEASTAR_DEBUG
@@ -295,7 +294,7 @@ future<> heavy_origin_test() {
                     ring_points.emplace_back(rp);
                     tokens[address].emplace(token{dht::token::kind::key, d2t(token_point / total_eps)});
 
-                    nlogger.debug("adding node {} at {}", address, token_point);
+                    testlog.debug("adding node {} at {}", address, token_point);
 
                     token_point++;
                 }
@@ -598,4 +597,16 @@ SEASTAR_TEST_CASE(testCalculateEndpoints) {
     });
 }
 
+SEASTAR_TEST_CASE(test_invalid_dcs) {
+    return do_with_cql_env_thread([] (auto& e) {
+        for (auto& incorrect : std::vector<std::string>{"3\"", "", "!!!", "abcb", "!3", "-5", "0x123", "999999999999999999999999999999"}) {
+            BOOST_REQUIRE_THROW(e.execute_cql("CREATE KEYSPACE abc WITH REPLICATION "
+                    "= {'class': 'NetworkTopologyStrategy', 'dc1':'" + incorrect + "'}").get(),
+                    exceptions::configuration_exception);
+            BOOST_REQUIRE_THROW(e.execute_cql("CREATE KEYSPACE abc WITH REPLICATION "
+                    "= {'class': 'SimpleStrategy', 'replication_factor':'" + incorrect + "'}").get(),
+                    exceptions::configuration_exception);
+        };
+    });
+}
 

@@ -50,7 +50,7 @@ future<> ec2_multi_region_snitch::start() {
 
     return seastar::async([this] {
         ec2_snitch::load_config().get();
-        if (engine().cpu_id() == io_cpu_id()) {
+        if (this_shard_id() == io_cpu_id()) {
             sstring pub_addr;
             inet_address local_public_address;
 
@@ -81,7 +81,7 @@ future<> ec2_multi_region_snitch::start() {
             // going to invoke gossiper_starting() method.
             //
             _my_distributed->invoke_on(0, [this] (snitch_ptr& local_s) {
-                if (engine().cpu_id() != io_cpu_id()) {
+                if (this_shard_id() != io_cpu_id()) {
                     local_s->set_local_private_addr(_local_private_address);
                 }
             }).get();
@@ -111,7 +111,7 @@ future<> ec2_multi_region_snitch::gossiper_starting() {
     return g.add_local_application_state(application_state::INTERNAL_IP,
         ss.value_factory.internal_ip(_local_private_address)).then([this] {
         if (!_gossip_started) {
-            gms::get_local_gossiper().register_(make_shared<reconnectable_snitch_helper>(_my_dc));
+            gms::get_local_gossiper().register_(::make_shared<reconnectable_snitch_helper>(_my_dc));
             _gossip_started = true;
         }
     });

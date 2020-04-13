@@ -29,7 +29,6 @@
 #include "dht/sharder.hh"
 #include "to_string.hh"
 #include "xx_hasher.hh"
-#include "dht/i_partitioner.hh"
 #include "utils/UUID.hh"
 #include "utils/hash.hh"
 #include "service/priority_manager.hh"
@@ -47,7 +46,6 @@
 #include "gms/i_endpoint_state_change_subscriber.hh"
 #include "gms/gossiper.hh"
 #include "repair/row_level.hh"
-#include "service/storage_service.hh"
 #include "mutation_source_metadata.hh"
 
 extern logging::logger rlogger;
@@ -56,7 +54,6 @@ struct shard_config {
     unsigned shard;
     unsigned shard_count;
     unsigned ignore_msb;
-    sstring partitioner_name;
 };
 
 static bool inject_rpc_stream_error = false;
@@ -384,29 +381,27 @@ public:
             column_family& cf,
             schema_ptr s,
             dht::token_range range,
-            dht::i_partitioner& local_partitioner,
-            dht::i_partitioner& remote_partitioner,
+            const dht::sharder& remote_sharder,
             unsigned remote_shard,
             uint64_t seed,
             is_local_reader local_reader)
             : _schema(s)
             , _range(dht::to_partition_range(range))
-            , _sharder(remote_partitioner, range, remote_shard)
+            , _sharder(remote_sharder, range, remote_shard)
             , _seed(seed)
             , _local_read_op(local_reader ? std::optional(cf.read_in_progress()) : std::nullopt)
-            , _reader(make_reader(db, cf, local_partitioner, local_reader)) {
+            , _reader(make_reader(db, cf, local_reader)) {
     }
 
 private:
     flat_mutation_reader
     make_reader(seastar::sharded<database>& db,
             column_family& cf,
-            dht::i_partitioner& local_partitioner,
             is_local_reader local_reader) {
         if (local_reader) {
             return cf.make_streaming_reader(_schema, _range);
         }
-        return make_multishard_streaming_reader(db, local_partitioner, _schema, [this] {
+        return make_multishard_streaming_reader(db, _schema, [this] {
             auto shard_range = _sharder.next();
             if (shard_range) {
                 return std::optional<dht::partition_range>(dht::to_partition_range(*shard_range));
@@ -487,7 +482,7 @@ public:
         _partition_opened.resize(_nr_peer_nodes, false);
     }
 
-    void create_writer(unsigned node_idx) {
+    void create_writer(sharded<database>& db, unsigned node_idx) {
         if (_writer_done[node_idx]) {
             return;
         }
@@ -495,7 +490,6 @@ public:
         auto get_next_mutation_fragment = [this, node_idx] () mutable {
             return _mq[node_idx]->pop_eventually();
         };
-        auto& db = service::get_local_storage_service().db();
         table& t = db.local().find_column_family(_schema->id());
         _writer_done[node_idx] = mutation_writer::distribute_reader_and_consume_on_shards(_schema,
                 make_generating_reader(_schema, std::move(get_next_mutation_fragment)),
@@ -596,8 +590,8 @@ private:
     uint32_t _repair_meta_id;
     // Repair master's sharding configuration
     shard_config _master_node_shard_config;
-    // Partitioner of repair master
-    std::unique_ptr<dht::i_partitioner> _remote_partitioner;
+    // sharding info of repair master
+    dht::sharder _remote_sharder;
     bool _same_sharding_config = false;
     uint64_t _estimated_partitions = 0;
     // For repair master nr peers is the number of repair followers, for repair
@@ -671,7 +665,7 @@ public:
             , _myip(utils::fb_utilities::get_broadcast_address())
             , _repair_meta_id(repair_meta_id)
             , _master_node_shard_config(std::move(master_node_shard_config))
-            , _remote_partitioner(make_remote_partitioner())
+            , _remote_sharder(make_remote_sharder())
             , _same_sharding_config(is_same_sharding_config())
             , _nr_peer_nodes(nr_peer_nodes)
             , _repair_reader(
@@ -679,8 +673,7 @@ public:
                     _cf,
                     _schema,
                     _range,
-                    _schema->get_partitioner(),
-                    *_remote_partitioner,
+                    _remote_sharder,
                     _master_node_shard_config.shard,
                     _seed,
                     repair_reader::is_local_reader(_repair_master || _same_sharding_config)
@@ -914,7 +907,7 @@ private:
         if (_repair_master || _same_sharding_config) {
             return do_estimate_partitions_on_local_shard();
         } else {
-            return do_with(dht::selective_token_range_sharder(*_remote_partitioner, _range, _master_node_shard_config.shard), uint64_t(0), [this] (auto& sharder, auto& partitions_sum) mutable {
+            return do_with(dht::selective_token_range_sharder(_remote_sharder, _range, _master_node_shard_config.shard), uint64_t(0), [this] (auto& sharder, auto& partitions_sum) mutable {
                 return repeat([this, &sharder, &partitions_sum] () mutable {
                     auto shard_range = sharder.next();
                     if (shard_range) {
@@ -939,17 +932,16 @@ private:
         });
     }
 
-    std::unique_ptr<dht::i_partitioner> make_remote_partitioner() {
-        return dht::make_partitioner(_master_node_shard_config.partitioner_name, _master_node_shard_config.shard_count, _master_node_shard_config.ignore_msb);
+    dht::sharder make_remote_sharder() {
+        return dht::sharder(_master_node_shard_config.shard_count, _master_node_shard_config.ignore_msb);
     }
 
     bool is_same_sharding_config() {
-        rlogger.debug("is_same_sharding_config: remote_partitioner_name={}, remote_shard={}, remote_shard_count={}, remote_ignore_msb={}",
-                _master_node_shard_config.partitioner_name, _master_node_shard_config.shard, _master_node_shard_config.shard_count, _master_node_shard_config.ignore_msb);
-        return _schema->get_partitioner().name() == _master_node_shard_config.partitioner_name
-               && _schema->get_partitioner().shard_count() == _master_node_shard_config.shard_count
-               && _schema->get_partitioner().sharding_ignore_msb() == _master_node_shard_config.ignore_msb
-               && engine().cpu_id() == _master_node_shard_config.shard;
+        rlogger.debug("is_same_sharding_config: remote_shard={}, remote_shard_count={}, remote_ignore_msb={}",
+                _master_node_shard_config.shard, _master_node_shard_config.shard_count, _master_node_shard_config.ignore_msb);
+        return _schema->get_sharder().shard_count() == _master_node_shard_config.shard_count
+               && _schema->get_sharder().sharding_ignore_msb() == _master_node_shard_config.ignore_msb
+               && this_shard_id() == _master_node_shard_config.shard;
     }
 
     future<size_t> get_repair_rows_size(const std::list<repair_row>& rows) const {
@@ -1195,7 +1187,7 @@ private:
             _peer_row_hash_sets[node_idx] = boost::copy_range<std::unordered_set<repair_hash>>(row_diff |
                     boost::adaptors::transformed([] (repair_row& r) { thread::maybe_yield(); return r.hash(); }));
         }
-        _repair_writer.create_writer(node_idx);
+        _repair_writer.create_writer(_db, node_idx);
         for (auto& r : row_diff) {
             if (update_buf) {
                 _working_row_buf_combined_hash.add(r.hash());
@@ -1217,7 +1209,7 @@ private:
         return to_repair_rows_list(rows).then([this] (std::list<repair_row> row_diff) {
             return do_with(std::move(row_diff), [this] (std::list<repair_row>& row_diff) {
                 unsigned node_idx = 0;
-                _repair_writer.create_writer(node_idx);
+                _repair_writer.create_writer(_db, node_idx);
                 return do_for_each(row_diff, [this, node_idx] (repair_row& r) {
                     // The repair_row here is supposed to have
                     // mutation_fragment attached because we have stored it in
@@ -1421,9 +1413,16 @@ public:
             return make_ready_future<>();
         }
         stats().rpc_call_nr++;
+        // Even though remote partitioner name is ignored in the current version of
+        // repair, we still have to send something to keep compatibility with nodes
+        // that run older versions. This will make it possible to run mixed cluster.
+        // Murmur3 is appropriate because that's the only supported partitioner at
+        // the time this change is introduced.
+        sstring remote_partitioner_name = "org.apache.cassandra.dht.Murmur3Partitioner";
         return netw::get_local_messaging_service().send_repair_row_level_start(msg_addr(remote_node),
                 _repair_meta_id, std::move(ks_name), std::move(cf_name), std::move(range), _algo, _max_row_buf_size, _seed,
-                _master_node_shard_config.shard, _master_node_shard_config.shard_count, _master_node_shard_config.ignore_msb, _master_node_shard_config.partitioner_name, std::move(schema_version));
+                _master_node_shard_config.shard, _master_node_shard_config.shard_count, _master_node_shard_config.ignore_msb,
+                remote_partitioner_name, std::move(schema_version));
     }
 
     // RPC handler
@@ -1789,7 +1788,7 @@ static future<stop_iteration> repair_get_row_diff_with_rpc_stream_process_op(
         auto fp = make_foreign(std::make_unique<std::unordered_set<repair_hash>>(std::move(current_set_diff)));
         return smp::submit_to(src_cpu_id % smp::count, [from, repair_meta_id, needs_all_rows, fp = std::move(fp)] {
             auto rm = repair_meta::get_repair_meta(from, repair_meta_id);
-            if (fp.get_owner_shard() == engine().cpu_id()) {
+            if (fp.get_owner_shard() == this_shard_id()) {
                 return rm->get_row_diff_handler(std::move(*fp), repair_meta::needs_all_rows_t(needs_all_rows));
             } else {
                 return rm->get_row_diff_handler(*fp, repair_meta::needs_all_rows_t(needs_all_rows));
@@ -1834,7 +1833,7 @@ static future<stop_iteration> repair_put_row_diff_with_rpc_stream_process_op(
         auto fp = make_foreign(std::make_unique<repair_rows_on_wire>(std::move(current_rows)));
         return smp::submit_to(src_cpu_id % smp::count, [from, repair_meta_id, fp = std::move(fp)] () mutable {
             auto rm = repair_meta::get_repair_meta(from, repair_meta_id);
-            if (fp.get_owner_shard() == engine().cpu_id()) {
+            if (fp.get_owner_shard() == this_shard_id()) {
                 return rm->put_row_diff_handler(std::move(*fp), from);
             } else {
                 return rm->put_row_diff_handler(*fp, from);
@@ -2085,7 +2084,7 @@ future<> repair_init_messaging_service_handler(repair_service& rs, distributed<d
             auto fp = make_foreign(std::make_unique<std::unordered_set<repair_hash>>(std::move(set_diff)));
             return smp::submit_to(src_cpu_id % smp::count, [from, repair_meta_id, fp = std::move(fp), needs_all_rows] () mutable {
                 auto rm = repair_meta::get_repair_meta(from, repair_meta_id);
-                if (fp.get_owner_shard() == engine().cpu_id()) {
+                if (fp.get_owner_shard() == this_shard_id()) {
                     return rm->get_row_diff_handler(std::move(*fp), repair_meta::needs_all_rows_t(needs_all_rows));
                 } else {
                     return rm->get_row_diff_handler(*fp, repair_meta::needs_all_rows_t(needs_all_rows));
@@ -2099,7 +2098,7 @@ future<> repair_init_messaging_service_handler(repair_service& rs, distributed<d
             auto fp = make_foreign(std::make_unique<repair_rows_on_wire>(std::move(row_diff)));
             return smp::submit_to(src_cpu_id % smp::count, [from, repair_meta_id, fp = std::move(fp)] () mutable {
                 auto rm = repair_meta::get_repair_meta(from, repair_meta_id);
-                if (fp.get_owner_shard() == engine().cpu_id()) {
+                if (fp.get_owner_shard() == this_shard_id()) {
                     return rm->put_row_diff_handler(std::move(*fp), from);
                 } else {
                     return rm->put_row_diff_handler(*fp, from);
@@ -2112,10 +2111,10 @@ future<> repair_init_messaging_service_handler(repair_service& rs, distributed<d
             auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
             auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
             return smp::submit_to(src_cpu_id % smp::count, [from, src_cpu_id, repair_meta_id, ks_name, cf_name,
-                    range, algo, max_row_buf_size, seed, remote_shard, remote_shard_count, remote_ignore_msb, remote_partitioner_name, schema_version] () mutable {
+                    range, algo, max_row_buf_size, seed, remote_shard, remote_shard_count, remote_ignore_msb, schema_version] () mutable {
                 return repair_meta::repair_row_level_start_handler(from, src_cpu_id, repair_meta_id, std::move(ks_name),
                         std::move(cf_name), std::move(range), algo, max_row_buf_size, seed,
-                        shard_config{remote_shard, remote_shard_count, remote_ignore_msb, std::move(remote_partitioner_name)},
+                        shard_config{remote_shard, remote_shard_count, remote_ignore_msb},
                         schema_version);
             });
         });
@@ -2429,10 +2428,9 @@ public:
             auto algorithm = get_common_diff_detect_algorithm(_all_live_peer_nodes);
             auto max_row_buf_size = get_max_row_buf_size(algorithm);
             auto master_node_shard_config = shard_config {
-                    engine().cpu_id(),
-                    _ri.partitioner.shard_count(),
-                    _ri.partitioner.sharding_ignore_msb(),
-                    _ri.partitioner.name()
+                    this_shard_id(),
+                    _ri.sharder.shard_count(),
+                    _ri.sharder.sharding_ignore_msb()
             };
             auto s = _cf.schema();
             auto schema_version = s->version();
@@ -2456,9 +2454,12 @@ public:
                     master.myip(), _all_live_peer_nodes, master.repair_meta_id(), _ri.keyspace, _cf_name, schema_version, _range, _seed, max_row_buf_size);
 
 
+            std::vector<gms::inet_address> nodes_to_stop;
+            nodes_to_stop.reserve(_all_nodes.size());
             try {
                 parallel_for_each(_all_nodes, [&, this] (const gms::inet_address& node) {
                     return master.repair_row_level_start(node, _ri.keyspace, _cf_name, _range, schema_version).then([&] () {
+                        nodes_to_stop.push_back(node);
                         return master.repair_get_estimated_partitions(node).then([this, node] (uint64_t partitions) {
                             rlogger.trace("Get repair_get_estimated_partitions for node={}, estimated_partitions={}", node, partitions);
                             _estimated_partitions += partitions;
@@ -2491,7 +2492,7 @@ public:
                 _ri.nr_failed_ranges++;
             }
 
-            parallel_for_each(_all_nodes, [&] (const gms::inet_address& node) {
+            parallel_for_each(nodes_to_stop, [&] (const gms::inet_address& node) {
                 return master.repair_row_level_stop(node, _ri.keyspace, _cf_name, _range);
             }).get();
 

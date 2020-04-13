@@ -57,10 +57,10 @@ alter_view_statement::alter_view_statement(::shared_ptr<cf_name> view_name, ::sh
 {
 }
 
-future<> alter_view_statement::check_access(const service::client_state& state) const
+future<> alter_view_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const
 {
     try {
-        auto&& s = service::get_local_storage_proxy().get_db().local().find_schema(keyspace(), column_family());
+        auto&& s = proxy.get_db().local().find_schema(keyspace(), column_family());
         if (s->is_view())  {
             return state.has_column_family_access(keyspace(), s->view_info()->base_name(), auth::permission::ALTER);
         }
@@ -87,10 +87,11 @@ future<shared_ptr<cql_transport::event::schema_change>> alter_view_statement::an
         throw exceptions::invalid_request_exception("ALTER MATERIALIZED VIEW WITH invoked, but no parameters found");
     }
 
-    _properties->validate(proxy.get_db().local().extensions());
+    auto schema_extensions = _properties->make_schema_extensions(db.extensions());
+    _properties->validate(proxy.get_db().local(), schema_extensions);
 
     auto builder = schema_builder(schema);
-    _properties->apply_to_builder(builder, db);
+    _properties->apply_to_builder(builder, std::move(schema_extensions));
 
     if (builder.get_gc_grace_seconds() == 0) {
         throw exceptions::invalid_request_exception(
@@ -109,7 +110,7 @@ future<shared_ptr<cql_transport::event::schema_change>> alter_view_statement::an
     return service::get_local_migration_manager().announce_view_update(view_ptr(builder.build()), is_local_only).then([this] {
         using namespace cql_transport;
 
-        return make_shared<event::schema_change>(
+        return ::make_shared<event::schema_change>(
                 event::schema_change::change_type::UPDATED,
                 event::schema_change::target_type::TABLE,
                 keyspace(),

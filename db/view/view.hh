@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include "service/storage_proxy_stats.hh"
+#include "view_stats.hh"
 #include "dht/i_partitioner.hh"
 #include "gc_clock.hh"
 #include "query-request.hh"
@@ -42,20 +42,6 @@ using allow_hints = bool_class<allow_hints_tag>;
 namespace db {
 
 namespace view {
-
-struct stats : public service::storage_proxy_stats::write_stats {
-    int64_t view_updates_pushed_local = 0;
-    int64_t view_updates_pushed_remote = 0;
-    int64_t view_updates_failed_local = 0;
-    int64_t view_updates_failed_remote = 0;
-    using label_instance = seastar::metrics::label_instance;
-    stats(const sstring& category, label_instance ks_label, label_instance cf_label);
-    void register_stats();
-private:
-    label_instance _ks_label;
-    label_instance _cf_label;
-
-};
 
 /**
  * Whether the view filter considers the specified partition key.
@@ -116,13 +102,16 @@ query::clustering_row_ranges calculate_affected_clustering_ranges(
         const mutation_partition& mp,
         const std::vector<view_ptr>& views);
 
+struct wait_for_all_updates_tag {};
+using wait_for_all_updates = bool_class<wait_for_all_updates_tag>;
 future<> mutate_MV(
         const dht::token& base_token,
         std::vector<frozen_mutation_and_schema> view_updates,
         db::view::stats& stats,
         cf_stats& cf_stats,
         db::timeout_semaphore_units pending_view_updates,
-        service::allow_hints allow_hints = service::allow_hints::yes);
+        service::allow_hints allow_hints,
+        wait_for_all_updates wait_for_all);
 
 /**
  * create_virtual_column() adds a "virtual column" to a schema builder.

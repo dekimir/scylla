@@ -56,7 +56,7 @@ drop_keyspace_statement::drop_keyspace_statement(const sstring& keyspace, bool i
 {
 }
 
-future<> drop_keyspace_statement::check_access(const service::client_state& state) const
+future<> drop_keyspace_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const
 {
     return state.has_keyspace_access(keyspace(), auth::permission::DROP);
 }
@@ -82,7 +82,7 @@ future<shared_ptr<cql_transport::event::schema_change>> drop_keyspace_statement:
         try {
             f.get();
             using namespace cql_transport;
-            return make_shared<event::schema_change>(
+            return ::make_shared<event::schema_change>(
                     event::schema_change::change_type::DROPPED,
                     event::schema_change::target_type::KEYSPACE,
                     this->keyspace());

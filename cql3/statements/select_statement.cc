@@ -171,9 +171,9 @@ uint32_t select_statement::get_bound_terms() const {
     return _bound_terms;
 }
 
-future<> select_statement::check_access(const service::client_state& state) const {
+future<> select_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const {
     try {
-        auto&& s = service::get_local_storage_proxy().get_db().local().find_schema(keyspace(), column_family());
+        auto&& s = proxy.get_db().local().find_schema(keyspace(), column_family());
         auto& cf_name = s->is_view() ? s->view_info()->base_name() : column_family();
         return state.has_column_family_access(keyspace(), cf_name, auth::permission::SELECT);
     } catch (const no_such_column_family& e) {
@@ -339,8 +339,12 @@ select_statement::do_execute(service::storage_proxy& proxy,
     auto key_ranges = _restrictions->get_partition_key_ranges(options);
 
     if (db::is_serial_consistency(options.get_consistency())) {
+        if (key_ranges.size() != 1 || !query::is_single_partition(key_ranges.front())) {
+             throw exceptions::invalid_request_exception(
+                     "SERIAL/LOCAL_SERIAL consistency may only be requested for one partition at a time");
+        }
         unsigned shard = dht::shard_of(*_schema, key_ranges[0].start()->value().as_decorated_key().token());
-        if (engine().cpu_id() != shard) {
+        if (this_shard_id() != shard) {
             proxy.get_stats().replica_cross_shard_ops++;
             return make_ready_future<shared_ptr<cql_transport::messages::result_message>>(
                     make_shared<cql_transport::messages::result_message::bounce_to_shard>(shard));
@@ -430,14 +434,36 @@ GCC6_CONCEPT(
 static KeyType
 generate_base_key_from_index_pk(const partition_key& index_pk, const std::optional<clustering_key>& index_ck, const schema& base_schema, const schema& view_schema) {
     const auto& base_columns = std::is_same_v<KeyType, partition_key> ? base_schema.partition_key_columns() : base_schema.clustering_key_columns();
+
+    // An empty key in the index paging state translates to an empty base key
+    if (index_pk.is_empty() && !index_ck) {
+        return KeyType::make_empty();
+    }
+
     std::vector<bytes_view> exploded_base_key;
     exploded_base_key.reserve(base_columns.size());
 
     for (const column_definition& base_col : base_columns) {
         const column_definition* view_col = view_schema.view_info()->view_column(base_col);
+        if (!view_col) {
+            throw std::runtime_error(format("Base key column not found in the view: {}", base_col.name_as_text()));
+        }
+        if (base_col.type != view_col->type) {
+            throw std::runtime_error(format("Mismatched types for base and view columns {}: {} and {}",
+                    base_col.name_as_text(), base_col.type->cql3_type_name(), view_col->type->cql3_type_name()));
+        }
         if (view_col->is_partition_key()) {
             exploded_base_key.push_back(index_pk.get_component(view_schema, view_col->id));
-        } else if (index_ck) {
+        } else {
+            if (!view_col->is_clustering_key()) {
+                throw std::runtime_error(
+                        format("Base primary key column {} is not a primary key column in the index (kind: {})",
+                                view_col->name_as_text(), to_sstring(view_col->kind)));
+            }
+            if (!index_ck) {
+                throw std::runtime_error(format("Column {} was expected to be provided "
+                        "in the index clustering key, but the whole index clustering key is missing", view_col->name_as_text()));
+            }
             exploded_base_key.push_back(index_ck->get_component(view_schema, view_col->id));
         }
     }
@@ -503,8 +529,7 @@ indexed_table_select_statement::do_execute_base_query(
             if (old_paging_state && concurrency == 1) {
                 auto base_pk = generate_base_key_from_index_pk<partition_key>(old_paging_state->get_partition_key(),
                         old_paging_state->get_clustering_key(), *_schema, *_view_schema);
-                if (_schema->clustering_key_size() > 0) {
-                    assert(old_paging_state->get_clustering_key().has_value());
+                if (old_paging_state->get_clustering_key() && _schema->clustering_key_size() > 0) {
                     auto base_ck = generate_base_key_from_index_pk<clustering_key>(old_paging_state->get_partition_key(),
                             old_paging_state->get_clustering_key(), *_schema, *_view_schema);
                     command->slice.set_range(*_schema, base_pk,
@@ -1250,7 +1275,7 @@ void select_statement::maybe_jsonize_select_clause(database& db, schema_ptr sche
             _select_clause.reserve(schema->all_columns().size());
             for (const column_definition& column_def : schema->all_columns_in_select_order()) {
                 _select_clause.push_back(make_shared<selection::raw_selector>(
-                        make_shared<column_identifier::raw>(column_def.name_as_text(), true), nullptr));
+                        ::make_shared<column_identifier::raw>(column_def.name_as_text(), true), nullptr));
             }
         }
 
@@ -1639,7 +1664,7 @@ std::vector<size_t> select_statement::prepare_group_by(const schema& schema, sel
 
 namespace util {
 
-shared_ptr<cql3::statements::raw::select_statement> build_select_statement(
+std::unique_ptr<cql3::statements::raw::select_statement> build_select_statement(
             const sstring_view& cf_name,
             const sstring_view& where_clause,
             bool select_all_columns,

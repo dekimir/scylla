@@ -33,6 +33,7 @@
 #include "cql3/column_identifier.hh"
 #include "cql3/functions/functions.hh"
 #include <seastar/core/seastar.hh>
+#include <seastar/core/reactor.hh>
 #include <seastar/core/sleep.hh>
 #include <seastar/core/rwlock.hh>
 #include <seastar/core/metrics.hh>
@@ -524,7 +525,7 @@ database::setup_metrics() {
         sm::make_total_operations("total_view_updates_failed_remote", _cf_stats.total_view_updates_failed_remote,
                 sm::description("Total number of view updates generated for tables and failed to be sent to remote replicas.")),
     });
-    if (engine().cpu_id() == 0) {
+    if (this_shard_id() == 0) {
         _metrics.add_group("database", {
                 sm::make_derive("schema_changed", _schema_change_count,
                         sm::description("The number of times the schema changed")),
@@ -652,7 +653,7 @@ database::shard_of(const frozen_mutation& m) {
     // sent the partition key in legacy form or together
     // with token.
     schema_ptr schema = find_schema(m.column_family_id());
-    return dht::shard_of(*schema, dht::get_token(*schema, m.key(*schema)));
+    return dht::shard_of(*schema, dht::get_token(*schema, m.key()));
 }
 
 void database::add_keyspace(sstring name, keyspace k) {
@@ -956,12 +957,12 @@ keyspace::make_directory_for_column_family(const sstring& name, utils::UUID uuid
     for (auto& extra : _config.all_datadirs) {
         cfdirs.push_back(column_family_directory(extra, name, uuid));
     }
-    return seastar::async([cfdirs = std::move(cfdirs)] {
-        for (auto& cfdir : cfdirs) {
-            io_check([&cfdir] { return recursive_touch_directory(cfdir); }).get();
-        }
-        io_check([name = cfdirs[0] + "/upload"] { return touch_directory(name); }).get();
-        io_check([name = cfdirs[0] + "/staging"] { return touch_directory(name); }).get();
+    return parallel_for_each(cfdirs, [] (sstring cfdir) {
+        return io_check([cfdir] { return recursive_touch_directory(cfdir); });
+    }).then([cfdirs0 = cfdirs[0]] {
+        return io_check([cfdirs0] { return touch_directory(cfdirs0 + "/upload"); });
+    }).then([cfdirs0 = cfdirs[0]] {
+        return io_check([cfdirs0] { return touch_directory(cfdirs0 + "/staging"); });
     });
 }
 
@@ -1449,13 +1450,8 @@ future<> database::apply_in_memory(const frozen_mutation& m, schema_ptr m_schema
 
     data_listeners().on_write(m_schema, m);
 
-    return cf.dirty_memory_region_group().run_when_memory_available([this, &m, m_schema = std::move(m_schema), h = std::move(h)]() mutable {
-        try {
-            auto& cf = find_column_family(m.column_family_id());
-            cf.apply(m, m_schema, std::move(h));
-        } catch (no_such_column_family&) {
-            dblog.error("Attempting to mutate non-existent table {}", m.column_family_id());
-        }
+    return cf.dirty_memory_region_group().run_when_memory_available([this, &m, m_schema = std::move(m_schema), h = std::move(h), &cf]() mutable {
+        cf.apply(m, m_schema, std::move(h));
     }, timeout);
 }
 
@@ -1470,7 +1466,7 @@ future<mutation> database::apply_counter_update(schema_ptr s, const frozen_mutat
         update_write_metrics_for_timed_out_write();
         return make_exception_future<mutation>(timed_out_error{});
     }
-  return update_write_metrics(seastar::futurize_apply([&] {
+  return update_write_metrics(seastar::futurize_invoke([&] {
     if (!s->is_synced()) {
         throw std::runtime_error(format("attempted to mutate using not synced schema of {}.{}, version={}",
                                         s->ks_name(), s->cf_name(), s->version()));
@@ -1994,7 +1990,7 @@ std::ostream& operator<<(std::ostream& os, const keyspace_metadata& m) {
 template <typename T>
 using foreign_unique_ptr = foreign_ptr<std::unique_ptr<T>>;
 
-flat_mutation_reader make_multishard_streaming_reader(distributed<database>& db, dht::i_partitioner& partitioner, schema_ptr schema,
+flat_mutation_reader make_multishard_streaming_reader(distributed<database>& db, schema_ptr schema,
         std::function<std::optional<dht::partition_range>()> range_generator) {
     class streaming_reader_lifecycle_policy
             : public reader_lifecycle_policy
@@ -2016,7 +2012,7 @@ flat_mutation_reader make_multishard_streaming_reader(distributed<database>& db,
                 const io_priority_class& pc,
                 tracing::trace_state_ptr,
                 mutation_reader::forwarding fwd_mr) override {
-            const auto shard = engine().cpu_id();
+            const auto shard = this_shard_id();
             auto& cf = _db.local().find_column_family(schema);
 
             _contexts[shard].range = make_foreign(std::make_unique<const dht::partition_range>(range));
@@ -2036,10 +2032,10 @@ flat_mutation_reader make_multishard_streaming_reader(distributed<database>& db,
             });
         }
         virtual reader_concurrency_semaphore& semaphore() override {
-            return *_contexts[engine().cpu_id()].semaphore;
+            return *_contexts[this_shard_id()].semaphore;
         }
     };
-    auto ms = mutation_source([&db, &partitioner] (schema_ptr s,
+    auto ms = mutation_source([&db] (schema_ptr s,
             reader_permit,
             const dht::partition_range& pr,
             const query::partition_slice& ps,
@@ -2047,7 +2043,7 @@ flat_mutation_reader make_multishard_streaming_reader(distributed<database>& db,
             tracing::trace_state_ptr trace_state,
             streamed_mutation::forwarding,
             mutation_reader::forwarding fwd_mr) {
-        return make_multishard_combining_reader(make_shared<streaming_reader_lifecycle_policy>(db), partitioner, std::move(s), pr, ps, pc,
+        return make_multishard_combining_reader(make_shared<streaming_reader_lifecycle_policy>(db), std::move(s), pr, ps, pc,
                 std::move(trace_state), fwd_mr);
     });
     auto&& full_slice = schema->full_slice();

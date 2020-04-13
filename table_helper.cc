@@ -34,12 +34,13 @@ future<> table_helper::setup_table() const {
         return make_ready_future<>();
     }
 
-    ::shared_ptr<cql3::statements::raw::cf_statement> parsed = static_pointer_cast<
-                    cql3::statements::raw::cf_statement>(cql3::query_processor::parse_statement(_create_cql));
-    parsed->prepare_keyspace(_keyspace);
+    auto parsed = cql3::query_processor::parse_statement(_create_cql);
+
+    cql3::statements::raw::cf_statement* parsed_cf_stmt = static_cast<cql3::statements::raw::cf_statement*>(parsed.get());
+    parsed_cf_stmt->prepare_keyspace(_keyspace);
     ::shared_ptr<cql3::statements::create_table_statement> statement =
                     static_pointer_cast<cql3::statements::create_table_statement>(
-                                    parsed->prepare(db, qp.get_cql_stats())->statement);
+                                    parsed_cf_stmt->prepare(db, qp.get_cql_stats())->statement);
     auto schema = statement->get_cf_meta_data(db);
 
     // Generate the CF UUID based on its KF names. This is needed to ensure that
@@ -95,7 +96,7 @@ future<> table_helper::insert(service::query_state& qs, noncopyable_function<cql
 }
 
 future<> table_helper::setup_keyspace(const sstring& keyspace_name, sstring replication_factor, service::query_state& qs, std::vector<table_helper*> tables) {
-    if (engine().cpu_id() == 0) {
+    if (this_shard_id() == 0) {
         size_t n = tables.size();
         for (size_t i = 0; i < n; ++i) {
             if (tables[i]->_keyspace != keyspace_name) {

@@ -84,7 +84,7 @@ view_info::view_info(const schema& schema, const raw_view_info& raw_view_info)
 
 cql3::statements::select_statement& view_info::select_statement() const {
     if (!_select_statement) {
-        shared_ptr<cql3::statements::raw::select_statement> raw;
+        std::unique_ptr<cql3::statements::raw::select_statement> raw;
         // FIXME(sarna): legacy code, should be removed after "computed_columns" feature is guaranteed
         // to be available on every node. Then, we won't need to check if this view is backing a secondary index.
         const column_definition* legacy_token_column = nullptr;
@@ -693,9 +693,14 @@ void view_updates::generate_update(
         return;
     }
 
-    bool should_update = false;
-    bool should_replace = false;
-    bool should_create = false;
+    // If one of the key columns is missing, set has_new_row = false
+    // meaning that after the update there will be no view row.
+    // If one of the key columns is missing in the existing value,
+    // set has_old_row = false meaning we don't have an old row to
+    // delete.
+    bool has_old_row = true;
+    bool has_new_row = true;
+    bool same_row = true;
     for (auto col_id : col_ids) {
         auto* after = update.cells().find_cell(col_id);
         // Note: multi-cell columns can't be part of the primary key.
@@ -705,27 +710,31 @@ void view_updates::generate_update(
             if (before && before->as_atomic_cell(cdef).is_live()) {
                 if (after && after->as_atomic_cell(cdef).is_live()) {
                     auto cmp = compare_atomic_cell_for_merge(before->as_atomic_cell(cdef), after->as_atomic_cell(cdef));
-                    if (cmp == 0) {
-                        should_update = true;
-                    } else {
-                        should_replace = true;
+                    if (cmp != 0) {
+                        same_row = false;
                     }
-                } else {
-                    delete_old_entry(base_key, *existing, update, now);
-                    return;
                 }
+            } else {
+                has_old_row = false;
             }
+        } else {
+            has_old_row = false;
         }
-        if (after && after->as_atomic_cell(cdef).is_live()) {
-            should_create = true;
+        if (!after || !after->as_atomic_cell(cdef).is_live()) {
+            has_new_row = false;
         }
     }
-
-    if (should_replace) {
-        replace_entry(base_key, update, *existing, now);
-    } else if (should_update) {
-        update_entry(base_key, update, *existing, now);
-    } else if (should_create) {
+    if (has_old_row) {
+        if (has_new_row) {
+            if (same_row) {
+                update_entry(base_key, update, *existing, now);
+            } else {
+                replace_entry(base_key, update, *existing, now);
+            }
+        } else {
+            delete_old_entry(base_key, *existing, update, now);
+        }
+    } else if (has_new_row) {
         create_entry(base_key, update, now);
     }
 }
@@ -1064,12 +1073,13 @@ future<> mutate_MV(
         db::view::stats& stats,
         cf_stats& cf_stats,
         db::timeout_semaphore_units pending_view_updates,
-        service::allow_hints allow_hints)
+        service::allow_hints allow_hints,
+        wait_for_all_updates wait_for_all)
 {
     auto fs = std::make_unique<std::vector<future<>>>();
     fs->reserve(view_updates.size());
     for (frozen_mutation_and_schema& mut : view_updates) {
-        auto view_token = dht::get_token(*mut.s, mut.fm.key(*mut.s));
+        auto view_token = dht::get_token(*mut.s, mut.fm.key());
         auto& keyspace_name = mut.s->ks_name();
         auto paired_endpoint = get_view_natural_endpoint(keyspace_name, base_token, view_token);
         auto pending_endpoints = service::get_local_storage_service().get_token_metadata().pending_endpoints_for(view_token, keyspace_name);
@@ -1113,13 +1123,14 @@ future<> mutate_MV(
                 // writes but mutate_locally() doesn't, so we need to do that here.
                 ++stats.writes;
                 auto mut_ptr = std::make_unique<frozen_mutation>(std::move(mut.fm));
-                fs->push_back(service::get_local_storage_proxy().mutate_locally(mut.s, *mut_ptr, db::commitlog::force_sync::no).then_wrapped(
+                future<> local_view_update = service::get_local_storage_proxy().mutate_locally(mut.s, *mut_ptr, db::commitlog::force_sync::no).then_wrapped(
                         [&stats,
                          maybe_account_failure = std::move(maybe_account_failure),
                          mut_ptr = std::move(mut_ptr)] (future<>&& f) {
                     --stats.writes;
                     return maybe_account_failure(std::move(f), utils::fb_utilities::get_broadcast_address(), true, 0);
-                }));
+                });
+                fs->push_back(std::move(local_view_update));
             } else {
                 vlogger.debug("Sending view update to endpoint {}, with pending endpoints = {}", *paired_endpoint, pending_endpoints);
                 // Note we don't wait for the asynchronous operation to complete
@@ -1129,7 +1140,7 @@ future<> mutate_MV(
                 // to send the update there. Currently, we do this from *each* of
                 // the base replicas, but this is probably excessive - see
                 // See https://issues.apache.org/jira/browse/CASSANDRA-14262/
-                fs->push_back(service::get_local_storage_proxy().send_to_endpoint(
+                future<> view_update = service::get_local_storage_proxy().send_to_endpoint(
                         std::move(mut),
                         *paired_endpoint,
                         std::move(pending_endpoints),
@@ -1141,7 +1152,14 @@ future<> mutate_MV(
                                  updates_pushed_remote,
                                  maybe_account_failure = std::move(maybe_account_failure)] (future<>&& f) mutable {
                     return maybe_account_failure(std::move(f), std::move(*paired_endpoint), is_endpoint_local, updates_pushed_remote);
-                }));
+                });
+                if (wait_for_all) {
+                    fs->push_back(std::move(view_update));
+                } else {
+                    // The update is sent to background in order to preserve availability,
+                    // its parallelism is limited by view_update_concurrency_semaphore
+                    (void)view_update;
+                }
             }
         } else if (!pending_endpoints.empty()) {
             // If there is no paired endpoint, it means there's a range movement going on (decommission or move),
@@ -1158,7 +1176,7 @@ future<> mutate_MV(
             cf_stats.total_view_updates_pushed_remote += updates_pushed_remote;
             auto target = pending_endpoints.back();
             pending_endpoints.pop_back();
-            fs->push_back(service::get_local_storage_proxy().send_to_endpoint(
+            future<> view_update = service::get_local_storage_proxy().send_to_endpoint(
                     std::move(mut),
                     target,
                     std::move(pending_endpoints),
@@ -1168,7 +1186,14 @@ future<> mutate_MV(
                              updates_pushed_remote,
                              maybe_account_failure = std::move(maybe_account_failure)] (future<>&& f) {
                 return maybe_account_failure(std::move(f), std::move(target), false, updates_pushed_remote);
-            }));
+            });
+            if (wait_for_all) {
+                fs->push_back(std::move(view_update));
+            } else {
+                // The update is sent to background in order to preserve availability,
+                // its parallelism is limited by view_update_concurrency_semaphore
+                (void)view_update;
+            }
         }
     }
     auto f = seastar::when_all_succeed(fs->begin(), fs->end());
@@ -1183,6 +1208,10 @@ view_builder::view_builder(database& db, db::system_distributed_keyspace& sys_di
 
 future<> view_builder::start(service::migration_manager& mm) {
     _started = seastar::async([this, &mm] {
+        // Guard the whole startup routine with a semaphore,
+        // so that it's not intercepted by `on_drop_view`, `on_create_view`
+        // or `on_update_view` events.
+        auto units = get_units(_sem, 1).get0();
         // Wait for schema agreement even if we're a seed node.
         while (!mm.have_schema_agreement()) {
             if (_as.abort_requested()) {
@@ -1343,7 +1372,7 @@ future<> view_builder::calculate_shard_build_step(
     // Shard 0 makes cleanup changes to the system tables, but none that could conflict
     // with the other shards; everyone is thus able to proceed independently.
     auto bookkeeping_ops = std::make_unique<std::vector<future<>>>();
-    auto base_table_exists = [&, this] (const view_ptr& view) {
+    auto base_table_exists = [this] (const view_ptr& view) {
         // This is a safety check in case this node missed a create MV statement
         // but got a drop table for the base, and another node didn't get the
         // drop notification and sent us the view schema.
@@ -1368,7 +1397,7 @@ future<> view_builder::calculate_shard_build_step(
         } catch (const no_such_column_family&) {
             // Fall-through
         }
-        if (engine().cpu_id() == 0) {
+        if (this_shard_id() == 0) {
             bookkeeping_ops->push_back(_sys_dist_ks.remove_view(name.first, name.second));
             bookkeeping_ops->push_back(system_keyspace::remove_built_view(name.first, name.second));
             bookkeeping_ops->push_back(
@@ -1388,10 +1417,9 @@ future<> view_builder::calculate_shard_build_step(
     for (auto& [view_name, first_token, next_token_opt, cpu_id] : in_progress) {
         if (auto view = maybe_fetch_view(view_name)) {
             if (built_views.find(view->id()) != built_views.end()) {
-                if (engine().cpu_id() == 0) {
+                if (this_shard_id() == 0) {
                     auto f = _sys_dist_ks.finish_view_build(std::move(view_name.first), std::move(view_name.second)).then([view = std::move(view)] {
-                        //FIXME: discarded future.
-                        (void)system_keyspace::remove_view_build_progress_across_all_shards(view->cf_name(), view->ks_name());
+                        return system_keyspace::remove_view_build_progress_across_all_shards(view->cf_name(), view->ks_name());
                     });
                     bookkeeping_ops->push_back(std::move(f));
                 }
@@ -1423,7 +1451,7 @@ future<> view_builder::calculate_shard_build_step(
     if (view_build_status_per_shard.size() != smp::count) {
         reshard(std::move(view_build_status_per_shard), loaded_views);
     } else if (!view_build_status_per_shard.empty()) {
-        for (auto& status : view_build_status_per_shard[engine().cpu_id()]) {
+        for (auto& status : view_build_status_per_shard[this_shard_id()]) {
             load_view_status(std::move(status), loaded_views);
         }
     }
@@ -1460,7 +1488,7 @@ future<> view_builder::calculate_shard_build_step(
 future<> view_builder::add_new_view(view_ptr view, build_step& step) {
     vlogger.info0("Building view {}.{}, starting at token {}", view->ks_name(), view->cf_name(), step.current_token());
     step.build_status.emplace(step.build_status.begin(), view_build_status{view, step.current_token(), std::nullopt});
-    auto f = engine().cpu_id() == 0 ? _sys_dist_ks.start_view_build(view->ks_name(), view->cf_name()) : make_ready_future<>();
+    auto f = this_shard_id() == 0 ? _sys_dist_ks.start_view_build(view->ks_name(), view->cf_name()) : make_ready_future<>();
     return when_all_succeed(
             std::move(f),
             system_keyspace::register_view_for_building(view->ks_name(), view->cf_name(), step.current_token()));
@@ -1539,7 +1567,7 @@ void view_builder::on_drop_view(const sstring& ks_name, const sstring& view_name
                 }
             }
         })();
-        if (engine().cpu_id() != 0) {
+        if (this_shard_id() != 0) {
             // Shard 0 can't remove the entry in the build progress system table on behalf of the
             // current shard, since shard 0 may have already processed the notification, and this
             // shard may since have updated the system table if the drop happened concurrently
@@ -1786,11 +1814,11 @@ future<> view_builder::maybe_mark_view_as_built(view_ptr view, dht::token next_t
             },
             true,
             [] (bool result, bool shard_complete) {
-                return result & shard_complete;
+                return result && shard_complete;
             }).then([this, view, next_token = std::move(next_token)] (bool built) {
         if (built) {
             return container().invoke_on_all([view_id = view->id()] (view_builder& builder) {
-                if (builder._built_views.erase(view_id) == 0 || engine().cpu_id() != 0) {
+                if (builder._built_views.erase(view_id) == 0 || this_shard_id() != 0) {
                     return make_ready_future<>();
                 }
                 auto view = builder._db.find_schema(view_id);

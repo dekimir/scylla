@@ -22,7 +22,7 @@
 #ifndef APPS_SEASTAR_THRIFT_SERVER_HH_
 #define APPS_SEASTAR_THRIFT_SERVER_HH_
 
-#include <seastar/core/reactor.hh>
+#include <seastar/core/seastar.hh>
 #include <seastar/core/distributed.hh>
 #include "cql3/query_processor.hh"
 #include "timeout_config.hh"
@@ -40,12 +40,6 @@ namespace thrift_std = boost;
 #else
 namespace thrift_std = std;
 #endif
-
-namespace cql3 {
-
-class cql_config;
-
-}
 
 namespace cassandra {
 
@@ -123,7 +117,7 @@ private:
     boost::intrusive::list<connection> _connections_list;
     seastar::gate _stop_gate;
 public:
-    thrift_server(distributed<database>& db, distributed<cql3::query_processor>& qp, auth::service&, const cql3::cql_config& cql_config, thrift_server_config config);
+    thrift_server(distributed<database>& db, distributed<cql3::query_processor>& qp, auth::service&, thrift_server_config config);
     ~thrift_server();
     future<> listen(socket_address addr, bool keepalive);
     future<> stop();

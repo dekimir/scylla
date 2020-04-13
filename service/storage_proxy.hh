@@ -66,6 +66,7 @@
 #include "service/paxos/proposal.hh"
 #include "service/client_state.hh"
 #include "service/paxos/prepare_summary.hh"
+#include "cdc/stats.hh"
 
 
 namespace seastar::rpc {
@@ -191,6 +192,7 @@ public:
     using write_stats = storage_proxy_stats::write_stats;
     using stats = storage_proxy_stats::stats;
     using global_stats = storage_proxy_stats::global_stats;
+    using cdc_stats = cdc::stats;
 
     class coordinator_query_options {
         clock_type::time_point _timeout;
@@ -240,6 +242,7 @@ public:
         std::vector<gms::inet_address> endpoints;
         // How many participants are required for a quorum (i.e. is it SERIAL or LOCAL_SERIAL).
         size_t required_participants;
+        bool has_dead_endpoints;
     };
 
     const gms::feature_service& features() const { return _features; }
@@ -283,7 +286,8 @@ private:
             clock_type::time_point,
             tracing::trace_state_ptr,
             service_permit,
-            bool> _mutate_stage;
+            bool,
+            lw_shared_ptr<cdc::operation_result_tracker>> _mutate_stage;
     db::view::node_update_backlog& _max_view_update_backlog;
     std::unordered_map<gms::inet_address, view_update_backlog_timestamped> _view_update_backlogs;
 
@@ -292,6 +296,7 @@ private:
     std::unique_ptr<view_update_handlers_list> _view_update_handlers_list;
 
     cdc::cdc_service* _cdc = nullptr;
+    cdc_stats _cdc_stats;
 private:
     future<> uninit_messaging_service();
     future<coordinator_query_result> query_singular(lw_shared_ptr<query::read_command> cmd,
@@ -313,10 +318,11 @@ private:
     response_id_type create_write_response_handler(const mutation&, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit);
     response_id_type create_write_response_handler(const hint_wrapper&, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit);
     response_id_type create_write_response_handler(const std::unordered_map<gms::inet_address, std::optional<mutation>>&, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit);
-    response_id_type create_write_response_handler(const std::tuple<paxos::proposal, schema_ptr, dht::token>& proposal,
+    response_id_type create_write_response_handler(const std::tuple<paxos::proposal, schema_ptr, shared_ptr<paxos_response_handler>, dht::token>& proposal,
             db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit);
     response_id_type create_write_response_handler(const std::tuple<paxos::proposal, schema_ptr, dht::token, std::unordered_set<gms::inet_address>>& meta,
             db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit);
+    void register_cdc_operation_result_tracker(const std::vector<storage_proxy::unique_response_handler>& ids, lw_shared_ptr<cdc::operation_result_tracker> tracker);
     void send_to_live_endpoints(response_id_type response_id, clock_type::time_point timeout);
     template<typename Range>
     size_t hint_to_dead_endpoints(std::unique_ptr<mutation_holder>& mh, const Range& targets, db::write_type type, tracing::trace_state_ptr tr_state) noexcept;
@@ -386,7 +392,7 @@ private:
     void unthrottle();
     void handle_read_error(std::exception_ptr eptr, bool range);
     template<typename Range>
-    future<> mutate_internal(Range mutations, db::consistency_level cl, bool counter_write, tracing::trace_state_ptr tr_state, service_permit permit, std::optional<clock_type::time_point> timeout_opt = { });
+    future<> mutate_internal(Range mutations, db::consistency_level cl, bool counter_write, tracing::trace_state_ptr tr_state, service_permit permit, std::optional<clock_type::time_point> timeout_opt = { }, lw_shared_ptr<cdc::operation_result_tracker> cdc_tracker = { });
     future<rpc::tuple<foreign_ptr<lw_shared_ptr<reconcilable_result>>, cache_temperature>> query_nonsingular_mutations_locally(
             schema_ptr s, lw_shared_ptr<query::read_command> cmd, const dht::partition_range_vector&& pr, tracing::trace_state_ptr trace_state,
             uint64_t max_size, clock_type::time_point timeout);
@@ -398,7 +404,7 @@ private:
 
     gms::inet_address find_leader_for_counter_update(const mutation& m, db::consistency_level cl);
 
-    future<> do_mutate(std::vector<mutation> mutations, db::consistency_level cl, clock_type::time_point timeout, tracing::trace_state_ptr tr_state, service_permit permit, bool);
+    future<> do_mutate(std::vector<mutation> mutations, db::consistency_level cl, clock_type::time_point timeout, tracing::trace_state_ptr tr_state, service_permit permit, bool, lw_shared_ptr<cdc::operation_result_tracker> cdc_tracker);
 
     future<> send_to_endpoint(
             std::unique_ptr<mutation_holder> m,
@@ -576,6 +582,12 @@ public:
     global_stats& get_global_stats() {
         return _global_stats;
     }
+    const cdc_stats& get_cdc_stats() const {
+        return _cdc_stats;
+    }
+    cdc_stats& get_cdc_stats() {
+        return _cdc_stats;
+    }
 
     scheduling_group_key get_stats_key() const {
         return _stats_key;
@@ -623,6 +635,11 @@ private:
     db::consistency_level _cl_for_learn;
     // Live endpoints, as per get_paxos_participants()
     std::vector<gms::inet_address> _live_endpoints;
+    // True if there are dead endpoints
+    // We don't include endpoints known to be unavailable in pending
+    // endpoints list, but need to be aware of them to avoid pruning
+    // system.paxos data if some endpoint is missing a Paxos write.
+    bool _has_dead_endpoints;
     // How many endpoints need to respond favourably for the protocol to progress to the next step.
     size_t _required_participants;
     // A deadline when the entire CAS operation timeout expires, derived from write_request_timeout_in_ms
@@ -639,6 +656,9 @@ private:
 
     // Unique request id for logging purposes.
     const uint64_t _id = next_id++;
+
+    // max pruning operations to run in parralel
+    static constexpr uint16_t pruning_limit = 1000;
 
 public:
     tracing::trace_state_ptr tr_state;
@@ -663,6 +683,7 @@ public:
         storage_proxy::paxos_participants pp = _proxy->get_paxos_participants(_schema->ks_name(), _key.token(), _cl_for_paxos);
         _live_endpoints = std::move(pp.endpoints);
         _required_participants = pp.required_participants;
+        _has_dead_endpoints = pp.has_dead_endpoints;
         tracing::trace(tr_state, "Create paxos_response_handler for token {} with live: {} and required participants: {}",
                 _key.token(), _live_endpoints, _required_participants);
     }
@@ -680,6 +701,7 @@ public:
     future<paxos::prepare_summary> prepare_ballot(utils::UUID ballot);
     future<bool> accept_proposal(const paxos::proposal& proposal, bool timeout_if_partially_accepted = true);
     future<> learn_decision(paxos::proposal decision, bool allow_hints = false);
+    void prune(utils::UUID ballot);
     uint64_t id() const {
         return _id;
     }

@@ -58,6 +58,11 @@ cql3::statements::list_permissions_statement::list_permissions_statement(
             , _recursive(recursive) {
 }
 
+std::unique_ptr<cql3::statements::prepared_statement> cql3::statements::list_permissions_statement::prepare(
+                database& db, cql_stats& stats) {
+    return std::make_unique<prepared_statement>(::make_shared<list_permissions_statement>(*this));
+}
+
 void cql3::statements::list_permissions_statement::validate(
         service::storage_proxy& proxy,
         const service::client_state& state) const {
@@ -65,7 +70,7 @@ void cql3::statements::list_permissions_statement::validate(
     state.ensure_not_anonymous();
 }
 
-future<> cql3::statements::list_permissions_statement::check_access(const service::client_state& state) const {
+future<> cql3::statements::list_permissions_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const {
     if (_resource) {
         maybe_correct_resource(*_resource, state);
         return state.ensure_exists(*_resource);

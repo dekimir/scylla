@@ -31,6 +31,7 @@
 
 #include <seastar/util/gcc6-concepts.hh>
 #include <seastar/core/thread.hh>
+#include <seastar/core/file.hh>
 #include "db/timeout_clock.hh"
 
 #include <deque>
@@ -712,7 +713,6 @@ template <typename Consumer>
 inline
 future<> consume_partitions(flat_mutation_reader& reader, Consumer consumer, db::timeout_clock::time_point timeout) {
     static_assert(std::is_same<future<stop_iteration>, futurize_t<std::result_of_t<Consumer(mutation&&)>>>::value, "bad Consumer signature");
-    using futurator = futurize<std::result_of_t<Consumer(mutation&&)>>;
 
     return do_with(std::move(consumer), [&reader, timeout] (Consumer& c) -> future<> {
         return repeat([&reader, &c, timeout] () {
@@ -720,7 +720,7 @@ future<> consume_partitions(flat_mutation_reader& reader, Consumer consumer, db:
                 if (!mo) {
                     return make_ready_future<stop_iteration>(stop_iteration::yes);
                 }
-                return futurator::apply(c, std::move(*mo));
+                return futurize_invoke(c, std::move(*mo));
             });
         });
     });

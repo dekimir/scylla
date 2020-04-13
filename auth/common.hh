@@ -27,9 +27,10 @@
 #include <seastar/core/future.hh>
 #include <seastar/core/abort_source.hh>
 #include <seastar/util/noncopyable_function.hh>
-#include <seastar/core/reactor.hh>
+#include <seastar/core/seastar.hh>
 #include <seastar/core/resource.hh>
 #include <seastar/core/sstring.hh>
+#include <seastar/core/smp.hh>
 
 #include "log.hh"
 #include "seastarx.hh"
@@ -61,7 +62,7 @@ extern const sstring AUTH_PACKAGE_NAME;
 
 template <class Task>
 future<> once_among_shards(Task&& f) {
-    if (engine().cpu_id() == 0u) {
+    if (this_shard_id() == 0u) {
         return f();
     }
 
@@ -79,7 +80,7 @@ future<> create_metadata_table_if_missing(
         std::string_view table_name,
         cql3::query_processor&,
         std::string_view cql,
-        ::service::migration_manager&);
+        ::service::migration_manager&) noexcept;
 
 future<> wait_for_schema_agreement(::service::migration_manager&, const database&, seastar::abort_source&);
 

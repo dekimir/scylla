@@ -28,6 +28,8 @@
 
 #include <seastar/testing/test_runner.hh>
 
+#include "bytes.hh"
+
 namespace tests::random {
 
 inline std::default_random_engine& gen() {
@@ -151,7 +153,7 @@ inline bytes get_bytes() {
 
 template <typename RandomEngine>
 inline sstring get_sstring(size_t n, RandomEngine& engine) {
-    sstring str(sstring::initialized_later(), n);
+    sstring str = uninitialized_string(n);
     boost::generate(str, [&engine] { return get_int<sstring::value_type>('a', 'z', engine); });
     return str;
 }

@@ -367,7 +367,7 @@ static std::vector<sstables::shared_sstable> sstables_for_shard(const std::vecto
 }
 
 void distributed_loader::reshard(distributed<database>& db, sstring ks_name, sstring cf_name) {
-    assert(engine().cpu_id() == 0); // NOTE: should always run on shard 0!
+    assert(this_shard_id() == 0); // NOTE: should always run on shard 0!
 
     // ensures that only one column family is resharded at a time (that's okay because
     // actual resharding is parallelized), and that's needed to prevent the same column
@@ -396,7 +396,9 @@ void distributed_loader::reshard(distributed<database>& db, sstring ks_name, sst
                 dblog.debug("{} resharding jobs for {}.{}", jobs.size(), cf->schema()->ks_name(), cf->schema()->cf_name());
 
                 return invoke_all_resharding_jobs(cf, directory, std::move(jobs), [directory, &cf] (auto sstables, auto level, auto max_sstable_bytes) {
-                    auto creator = [&cf, directory] (shard_id shard) mutable {
+                    sstables::compaction_descriptor descriptor(sstables, level, max_sstable_bytes);
+                    descriptor.options = sstables::compaction_options::make_reshard();
+                    descriptor.creator = [&cf, directory] (shard_id shard) mutable {
                         // we need generation calculated by instance of cf at requested shard,
                         // or resource usage wouldn't be fairly distributed among shards.
                         auto gen = smp::submit_to(shard, [&cf] () {
@@ -407,9 +409,10 @@ void distributed_loader::reshard(distributed<database>& db, sstring ks_name, sst
                             cf->get_sstables_manager().get_highest_supported_format(),
                             sstables::sstable::format_types::big);
                     };
-                    auto f = sstables::reshard_sstables(sstables, *cf, creator, max_sstable_bytes, level);
+                    auto f = sstables::compact_sstables(std::move(descriptor), *cf);
 
-                    return f.then([&cf, sstables = std::move(sstables), directory] (std::vector<sstables::shared_sstable> new_sstables) mutable {
+                    return f.then([&cf, sstables = std::move(sstables), directory] (sstables::compaction_info info) mutable {
+                        auto new_sstables = std::move(info.new_sstables);
                         // an input sstable may belong to shard 1 and 2 and only have data which
                         // token belongs to shard 1. That means resharding will only create a
                         // sstable for shard 1, but both shards opened the sstable. So our code
@@ -728,7 +731,7 @@ future<> distributed_loader::do_populate_column_family(distributed<database>& db
                     sstables::sstable::version_types version = v.second.version;
                     sstables::sstable::format_types format = v.second.format;
 
-                    if (engine().cpu_id() != 0) {
+                    if (this_shard_id() != 0) {
                         dblog.debug("At directory: {}, partial SSTable with generation {} not relevant for this shard, ignoring", sstdir, v.first);
                         return make_ready_future<>();
                     }
@@ -747,7 +750,7 @@ future<> distributed_loader::do_populate_column_family(distributed<database>& db
 future<> distributed_loader::populate_column_family(distributed<database>& db, sstring sstdir, sstring ks, sstring cf) {
     return async([&db, sstdir = std::move(sstdir), ks = std::move(ks), cf = std::move(cf)] {
         // First pass, cleanup temporary sstable directories and sstables pending delete.
-        if (engine().cpu_id() == 0) {
+        if (this_shard_id() == 0) {
             cleanup_column_family_temp_sst_dirs(sstdir).get();
             auto pending_delete_dir = sstdir + "/" + sstables::sstable::pending_delete_dir_basename();
             auto exists = file_exists(pending_delete_dir).get0();
@@ -804,7 +807,7 @@ future<> distributed_loader::init_system_keyspace(distributed<database>& db) {
             return db.init_commitlog();
         }).get();
         db.invoke_on_all([] (database& db) {
-            if (engine().cpu_id() == 0) {
+            if (this_shard_id() == 0) {
                 return make_ready_future<>();
             }
             return db.init_commitlog();

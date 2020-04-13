@@ -65,10 +65,9 @@ public:
 thrift_server::thrift_server(distributed<database>& db,
                              distributed<cql3::query_processor>& qp,
                              auth::service& auth_service,
-                             const cql3::cql_config& cql_config,
                              thrift_server_config config)
         : _stats(new thrift_stats(*this))
-        , _handler_factory(create_handler_factory(db, qp, auth_service, cql_config, config.timeout_config).release())
+        , _handler_factory(create_handler_factory(db, qp, auth_service, config.timeout_config).release())
         , _protocol_factory(new TBinaryProtocolFactoryT<TMemoryBuffer>())
         , _processor_factory(new CassandraAsyncProcessorFactory(_handler_factory))
         , _config(config) {
@@ -220,7 +219,7 @@ future<>
 thrift_server::listen(socket_address addr, bool keepalive) {
     listen_options lo;
     lo.reuse_address = true;
-    _listeners.push_back(engine().listen(addr, lo));
+    _listeners.push_back(seastar::listen(addr, lo));
     do_accepts(_listeners.size() - 1, keepalive);
     return make_ready_future<>();
 }

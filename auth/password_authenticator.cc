@@ -48,7 +48,7 @@
 #include <optional>
 
 #include <boost/algorithm/cxx11/all_of.hpp>
-#include <seastar/core/reactor.hh>
+#include <seastar/core/seastar.hh>
 
 #include "auth/authenticated_user.hh"
 #include "auth/common.hh"
@@ -230,7 +230,7 @@ future<authenticated_user> password_authenticator::authenticate(
     // obsolete prepared statements pretty quickly.
     // Rely on query processing caching statements instead, and lets assume
     // that a map lookup string->statement is not gonna kill us much.
-    return futurize_apply([this, username, password] {
+    return futurize_invoke([this, username, password] {
         static const sstring query = format("SELECT {} FROM {} WHERE {} = ?",
                 SALTED_HASH,
                 meta::roles_table::qualified_name(),

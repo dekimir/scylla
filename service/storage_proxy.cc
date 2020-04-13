@@ -88,6 +88,7 @@
 #include "database.hh"
 #include "db/consistency_level_validations.hh"
 #include "cdc/log.hh"
+#include "cdc/stats.hh"
 
 namespace bi = boost::intrusive;
 
@@ -170,6 +171,7 @@ public:
     const schema_ptr& schema() {
         return _schema;
     }
+    // called only when all replicas replied
     virtual void release_mutation() = 0;
 };
 
@@ -215,7 +217,7 @@ public:
         if (m) {
             tracing::trace(tr_state, "Sending a mutation to /{}", ep);
             return ms.send_mutation(netw::messaging_service::msg_addr{ep, 0}, timeout, *m,
-                                    std::move(forward), utils::fb_utilities::get_broadcast_address(), engine().cpu_id(),
+                                    std::move(forward), utils::fb_utilities::get_broadcast_address(), this_shard_id(),
                                     response_id, tracing::make_trace_info(tr_state));
         }
         sp.got_response(response_id, ep, std::nullopt);
@@ -262,7 +264,7 @@ public:
         tracing::trace(tr_state, "Sending a mutation to /{}", ep);
         auto& ms = netw::get_local_messaging_service();
         return ms.send_mutation(netw::messaging_service::msg_addr{ep, 0}, timeout, *_mutation,
-                std::move(forward), utils::fb_utilities::get_broadcast_address(), engine().cpu_id(),
+                std::move(forward), utils::fb_utilities::get_broadcast_address(), this_shard_id(),
                 response_id, tracing::make_trace_info(tr_state));
     }
     virtual bool is_shared() override {
@@ -292,16 +294,17 @@ public:
         tracing::trace(tr_state, "Sending a hint to /{}", ep);
         auto& ms = netw::get_local_messaging_service();
         return ms.send_hint_mutation(netw::messaging_service::msg_addr{ep, 0}, timeout, *_mutation,
-                std::move(forward), utils::fb_utilities::get_broadcast_address(), engine().cpu_id(),
+                std::move(forward), utils::fb_utilities::get_broadcast_address(), this_shard_id(),
                 response_id, tracing::make_trace_info(tr_state));
     }
 };
 
 class cas_mutation : public mutation_holder {
     lw_shared_ptr<paxos::proposal> _proposal;
+    shared_ptr<paxos_response_handler> _handler;
 public:
-    explicit cas_mutation(paxos::proposal proposal , schema_ptr s)
-            : _proposal(make_lw_shared<paxos::proposal>(std::move(proposal))) {
+    explicit cas_mutation(paxos::proposal proposal, schema_ptr s, shared_ptr<paxos_response_handler> handler)
+            : _proposal(make_lw_shared<paxos::proposal>(std::move(proposal))), _handler(std::move(handler)) {
         _size = _proposal->update.representation().size();
         _schema = std::move(s);
     }
@@ -320,12 +323,17 @@ public:
         auto& ms = netw::get_local_messaging_service();
         return ms.send_paxos_learn(netw::messaging_service::msg_addr{ep, 0}, timeout,
                                 *_proposal, std::move(forward), utils::fb_utilities::get_broadcast_address(),
-                                engine().cpu_id(), response_id, tracing::make_trace_info(tr_state));
+                                this_shard_id(), response_id, tracing::make_trace_info(tr_state));
     }
     virtual bool is_shared() override {
         return true;
     }
     virtual void release_mutation() override {
+        // The handler will be set for "learn", but not for PAXOS repair
+        // since repair may not include all replicas
+        if (_handler) {
+            _handler->prune(_proposal->ballot);
+        }
         _proposal.release();
     }
 };
@@ -358,6 +366,7 @@ protected:
     size_t _all_failures = 0; // total amount of failures
     size_t _total_endpoints = 0;
     storage_proxy::write_stats& _stats;
+    lw_shared_ptr<cdc::operation_result_tracker> _cdc_operation_result_tracker;
     timer<storage_proxy::clock_type> _expire_timer;
     service_permit _permit; // holds admission permit until operation completes
 
@@ -391,14 +400,23 @@ public:
                 _proxy->_global_stats.background_write_bytes -= _mutation_holder->size();
                 _proxy->unthrottle();
             }
-        } else if (_error == error::TIMEOUT) {
-            _ready.set_exception(mutation_write_timeout_exception(get_schema()->ks_name(), get_schema()->cf_name(), _cl, _cl_acks, _total_block_for, _type));
-        } else if (_error == error::FAILURE) {
-            _ready.set_exception(mutation_write_failure_exception(get_schema()->ks_name(), get_schema()->cf_name(), _cl, _cl_acks, _failed, _total_block_for, _type));
+        } else {
+            if (_error == error::TIMEOUT) {
+                _ready.set_exception(mutation_write_timeout_exception(get_schema()->ks_name(), get_schema()->cf_name(), _cl, _cl_acks, _total_block_for, _type));
+            } else if (_error == error::FAILURE) {
+                _ready.set_exception(mutation_write_failure_exception(get_schema()->ks_name(), get_schema()->cf_name(), _cl, _cl_acks, _failed, _total_block_for, _type));
+            }
+            if (_cdc_operation_result_tracker) {
+                _cdc_operation_result_tracker->on_mutation_failed();
+            }
         }
     }
     bool is_counter() const {
         return _type == db::write_type::COUNTER;
+    }
+
+    void set_cdc_operation_result_tracker(lw_shared_ptr<cdc::operation_result_tracker> tracker) {
+        _cdc_operation_result_tracker = std::move(tracker);
     }
 
     // While delayed, a request is not throttled.
@@ -908,7 +926,7 @@ future<paxos::prepare_summary> paxos_response_handler::prepare_ballot(utils::UUI
             [this, ballot] (paxos::prepare_summary& summary, auto& request_tracker, shared_ptr<paxos_response_handler>& prh) mutable {
         paxos::paxos_state::logger.trace("CAS[{}] prepare_ballot: sending ballot {} to {}", _id, ballot, _live_endpoints);
         return parallel_for_each(_live_endpoints, [this, &summary, ballot, &request_tracker] (gms::inet_address peer) mutable {
-            return futurize_apply([&] {
+            return futurize_invoke([&] {
                 // To generate less network traffic, only the closest replica (first one in the list of participants)
                 // sends query result content while other replicas send digests needed to check consistency.
                 bool only_digest = peer != _live_endpoints[0];
@@ -1072,7 +1090,7 @@ future<bool> paxos_response_handler::accept_proposal(const paxos::proposal& prop
                            (auto& request_tracker, shared_ptr<paxos_response_handler>& prh) {
         paxos::paxos_state::logger.trace("CAS[{}] accept_proposal: sending commit {} to {}", _id, proposal, _live_endpoints);
         return parallel_for_each(_live_endpoints, [this, &request_tracker, timeout_if_partially_accepted, &proposal] (gms::inet_address peer) mutable {
-            return futurize_apply([&] {
+            return futurize_invoke([&] {
                 if (fbu::is_me(peer)) {
                     tracing::trace(tr_state, "accept_proposal: accept {} locally", proposal);
                     return paxos::paxos_state::accept(tr_state, _schema, proposal.update.decorated_key(*_schema).token(), proposal, _timeout);
@@ -1173,14 +1191,78 @@ future<bool> paxos_response_handler::accept_proposal(const paxos::proposal& prop
     return f;
 }
 
+// debug output in mutate_internal needs this
+std::ostream& operator<<(std::ostream& os, const paxos_response_handler& h) {
+    os << "paxos_response_handler{" << h.id() << "}";
+    return os;
+}
+
 // This function implements learning stage of Paxos protocol
 future<> paxos_response_handler::learn_decision(paxos::proposal decision, bool allow_hints) {
     tracing::trace(tr_state, "learn_decision: committing {} with cl={}", decision, _cl_for_learn);
     paxos::paxos_state::logger.trace("CAS[{}] learn_decision: committing {} with cl={}", _id, decision, _cl_for_learn);
-    std::array<std::tuple<paxos::proposal, schema_ptr, dht::token>, 1> m{std::make_tuple(std::move(decision), _schema, _key.token())};
     // FIXME: allow_hints is ignored. Consider if we should follow it and remove if not.
     // Right now we do not store hints for when committing decisions.
-    return _proxy->mutate_internal(std::move(m), _cl_for_learn, false, tr_state, _permit, _timeout);
+
+    // `mutate_internal` behaves differently when its template parameter is a range of mutations and when it's
+    // a range of (decision, schema, token)-tuples. Both code paths diverge on `create_write_response_handler`.
+    // We use the first path for CDC mutations (if present) and the latter for "paxos mutations".
+    // Attempts to send both kinds of mutations in one shot caused an infinite loop.
+    future<> f_cdc = make_ready_future<>();
+    if (_schema->cdc_options().enabled()) {
+        auto update_mut = decision.update.unfreeze(_schema);
+        const auto base_tbl_id = update_mut.column_family_id();
+        std::vector<mutation> update_mut_vec{std::move(update_mut)};
+
+        if (_proxy->get_cdc_service()->needs_cdc_augmentation(update_mut_vec)) {
+            f_cdc = _proxy->get_cdc_service()->augment_mutation_call(_timeout, std::move(update_mut_vec), tr_state)
+                    .then([this, base_tbl_id] (std::tuple<std::vector<mutation>, lw_shared_ptr<cdc::operation_result_tracker>>&& t) {
+                auto mutations = std::move(std::get<0>(t));
+                auto tracker = std::move(std::get<1>(t));
+                // Pick only the CDC ("augmenting") mutations
+                mutations.erase(std::remove_if(mutations.begin(), mutations.end(), [base_tbl_id = std::move(base_tbl_id)] (const mutation& v) {
+                    return v.schema()->id() == base_tbl_id;
+                }), mutations.end());
+                if (mutations.empty()) {
+                    return make_ready_future<>();
+                }
+                return _proxy->mutate_internal(std::move(mutations), _cl_for_learn, false, tr_state, _permit, _timeout, std::move(tracker));
+            });
+        }
+    }
+
+    // Path for the "base" mutations
+    std::array<std::tuple<paxos::proposal, schema_ptr, shared_ptr<paxos_response_handler>, dht::token>, 1> m{std::make_tuple(std::move(decision), _schema, shared_from_this(), _key.token())};
+    future<> f_lwt = _proxy->mutate_internal(std::move(m), _cl_for_learn, false, tr_state, _permit, _timeout);
+
+    return when_all_succeed(std::move(f_cdc), std::move(f_lwt));
+}
+
+void paxos_response_handler::prune(utils::UUID ballot) {
+    if (_has_dead_endpoints) {
+        return;
+    }
+    if ( _proxy->get_stats().cas_now_pruning >= pruning_limit) {
+        _proxy->get_stats().cas_coordinator_dropped_prune++;
+        return;
+    }
+     _proxy->get_stats().cas_now_pruning++;
+    _proxy->get_stats().cas_prune++;
+    // running in the background, but the amount of the bg job is limited by pruning_limit
+    // it is waited by holding shared pointer to storage_proxy which guaranties
+    // that storage_proxy::stop() will wait for this to complete
+    (void)parallel_for_each(_live_endpoints, [this, ballot] (gms::inet_address peer) mutable {
+        if (fbu::is_me(peer)) {
+            tracing::trace(tr_state, "prune: prune {} locally", ballot);
+            return paxos::paxos_state::prune(_schema, _key.key(), ballot, _timeout, tr_state);
+        } else {
+            tracing::trace(tr_state, "prune: send prune of {} to {}", ballot, peer);
+            netw::messaging_service& ms = netw::get_local_messaging_service();
+            return ms.send_paxos_prune(peer, _timeout, _schema->version(), _key.key(), ballot, tracing::make_trace_info(tr_state));
+        }
+    }).finally([h = shared_from_this()] {
+        h->_proxy->get_stats().cas_now_pruning--;
+    });
 }
 
 static std::vector<gms::inet_address>
@@ -1278,7 +1360,7 @@ void storage_proxy::maybe_update_view_backlog_of(gms::inet_address replica, std:
 }
 
 db::view::update_backlog storage_proxy::get_view_update_backlog() const {
-    return _max_view_update_backlog.add_fetch(engine().cpu_id(), get_db().local().get_view_update_backlog());
+    return _max_view_update_backlog.add_fetch(this_shard_id(), get_db().local().get_view_update_backlog());
 }
 
 db::view::update_backlog storage_proxy::get_backlog_of(gms::inet_address ep) const {
@@ -1518,6 +1600,10 @@ void storage_proxy_stats::stats::register_stats() {
                        sm::description("how many times write timeout was reported because of uncertainty in the result"),
                        {storage_proxy_stats::current_scheduling_group_label()}),
 
+        sm::make_total_operations("cas_failed_read_round_optimization", cas_failed_read_round_optimization,
+                       sm::description("CAS read rounds issued only if previous value is missing on some replica"),
+                       {storage_proxy_stats::current_scheduling_group_label()}),
+
         sm::make_histogram("cas_read_contention", sm::description("how many contended reads were encountered"),
                        {storage_proxy_stats::current_scheduling_group_label()},
                        [this]{ return cas_read_contention.get_histogram(1, 8);}),
@@ -1525,6 +1611,14 @@ void storage_proxy_stats::stats::register_stats() {
         sm::make_histogram("cas_write_contention", sm::description("how many contended writes were encountered"),
                        {storage_proxy_stats::current_scheduling_group_label()},
                        [this]{ return cas_write_contention.get_histogram(1, 8);}),
+
+        sm::make_total_operations("cas_prune", cas_prune,
+                       sm::description("how many times paxos prune was done after successful cas operation"),
+                       {storage_proxy_stats::current_scheduling_group_label()}),
+
+        sm::make_total_operations("cas_dropped_prune", cas_coordinator_dropped_prune,
+                       sm::description("how many times a coordinator did not perfom prune after cas"),
+                       {storage_proxy_stats::current_scheduling_group_label()}),
     });
 
     _metrics.add_group(REPLICA_STATS_CATEGORY, {
@@ -1560,6 +1654,9 @@ void storage_proxy_stats::stats::register_stats() {
                        sm::description("number of operations that crossed a shard boundary"),
                        {storage_proxy_stats::current_scheduling_group_label()}),
 
+        sm::make_total_operations("cas_dropped_prune", cas_replica_dropped_prune,
+                       sm::description("how many times a coordinator did not perfom prune after cas"),
+                       {storage_proxy_stats::current_scheduling_group_label()}),
     });
 }
 
@@ -1670,7 +1767,7 @@ storage_proxy::response_id_type storage_proxy::unique_response_handler::release(
 future<>
 storage_proxy::mutate_locally(const mutation& m, clock_type::time_point timeout) {
     auto shard = _db.local().shard_of(m);
-    get_stats().replica_cross_shard_ops += shard != engine().cpu_id();
+    get_stats().replica_cross_shard_ops += shard != this_shard_id();
     return _db.invoke_on(shard, {_write_smp_service_group, timeout}, [s = global_schema_ptr(m.schema()), m = freeze(m), timeout] (database& db) -> future<> {
         return db.apply(s, m, db::commitlog::force_sync::no, timeout);
     });
@@ -1679,7 +1776,7 @@ storage_proxy::mutate_locally(const mutation& m, clock_type::time_point timeout)
 future<>
 storage_proxy::mutate_locally(const schema_ptr& s, const frozen_mutation& m, db::commitlog::force_sync sync, clock_type::time_point timeout) {
     auto shard = _db.local().shard_of(m);
-    get_stats().replica_cross_shard_ops += shard != engine().cpu_id();
+    get_stats().replica_cross_shard_ops += shard != this_shard_id();
     return _db.invoke_on(shard, {_write_smp_service_group, timeout}, [&m, gs = global_schema_ptr(s), timeout, sync] (database& db) -> future<> {
         return db.apply(gs, m, sync, timeout);
     });
@@ -1697,7 +1794,7 @@ storage_proxy::mutate_locally(std::vector<mutation> mutations, clock_type::time_
 future<>
 storage_proxy::mutate_hint(const schema_ptr& s, const frozen_mutation& m, clock_type::time_point timeout) {
     auto shard = _db.local().shard_of(m);
-    get_stats().replica_cross_shard_ops += shard != engine().cpu_id();
+    get_stats().replica_cross_shard_ops += shard != this_shard_id();
     return _db.invoke_on(shard, {_write_smp_service_group, timeout}, [&m, gs = global_schema_ptr(s), timeout] (database& db) -> future<> {
         return db.apply_hint(gs, m, timeout);
     });
@@ -1718,7 +1815,7 @@ future<>
 storage_proxy::mutate_counter_on_leader_and_replicate(const schema_ptr& s, frozen_mutation fm, db::consistency_level cl, clock_type::time_point timeout,
                                                       tracing::trace_state_ptr trace_state, service_permit permit) {
     auto shard = _db.local().shard_of(fm);
-    bool local = shard == engine().cpu_id();
+    bool local = shard == this_shard_id();
     get_stats().replica_cross_shard_ops += !local;
     return _db.invoke_on(shard, {_write_smp_service_group, timeout}, [gs = global_schema_ptr(s), fm = std::move(fm), cl, timeout, gt = tracing::global_trace_state_ptr(std::move(trace_state)), permit = std::move(permit), local] (database& db) {
         auto trace_state = gt.get();
@@ -1732,7 +1829,7 @@ storage_proxy::mutate_counter_on_leader_and_replicate(const schema_ptr& s, froze
 future<>
 storage_proxy::mutate_streaming_mutation(const schema_ptr& s, utils::UUID plan_id, const frozen_mutation& m, bool fragmented) {
     auto shard = _db.local().shard_of(m);
-    get_stats().replica_cross_shard_ops += shard != engine().cpu_id();
+    get_stats().replica_cross_shard_ops += shard != this_shard_id();
     // In theory streaming writes should have their own smp_service_group, but this is only used during upgrades from old versions; new
     // versions use rpc streaming.
     return _db.invoke_on(shard, _write_smp_service_group, [&m, plan_id, fragmented, gs = global_schema_ptr(s)] (database& db) mutable -> future<> {
@@ -1833,11 +1930,11 @@ storage_proxy::create_write_response_handler(const std::unordered_map<gms::inet_
 }
 
 storage_proxy::response_id_type
-storage_proxy::create_write_response_handler(const std::tuple<paxos::proposal, schema_ptr, dht::token>& meta,
+storage_proxy::create_write_response_handler(const std::tuple<paxos::proposal, schema_ptr, shared_ptr<paxos_response_handler>, dht::token>& meta,
         db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit) {
-    auto& [commit, s, t] = meta;
+    auto& [commit, s, h, t] = meta;
 
-    return create_write_response_handler_helper(s, t, std::make_unique<cas_mutation>(std::move(commit), s), cl,
+    return create_write_response_handler_helper(s, t, std::make_unique<cas_mutation>(std::move(commit), s, std::move(h)), cl,
             db::write_type::CAS, tr_state, std::move(permit));
 }
 
@@ -1852,8 +1949,21 @@ storage_proxy::create_write_response_handler(const std::tuple<paxos::proposal, s
     auto keyspace_name = s->ks_name();
     keyspace& ks = _db.local().find_keyspace(keyspace_name);
 
-    return create_write_response_handler(ks, cl, db::write_type::CAS, std::make_unique<cas_mutation>(std::move(commit), s), std::move(endpoints),
+    return create_write_response_handler(ks, cl, db::write_type::CAS, std::make_unique<cas_mutation>(std::move(commit), s, nullptr), std::move(endpoints),
                     std::vector<gms::inet_address>(), std::vector<gms::inet_address>(), std::move(tr_state), get_stats(), std::move(permit));
+}
+
+void storage_proxy::register_cdc_operation_result_tracker(const std::vector<storage_proxy::unique_response_handler>& ids, lw_shared_ptr<cdc::operation_result_tracker> tracker) {
+    if (!tracker) {
+        return;
+    }
+
+    for (auto& id : ids) {
+        auto& h = get_write_response_handler(id.id);
+        if (h->get_schema()->cdc_options().enabled()) {
+            h->set_cdc_operation_result_tracker(tracker);
+        }
+    }
 }
 
 void
@@ -1871,7 +1981,7 @@ storage_proxy::hint_to_dead_endpoints(response_id_type id, db::consistency_level
 template<typename Range, typename CreateWriteHandler>
 future<std::vector<storage_proxy::unique_response_handler>> storage_proxy::mutate_prepare(Range&& mutations, db::consistency_level cl, db::write_type type, service_permit permit, CreateWriteHandler create_handler) {
     // apply is used to convert exceptions to exceptional future
-    return futurize<std::vector<storage_proxy::unique_response_handler>>::apply([this] (Range&& mutations, db::consistency_level cl, db::write_type type, service_permit permit, CreateWriteHandler create_handler) {
+    return futurize_invoke([this] (Range&& mutations, db::consistency_level cl, db::write_type type, service_permit permit, CreateWriteHandler create_handler) {
         std::vector<unique_response_handler> ids;
         ids.reserve(std::distance(std::begin(mutations), std::end(mutations)));
         for (auto& m : mutations) {
@@ -2087,6 +2197,8 @@ storage_proxy::get_paxos_participants(const sstring& ks_name, const dht::token &
                 cl_for_paxos, participants + 1, live_endpoints.size());
     }
 
+    bool dead = participants != live_endpoints.size();
+
     // Apart from the ballot, paxos_state::prepare() also sends the current value of the requested key.
     // If the values received from different replicas match, we skip a separate query stage thus saving
     // one network round trip. To generate less traffic, only closest replicas send data, others send
@@ -2094,7 +2206,7 @@ storage_proxy::get_paxos_participants(const sstring& ks_name, const dht::token &
     // list of participants by proximity to this instance.
     sort_endpoints_by_proximity(live_endpoints);
 
-    return paxos_participants{std::move(live_endpoints), required_participants};
+    return paxos_participants{std::move(live_endpoints), required_participants, dead};
 }
 
 
@@ -2110,26 +2222,22 @@ storage_proxy::get_paxos_participants(const sstring& ks_name, const dht::token &
  */
 future<> storage_proxy::mutate(std::vector<mutation> mutations, db::consistency_level cl, clock_type::time_point timeout, tracing::trace_state_ptr tr_state, service_permit permit, bool raw_counters) {
     if (_cdc && _cdc->needs_cdc_augmentation(mutations)) {
-        return _cdc->augment_mutation_call(timeout, std::move(mutations)).then([this, cl, timeout, tr_state = std::move(tr_state), permit = std::move(permit), raw_counters](std::tuple<std::vector<mutation>, cdc::result_callback>&& t) mutable {
+        return _cdc->augment_mutation_call(timeout, std::move(mutations), tr_state).then([this, cl, timeout, tr_state, permit = std::move(permit), raw_counters](std::tuple<std::vector<mutation>, lw_shared_ptr<cdc::operation_result_tracker>>&& t) mutable {
             auto mutations = std::move(std::get<0>(t));
-            auto end_func = std::move(std::get<1>(t));
-            auto f = _mutate_stage(this, std::move(mutations), cl, timeout, std::move(tr_state), std::move(permit), raw_counters);
-            if (end_func) {
-                f = f.then(std::move(end_func));
-            }
-            return f;
+            auto tracker = std::move(std::get<1>(t));
+            return _mutate_stage(this, std::move(mutations), cl, timeout, std::move(tr_state), std::move(permit), raw_counters, std::move(tracker));
         });
     }
-    return _mutate_stage(this, std::move(mutations), cl, timeout, std::move(tr_state), std::move(permit), raw_counters);
+    return _mutate_stage(this, std::move(mutations), cl, timeout, std::move(tr_state), std::move(permit), raw_counters, nullptr);
 }
 
-future<> storage_proxy::do_mutate(std::vector<mutation> mutations, db::consistency_level cl, clock_type::time_point timeout, tracing::trace_state_ptr tr_state, service_permit permit, bool raw_counters) {
+future<> storage_proxy::do_mutate(std::vector<mutation> mutations, db::consistency_level cl, clock_type::time_point timeout, tracing::trace_state_ptr tr_state, service_permit permit, bool raw_counters, lw_shared_ptr<cdc::operation_result_tracker> cdc_tracker) {
     auto mid = raw_counters ? mutations.begin() : boost::range::partition(mutations, [] (auto&& m) {
         return m.schema()->is_counter();
     });
     return seastar::when_all_succeed(
         mutate_counters(boost::make_iterator_range(mutations.begin(), mid), cl, tr_state, permit, timeout),
-        mutate_internal(boost::make_iterator_range(mid, mutations.end()), cl, false, tr_state, permit, timeout)
+        mutate_internal(boost::make_iterator_range(mid, mutations.end()), cl, false, tr_state, permit, timeout, std::move(cdc_tracker))
     );
 }
 
@@ -2147,7 +2255,7 @@ future<> storage_proxy::replicate_counter_from_leader(mutation m, db::consistenc
 template<typename Range>
 future<>
 storage_proxy::mutate_internal(Range mutations, db::consistency_level cl, bool counters, tracing::trace_state_ptr tr_state, service_permit permit,
-                               std::optional<clock_type::time_point> timeout_opt) {
+                               std::optional<clock_type::time_point> timeout_opt, lw_shared_ptr<cdc::operation_result_tracker> cdc_tracker) {
     if (boost::empty(mutations)) {
         return make_ready_future<>();
     }
@@ -2164,7 +2272,8 @@ storage_proxy::mutate_internal(Range mutations, db::consistency_level cl, bool c
     utils::latency_counter lc;
     lc.start();
 
-    return mutate_prepare(mutations, cl, type, tr_state, std::move(permit)).then([this, cl, timeout_opt] (std::vector<storage_proxy::unique_response_handler> ids) {
+    return mutate_prepare(mutations, cl, type, tr_state, std::move(permit)).then([this, cl, timeout_opt, tracker = std::move(cdc_tracker)] (std::vector<storage_proxy::unique_response_handler> ids) {
+        register_cdc_operation_result_tracker(ids, tracker);
         return mutate_begin(std::move(ids), cl, timeout_opt);
     }).then_wrapped([this, p = shared_from_this(), lc, tr_state] (future<> f) mutable {
         return p->mutate_end(std::move(f), lc, get_stats(), std::move(tr_state));
@@ -2201,6 +2310,7 @@ storage_proxy::mutate_atomically(std::vector<mutation> mutations, db::consistenc
     class context {
         storage_proxy& _p;
         std::vector<mutation> _mutations;
+        lw_shared_ptr<cdc::operation_result_tracker> _cdc_tracker;
         db::consistency_level _cl;
         clock_type::time_point _timeout;
         tracing::trace_state_ptr _trace_state;
@@ -2211,9 +2321,10 @@ storage_proxy::mutate_atomically(std::vector<mutation> mutations, db::consistenc
         const std::unordered_set<gms::inet_address> _batchlog_endpoints;
 
     public:
-        context(storage_proxy & p, std::vector<mutation>&& mutations, db::consistency_level cl, clock_type::time_point timeout, tracing::trace_state_ptr tr_state, service_permit permit)
+        context(storage_proxy & p, std::vector<mutation>&& mutations, lw_shared_ptr<cdc::operation_result_tracker>&& cdc_tracker, db::consistency_level cl, clock_type::time_point timeout, tracing::trace_state_ptr tr_state, service_permit permit)
                 : _p(p)
                 , _mutations(std::move(mutations))
+                , _cdc_tracker(std::move(cdc_tracker))
                 , _cl(cl)
                 , _timeout(timeout)
                 , _trace_state(std::move(tr_state))
@@ -2245,6 +2356,7 @@ storage_proxy::mutate_atomically(std::vector<mutation> mutations, db::consistenc
                 auto& ks = _p._db.local().find_keyspace(m.schema()->ks_name());
                 return _p.create_write_response_handler(ks, cl, type, std::make_unique<shared_mutation>(m), _batchlog_endpoints, {}, {}, _trace_state, _stats, std::move(permit));
             }).then([this, cl] (std::vector<unique_response_handler> ids) {
+                _p.register_cdc_operation_result_tracker(ids, _cdc_tracker);
                 return _p.mutate_begin(std::move(ids), cl, _timeout);
             });
         }
@@ -2271,39 +2383,35 @@ storage_proxy::mutate_atomically(std::vector<mutation> mutations, db::consistenc
             return _p.mutate_prepare(_mutations, _cl, db::write_type::BATCH, _trace_state, _permit).then([this] (std::vector<unique_response_handler> ids) {
                 return sync_write_to_batchlog().then([this, ids = std::move(ids)] () mutable {
                     tracing::trace(_trace_state, "Sending batch mutations");
+                    _p.register_cdc_operation_result_tracker(ids, _cdc_tracker);
                     return _p.mutate_begin(std::move(ids), _cl, _timeout);
                 }).then(std::bind(&context::async_remove_from_batchlog, this));
             });
         }
     };
 
-    auto mk_ctxt = [this, tr_state, timeout, permit = std::move(permit), cl] (std::vector<mutation> mutations) mutable {
+    auto mk_ctxt = [this, tr_state, timeout, permit = std::move(permit), cl] (std::vector<mutation> mutations, lw_shared_ptr<cdc::operation_result_tracker> tracker) mutable {
       try {
-          return make_ready_future<lw_shared_ptr<context>>(make_lw_shared<context>(*this, std::move(mutations), cl, timeout, std::move(tr_state), std::move(permit)));
+          return make_ready_future<lw_shared_ptr<context>>(make_lw_shared<context>(*this, std::move(mutations), std::move(tracker), cl, timeout, std::move(tr_state), std::move(permit)));
       } catch(...) {
           return make_exception_future<lw_shared_ptr<context>>(std::current_exception());
       }
     };
-    auto cleanup = [p = shared_from_this(), lc, tr_state = std::move(tr_state)] (future<> f) mutable {
+    auto cleanup = [p = shared_from_this(), lc, tr_state] (future<> f) mutable {
         return p->mutate_end(std::move(f), lc, p->get_stats(), std::move(tr_state));
     };
 
     if (_cdc && _cdc->needs_cdc_augmentation(mutations)) {
-        return _cdc->augment_mutation_call(timeout, std::move(mutations)).then([this, mk_ctxt = std::move(mk_ctxt), cleanup = std::move(cleanup)](std::tuple<std::vector<mutation>, cdc::result_callback>&& t) mutable {
+        return _cdc->augment_mutation_call(timeout, std::move(mutations), std::move(tr_state)).then([this, mk_ctxt = std::move(mk_ctxt), cleanup = std::move(cleanup)](std::tuple<std::vector<mutation>, lw_shared_ptr<cdc::operation_result_tracker>>&& t) mutable {
             auto mutations = std::move(std::get<0>(t));
-            auto end_func = std::get<1>(t);
-            auto f = std::move(mk_ctxt)(std::move(mutations)).then([this] (lw_shared_ptr<context> ctxt) {
+            auto tracker = std::move(std::get<1>(t));
+            return std::move(mk_ctxt)(std::move(mutations), std::move(tracker)).then([this] (lw_shared_ptr<context> ctxt) {
                 return ctxt->run().finally([ctxt]{});
             }).then_wrapped(std::move(cleanup));
-
-            if (end_func) {
-                f = f.then(std::move(end_func));                
-            }
-            return f;
         });
     }
 
-    return mk_ctxt(std::move(mutations)).then([this] (lw_shared_ptr<context> ctxt) {
+    return mk_ctxt(std::move(mutations), nullptr).then([this] (lw_shared_ptr<context> ctxt) {
         return ctxt->run().finally([ctxt]{});
     }).then_wrapped(std::move(cleanup));
 }
@@ -2510,9 +2618,9 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
             }
 
             if (coordinator == my_address) {
-                f = futurize_apply(lmutate);
+                f = futurize_invoke(lmutate);
             } else {
-                f = futurize_apply(rmutate, coordinator, std::move(forward));
+                f = futurize_invoke(rmutate, coordinator, std::move(forward));
             }
         }
 
@@ -3047,8 +3155,8 @@ public:
             } else if (rh.result->partitions().size() == 0) {
                 return true;
             } else {
-                auto lhk = lh.result->partitions().back().mut().key(s);
-                auto rhk = rh.result->partitions().back().mut().key(s);
+                auto lhk = lh.result->partitions().back().mut().key();
+                auto rhk = rh.result->partitions().back().mut().key();
                 return lhk.ring_order_tri_compare(s, rhk) > 0;
             }
         };
@@ -3073,13 +3181,13 @@ public:
             if (_data_results.front().result->partitions().empty()) {
                 break; // if top of the heap is empty all others are empty too
             }
-            const auto& max_key = _data_results.front().result->partitions().back().mut().key(s);
+            const auto& max_key = _data_results.front().result->partitions().back().mut().key();
             versions.emplace_back();
             std::vector<version>& v = versions.back();
             v.reserve(_targets_count);
             for (reply& r : _data_results) {
                 auto pit = r.result->partitions().rbegin();
-                if (pit != r.result->partitions().rend() && pit->mut().key(s).legacy_equal(s, max_key)) {
+                if (pit != r.result->partitions().rend() && pit->mut().key().legacy_equal(s, max_key)) {
                     bool reached_partition_end = pit->row_count() < cmd.slice.partition_row_limit();
                     v.emplace_back(r.from, std::move(*pit), r.reached_end, reached_partition_end);
                     r.result->partitions().pop_back();
@@ -3103,7 +3211,7 @@ public:
             auto it = boost::range::find_if(v, [] (auto&& ver) {
                     return bool(ver.par);
             });
-            auto m = boost::accumulate(v, mutation(schema, it->par->mut().key(*schema)), [this, schema] (mutation& m, const version& ver) {
+            auto m = boost::accumulate(v, mutation(schema, it->par->mut().key()), [this, schema] (mutation& m, const version& ver) {
                 if (ver.par) {
                     mutation_application_stats app_stats;
                     m.partition().apply(*schema, ver.par->mut().partition(), *schema, app_stats);
@@ -3343,8 +3451,8 @@ protected:
     virtual future<> make_requests(digest_resolver_ptr resolver, clock_type::time_point timeout) {
         resolver->add_wait_targets(_targets.size());
         auto want_digest = _targets.size() > 1;
-        auto f_data = futurize_apply([&] { return make_data_requests(resolver, _targets.begin(), _targets.begin() + 1, timeout, want_digest); });
-        auto f_digest = futurize_apply([&] { return make_digest_requests(resolver, _targets.begin() + 1, _targets.end(), timeout); });
+        auto f_data = futurize_invoke([&] { return make_data_requests(resolver, _targets.begin(), _targets.begin() + 1, timeout, want_digest); });
+        auto f_digest = futurize_invoke([&] { return make_digest_requests(resolver, _targets.begin() + 1, _targets.end(), timeout); });
         return when_all_succeed(std::move(f_data), std::move(f_digest)).handle_exception([] (auto&&) { });
     }
     virtual void got_cl() {}
@@ -3357,7 +3465,9 @@ protected:
     uint32_t original_partition_limit() const {
         return _cmd->partition_limit;
     }
+    virtual void adjust_targets_for_reconciliation() {}
     void reconcile(db::consistency_level cl, storage_proxy::clock_type::time_point timeout, lw_shared_ptr<query::read_command> cmd) {
+        adjust_targets_for_reconciliation();
         data_resolver_ptr data_resolver = ::make_shared<data_read_resolver>(_schema, cl, _targets.size(), timeout);
         auto exec = shared_from_this();
 
@@ -3584,6 +3694,9 @@ public:
     virtual void got_cl() override {
         _speculate_timer.cancel();
     }
+    virtual void adjust_targets_for_reconciliation() override {
+        _targets = used_targets();
+    }
 };
 
 class range_slice_read_executor : public never_speculating_read_executor {
@@ -3630,7 +3743,7 @@ db::read_repair_decision storage_proxy::new_read_repair_decision(const schema& s
     // reordering of endpoints happens. The local endpoint, if
     // present, is always first in the list, as get_live_sorted_endpoints()
     // orders the list by proximity to the local endpoint.
-    is_read_non_local |= all_replicas.front() != utils::fb_utilities::get_broadcast_address();
+    is_read_non_local |= !all_replicas.empty() && all_replicas.front() != utils::fb_utilities::get_broadcast_address();
 
     auto cf = _db.local().find_column_family(schema).shared_from_this();
     std::vector<gms::inet_address> target_replicas = db::filter_for_query(cl, ks, all_replicas, preferred_endpoints, repair_decision,
@@ -3700,7 +3813,7 @@ storage_proxy::query_result_local(schema_ptr s, lw_shared_ptr<query::read_comman
     cmd->slice.options.set_if<query::partition_slice::option::with_digest>(opts.request != query::result_request::only_result);
     if (pr.is_singular()) {
         unsigned shard = dht::shard_of(*s, pr.start()->value().token());
-        get_stats().replica_cross_shard_ops += shard != engine().cpu_id();
+        get_stats().replica_cross_shard_ops += shard != this_shard_id();
         return _db.invoke_on(shard, _read_smp_service_group, [max_size, gs = global_schema_ptr(s), prv = dht::partition_range_vector({pr}) /* FIXME: pr is copied */, cmd, opts, timeout, gt = tracing::global_trace_state_ptr(std::move(trace_state))] (database& db) mutable {
             auto trace_state = gt.get();
             tracing::trace(trace_state, "Start querying the token range that starts with {}", seastar::value_of([&prv] { return prv.begin()->start()->value().token(); }));
@@ -4124,7 +4237,7 @@ storage_proxy::do_query_with_paxos(schema_ptr s,
     dht::partition_range_vector&& partition_ranges,
     db::consistency_level cl,
     storage_proxy::coordinator_query_options query_options) {
-    if (partition_ranges.size() > 1 || !query::is_single_partition(partition_ranges[0])) {
+    if (partition_ranges.size() != 1 || !query::is_single_partition(partition_ranges[0])) {
         return make_exception_future<storage_proxy::coordinator_query_result>(
                 exceptions::invalid_request_exception("SERIAL/LOCAL_SERIAL consistency may only be requested for one partition at a time"));
     }
@@ -4132,7 +4245,7 @@ storage_proxy::do_query_with_paxos(schema_ptr s,
     auto cl_for_learn = cl == db::consistency_level::LOCAL_SERIAL ? db::consistency_level::LOCAL_QUORUM :
             db::consistency_level::QUORUM;
 
-    if (cas_shard(*s, partition_ranges[0].start()->value().as_decorated_key().token()) != engine().cpu_id()) {
+    if (cas_shard(*s, partition_ranges[0].start()->value().as_decorated_key().token()) != this_shard_id()) {
         throw std::logic_error("storage_proxy::do_query_with_paxos called on a wrong shard");
     }
     // All cas networking operations run with query provided timeout
@@ -4252,7 +4365,7 @@ future<bool> storage_proxy::cas(schema_ptr schema, shared_ptr<cas_request> reque
     db::validate_for_cas(cl_for_paxos);
     db::validate_for_cas_commit(cl_for_commit, schema->ks_name());
 
-    if (cas_shard(*schema, partition_ranges[0].start()->value().as_decorated_key().token()) != engine().cpu_id()) {
+    if (cas_shard(*schema, partition_ranges[0].start()->value().as_decorated_key().token()) != this_shard_id()) {
         throw std::logic_error("storage_proxy::cas called on a wrong shard");
     }
 
@@ -4288,12 +4401,24 @@ future<bool> storage_proxy::cas(schema_ptr schema, shared_ptr<cas_request> reque
                         .then([this, handler, schema, cmd, request, partition_ranges, query_options, cl, &contentions]
                                (paxos_response_handler::ballot_and_data v) mutable {
                     // Read the current values and check they validate the conditions.
-                    paxos::paxos_state::logger.debug("CAS[{}]: Reading existing values for CAS precondition", handler->id());
-                    tracing::trace(handler->tr_state, "Reading existing values for CAS precondition");
-                    auto f = v.data ? make_ready_future<foreign_ptr<lw_shared_ptr<query::result>>>(std::move(v.data)) :
-                            query(schema, cmd, std::move(partition_ranges), cl, query_options).then([] (coordinator_query_result&& qr) {
-                        return make_ready_future<foreign_ptr<lw_shared_ptr<query::result>>>(std::move(qr.query_result));
-                    });
+                    auto f = [&]() {
+                        if (v.data) {
+                            paxos::paxos_state::logger.debug("CAS[{}]: Using prefetched values for CAS precondition",
+                                    handler->id());
+                            tracing::trace(handler->tr_state, "Using prefetched values for CAS precondition");
+
+                            return make_ready_future<foreign_ptr<lw_shared_ptr<query::result>>>(std::move(v.data));
+                        } else {
+                            paxos::paxos_state::logger.debug("CAS[{}]: Reading existing values for CAS precondition",
+                                    handler->id());
+                            tracing::trace(handler->tr_state, "Reading existing values for CAS precondition");
+                            ++get_stats().cas_failed_read_round_optimization;
+                            return query(schema, cmd, std::move(partition_ranges), cl, query_options).then([](coordinator_query_result&& qr) {
+
+                                return make_ready_future<foreign_ptr<lw_shared_ptr<query::result>>>(std::move(qr.query_result));
+                            });
+                        }
+                    }();
                     return f.then([this, handler, schema, cmd, request, ballot = v.ballot, &contentions] (auto&& qr) {
                         auto mutation = request->apply(*qr, cmd->slice, utils::UUID_gen::micros_timestamp(ballot));
                         if (!mutation) {
@@ -4580,7 +4705,7 @@ void storage_proxy::init_messaging_service() {
             p->get_stats().forwarded_mutations += forward.size();
             return when_all(
                 // mutate_locally() may throw, putting it into apply() converts exception to a future.
-                futurize<void>::apply([timeout, &p, &m, reply_to, shard, src_addr = std::move(src_addr), schema_version,
+                futurize_invoke([timeout, &p, &m, reply_to, shard, src_addr = std::move(src_addr), schema_version,
                                       apply_fn = std::move(apply_fn), trace_state_ptr] () mutable {
                     // FIXME: get_schema_for_write() doesn't timeout
                     return get_schema_for_write(schema_version, netw::messaging_service::msg_addr{reply_to, shard})
@@ -4698,7 +4823,7 @@ void storage_proxy::init_messaging_service() {
     });
     ms.register_mutation_done([this] (const rpc::client_info& cinfo, unsigned shard, storage_proxy::response_id_type response_id, rpc::optional<db::view::update_backlog> backlog) {
         auto& from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
-        get_stats().replica_cross_shard_ops += shard != engine().cpu_id();
+        get_stats().replica_cross_shard_ops += shard != this_shard_id();
         return container().invoke_on(shard, _write_ack_smp_service_group, [from, response_id, backlog = std::move(backlog)] (storage_proxy& sp) mutable {
             sp.got_response(response_id, from, std::move(backlog));
             return netw::messaging_service::no_wait();
@@ -4706,7 +4831,7 @@ void storage_proxy::init_messaging_service() {
     });
     ms.register_mutation_failed([this] (const rpc::client_info& cinfo, unsigned shard, storage_proxy::response_id_type response_id, size_t num_failed, rpc::optional<db::view::update_backlog> backlog) {
         auto& from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
-        get_stats().replica_cross_shard_ops += shard != engine().cpu_id();
+        get_stats().replica_cross_shard_ops += shard != this_shard_id();
         return container().invoke_on(shard, _write_ack_smp_service_group, [from, response_id, num_failed, backlog = std::move(backlog)] (storage_proxy& sp) mutable {
             sp.got_failure_response(response_id, from, num_failed, std::move(backlog));
             return netw::messaging_service::no_wait();
@@ -4806,7 +4931,7 @@ void storage_proxy::init_messaging_service() {
     });
 
     ms.register_get_schema_version([this] (unsigned shard, table_schema_version v) {
-        get_stats().replica_cross_shard_ops += shard != engine().cpu_id();
+        get_stats().replica_cross_shard_ops += shard != this_shard_id();
         // FIXME: should this get an smp_service_group? Probably one separate from reads and writes.
         return container().invoke_on(shard, [v] (auto&& sp) {
             slogger.debug("Schema version request for {}", v);
@@ -4831,7 +4956,7 @@ void storage_proxy::init_messaging_service() {
                          only_digest, da, timeout, tr_state = std::move(tr_state), src_ip] (schema_ptr schema) mutable {
             dht::token token = dht::get_token(*schema, key);
             unsigned shard = dht::shard_of(*schema, token);
-            bool local = shard == engine().cpu_id();
+            bool local = shard == this_shard_id();
             get_stats().replica_cross_shard_ops += !local;
             return smp::submit_to(shard, _write_smp_service_group, [gs = global_schema_ptr(schema), gt = tracing::global_trace_state_ptr(std::move(tr_state)),
                                      local, cmd = make_lw_shared<query::read_command>(std::move(cmd)), key = std::move(key),
@@ -4859,7 +4984,7 @@ void storage_proxy::init_messaging_service() {
                                                               proposal = std::move(proposal), timeout] (schema_ptr schema) mutable {
             dht::token token = proposal.update.decorated_key(*schema).token();
             unsigned shard = dht::shard_of(*schema, token);
-            bool local = shard == engine().cpu_id();
+            bool local = shard == this_shard_id();
             get_stats().replica_cross_shard_ops += !local;
             return smp::submit_to(shard, _write_smp_service_group, [gs = global_schema_ptr(schema), gt = tracing::global_trace_state_ptr(std::move(tr_state)),
                                      local, proposal = std::move(proposal), timeout, token] () {
@@ -4875,6 +5000,43 @@ void storage_proxy::init_messaging_service() {
 
         return f;
     });
+    ms.register_paxos_prune([this] (const rpc::client_info& cinfo, rpc::opt_time_point timeout,
+                utils::UUID schema_id, partition_key key, utils::UUID ballot, std::optional<tracing::trace_info> trace_info) {
+        static thread_local uint16_t pruning = 0;
+        static constexpr uint16_t pruning_limit = 1000; // since PRUNE verb is one way replica side has its own queue limit
+        auto src_addr = netw::messaging_service::get_source(cinfo);
+        auto src_ip = src_addr.addr;
+        tracing::trace_state_ptr tr_state;
+        if (trace_info) {
+            tr_state = tracing::tracing::get_local_tracing_instance().create_session(*trace_info);
+            tracing::begin(tr_state);
+            tracing::trace(tr_state, "paxos_prune: message received from /{} ballot {}", src_ip, ballot);
+        }
+
+        if (pruning >= pruning_limit) {
+            get_stats().cas_replica_dropped_prune++;
+            tracing::trace(tr_state, "paxos_prune: do not prune due to overload", src_ip);
+            return make_ready_future<seastar::rpc::no_wait_type>(netw::messaging_service::no_wait());
+        }
+
+        pruning++;
+        auto d = defer([] { pruning--; });
+        return get_schema_for_read(schema_id, src_addr).then([this, key = std::move(key), ballot,
+                         timeout, tr_state = std::move(tr_state), src_ip, d = std::move(d)] (schema_ptr schema) mutable {
+            dht::token token = dht::get_token(*schema, key);
+            unsigned shard = dht::shard_of(*schema, token);
+            bool local = shard == this_shard_id();
+            get_stats().replica_cross_shard_ops += !local;
+            return smp::submit_to(shard, _write_smp_service_group, [gs = global_schema_ptr(schema), gt = tracing::global_trace_state_ptr(std::move(tr_state)),
+                                     local,  key = std::move(key), ballot, timeout, src_ip, d = std::move(d)] () {
+                tracing::trace_state_ptr tr_state = gt;
+                return paxos::paxos_state::prune(gs, key, ballot,  *timeout, tr_state).then([src_ip, tr_state] () {
+                    tracing::trace(tr_state, "paxos_prune: handling is done, sending a response to /{}", src_ip);
+                    return netw::messaging_service::no_wait();
+                });
+            });
+        });
+    });
 }
 
 future<> storage_proxy::uninit_messaging_service() {
@@ -4889,7 +5051,8 @@ future<> storage_proxy::uninit_messaging_service() {
         ms.unregister_truncate(),
         ms.unregister_paxos_prepare(),
         ms.unregister_paxos_accept(),
-        ms.unregister_paxos_learn()
+        ms.unregister_paxos_learn(),
+        ms.unregister_paxos_prune()
     );
 }
 
@@ -4899,7 +5062,7 @@ storage_proxy::query_mutations_locally(schema_ptr s, lw_shared_ptr<query::read_c
                                        tracing::trace_state_ptr trace_state, uint64_t max_size) {
     if (pr.is_singular()) {
         unsigned shard = dht::shard_of(*s, pr.start()->value().token());
-        get_stats().replica_cross_shard_ops += shard != engine().cpu_id();
+        get_stats().replica_cross_shard_ops += shard != this_shard_id();
         return _db.invoke_on(shard, _read_smp_service_group, [max_size, cmd, &pr, gs=global_schema_ptr(s), timeout, gt = tracing::global_trace_state_ptr(std::move(trace_state))] (database& db) mutable {
           return db.get_result_memory_limiter().new_mutation_read(max_size).then([&] (query::result_memory_accounter ma) {
             return db.query_mutations(gs, *cmd, pr, std::move(ma), gt, timeout).then([] (reconcilable_result&& result, cache_temperature ht) {

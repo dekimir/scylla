@@ -68,7 +68,7 @@ use_statement::use_statement(sstring keyspace)
 
 std::unique_ptr<prepared_statement> use_statement::prepare(database& db, cql_stats& stats)
 {
-    return std::make_unique<prepared_statement>(make_shared<cql3::statements::use_statement>(_keyspace));
+    return std::make_unique<prepared_statement>(::make_shared<cql3::statements::use_statement>(_keyspace));
 }
 
 }
@@ -88,7 +88,7 @@ bool use_statement::depends_on_column_family(const sstring& cf_name) const
     return false;
 }
 
-future<> use_statement::check_access(const service::client_state& state) const
+future<> use_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const
 {
     state.validate_login();
     return make_ready_future<>();

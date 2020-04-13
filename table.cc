@@ -39,6 +39,8 @@
 #include "db/system_keyspace.hh"
 #include "db/query_context.hh"
 #include "query-result-writer.hh"
+#include "db/view/view.hh"
+#include <seastar/core/seastar.hh>
 #include <boost/algorithm/cxx11/all_of.hpp>
 #include <boost/algorithm/cxx11/any_of.hpp>
 #include <boost/range/adaptor/transformed.hpp>
@@ -343,7 +345,7 @@ table::make_sstable_reader(schema_ptr s,
     auto ms = [&] () -> mutation_source {
         if (pr.is_singular() && pr.start()->value().has_key()) {
             const dht::ring_position& pos = pr.start()->value();
-            if (dht::shard_of(*s, pos.token()) != engine().cpu_id()) {
+            if (dht::shard_of(*s, pos.token()) != this_shard_id()) {
                 return mutation_source([] (
                         schema_ptr s,
                         reader_permit permit,
@@ -563,7 +565,7 @@ table::for_all_partitions_slow(schema_ptr s, std::function<bool (const dht::deco
 }
 
 static bool belongs_to_current_shard(const std::vector<shard_id>& shards) {
-    return boost::find(shards, engine().cpu_id()) != shards.end();
+    return boost::find(shards, this_shard_id()) != shards.end();
 }
 
 static bool belongs_to_other_shard(const std::vector<shard_id>& shards) {
@@ -587,7 +589,7 @@ flat_mutation_reader make_local_shard_sstable_reader(schema_ptr s,
                 trace_state, fwd, fwd_mr, monitor_generator(sst));
         if (sst->is_shared()) {
             auto filter = [&s = *s](const dht::decorated_key& dk) -> bool {
-                return dht::shard_of(s, dk.token()) == engine().cpu_id();
+                return dht::shard_of(s, dk.token()) == this_shard_id();
             };
             reader = make_filtering_reader(std::move(reader), std::move(filter));
         }
@@ -672,7 +674,7 @@ void table::load_sstable(sstables::shared_sstable& sst, bool reset_level) {
 
 void table::update_stats_for_new_sstable(uint64_t disk_space_used_by_sstable, const std::vector<unsigned>& shards_for_the_sstable) noexcept {
     assert(!shards_for_the_sstable.empty());
-    if (*boost::min_element(shards_for_the_sstable) == engine().cpu_id()) {
+    if (*boost::min_element(shards_for_the_sstable) == this_shard_id()) {
         _stats.live_disk_space_used += disk_space_used_by_sstable;
         _stats.total_disk_space_used += disk_space_used_by_sstable;
         _stats.live_sstable_count++;
@@ -705,7 +707,7 @@ table::add_sstable_and_update_cache(sstables::shared_sstable sst) {
     return get_row_cache().invalidate([this, sst] () noexcept {
         // FIXME: this is not really noexcept, but we need to provide strong exception guarantees.
         // atomically load all opened sstables into column family.
-        add_sstable(sst, {engine().cpu_id()});
+        add_sstable(sst, {this_shard_id()});
         trigger_compaction();
     }, dht::partition_range::make({sst->get_first_decorated_key(), true}, {sst->get_last_decorated_key(), true}));
 }
@@ -714,7 +716,7 @@ future<>
 table::update_cache(lw_shared_ptr<memtable> m, sstables::shared_sstable sst) {
     auto adder = [this, m, sst] {
         auto newtab_ms = sst->as_mutation_source();
-        add_sstable(sst, {engine().cpu_id()});
+        add_sstable(sst, {this_shard_id()});
         m->mark_flushed(std::move(newtab_ms));
         try_trigger_compaction();
     };
@@ -836,7 +838,7 @@ table::seal_active_streaming_memtable_immediate(flush_permit&& permit) {
                 }).then([this, old, newtab] () {
                     return with_scheduling_group(_config.memtable_to_cache_scheduling_group, [this, newtab, old] {
                       auto adder = [this, newtab] {
-                          add_sstable(newtab, {engine().cpu_id()});
+                          add_sstable(newtab, {this_shard_id()});
                           try_trigger_compaction();
                           tlogger.debug("Flushing to {} done", newtab->get_filename());
                       };
@@ -1267,6 +1269,7 @@ void table::replace_ancestors_needed_rewrite(std::unordered_set<uint64_t> ancest
     }
     rebuild_sstable_list(new_sstables, old_sstables);
     rebuild_statistics();
+    trigger_compaction();
 }
 
 void table::remove_ancestors_needed_rewrite(std::unordered_set<uint64_t> ancestors) {
@@ -1281,6 +1284,7 @@ void table::remove_ancestors_needed_rewrite(std::unordered_set<uint64_t> ancesto
     }
     rebuild_sstable_list({}, old_sstables);
     rebuild_statistics();
+    trigger_compaction();
 }
 
 future<>
@@ -1291,12 +1295,12 @@ table::compact_sstables(sstables::compaction_descriptor descriptor) {
     }
 
     return with_lock(_sstables_lock.for_read(), [this, descriptor = std::move(descriptor)] () mutable {
-        auto create_sstable = [this] {
+        descriptor.creator = [this] (shard_id dummy) {
                 auto sst = make_sstable();
                 sst->set_unshared();
                 return sst;
         };
-        auto replace_sstables = [this, release_exhausted = descriptor.release_exhausted] (sstables::compaction_completion_desc desc) {
+        descriptor.replacer = [this, release_exhausted = descriptor.release_exhausted] (sstables::compaction_completion_desc desc) {
             _compaction_strategy.notify_completion(desc.input_sstables, desc.output_sstables);
             _compaction_manager.propagate_replacement(this, desc.input_sstables, desc.output_sstables);
             this->on_compaction_completion(desc);
@@ -1305,7 +1309,7 @@ table::compact_sstables(sstables::compaction_descriptor descriptor) {
             }
         };
 
-        return sstables::compact_sstables(std::move(descriptor), *this, create_sstable, replace_sstables);
+        return sstables::compact_sstables(std::move(descriptor), *this);
     }).then([this] (auto info) {
         if (info.type != sstables::compaction_type::Compaction) {
             return make_ready_future<>();
@@ -1320,30 +1324,6 @@ table::compact_sstables(sstables::compaction_descriptor descriptor) {
         // for example, by adding a reducer method.
         return db::system_keyspace::update_compaction_history(info.ks_name, info.cf_name, info.ended_at,
             info.start_size, info.end_size, std::unordered_map<int32_t, int64_t>{});
-    });
-}
-
-future<> table::rewrite_sstables(sstables::compaction_descriptor descriptor) {
-    return do_with(std::move(descriptor.sstables), std::move(descriptor.release_exhausted),
-            [this, options = descriptor.options] (auto& sstables, auto& release_fn) {
-        return do_for_each(sstables, [this, &release_fn, options] (auto& sst) {
-            // this semaphore ensures that only one rewrite will run per shard.
-            // That's to prevent node from running out of space when almost all sstables
-            // need rewrite, so if sstables are rewritten in parallel, we may need almost
-            // twice the disk space used by those sstables.
-            static thread_local named_semaphore sem(1, named_semaphore_exception_factory{"rewrite sstables"});
-
-            return with_semaphore(sem, 1, [this, &sst, &release_fn, options] {
-                // release reference to sstables cleaned up, otherwise space usage from their data and index
-                // components cannot be reclaimed until all of them are cleaned.
-                auto sstable_level = sst->get_sstable_level();
-                auto run_identifier = sst->run_identifier();
-                auto descriptor = sstables::compaction_descriptor({ std::move(sst) }, sstable_level,
-                    sstables::compaction_descriptor::default_max_sstable_bytes, run_identifier, options);
-                descriptor.release_exhausted = release_fn;
-                return this->compact_sstables(std::move(descriptor));
-            });
-        });
     });
 }
 
@@ -1744,7 +1724,7 @@ future<> table::snapshot(sstring name) {
                     auto rf = f.substr(sst->get_dir().size() + 1);
                     table_names.insert(std::move(rf));
                 }
-                return smp::submit_to(shard, [requester = engine().cpu_id(), jsondir = std::move(jsondir), this,
+                return smp::submit_to(shard, [requester = this_shard_id(), jsondir = std::move(jsondir), this,
                                               tables = std::move(table_names), datadir = _config.datadir] {
 
                     if (pending_snapshots.count(jsondir) == 0) {
@@ -1757,7 +1737,7 @@ future<> table::snapshot(sstring name) {
 
                     snapshot->requests.signal(1);
                     auto my_work = make_ready_future<>();
-                    if (requester == engine().cpu_id()) {
+                    if (requester == this_shard_id()) {
                         my_work = snapshot->requests.wait(smp::count).then([jsondir = std::move(jsondir),
                                                                             snapshot, this] {
                             return write_schema_as_cql(jsondir).handle_exception([jsondir](std::exception_ptr ptr) {
@@ -1801,7 +1781,7 @@ future<std::unordered_map<sstring, table::snapshot_details>> table::get_snapshot
         std::unordered_map<sstring, snapshot_details> all_snapshots;
         for (auto& datadir : _config.all_datadirs) {
             fs::path snapshots_dir = fs::path(datadir) / "snapshots";
-            auto file_exists = io_check([&snapshots_dir] { return engine().file_exists(snapshots_dir.native()); }).get0();
+            auto file_exists = io_check([&snapshots_dir] { return seastar::file_exists(snapshots_dir.native()); }).get0();
             if (!file_exists) {
                 continue;
             }
@@ -1872,7 +1852,7 @@ future<> table::flush_streaming_mutations(utils::UUID plan_id, dht::partition_ra
                     // FIXME: this is not really noexcept, but we need to provide strong exception guarantees.
                     for (auto&& sst : sstables) {
                         // seal_active_streaming_memtable_big() ensures sst is unshared.
-                        this->add_sstable(sst.sstable, {engine().cpu_id()});
+                        this->add_sstable(sst.sstable, {this_shard_id()});
                     }
                     this->try_trigger_compaction();
                 }, std::move(ranges));
@@ -1950,7 +1930,7 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
                 for (auto& p : *cf._sstables->all()) {
                     if (p->max_data_age() <= gc_trunc) {
                         // Only one shard that own the sstable will submit it for deletion to avoid race condition in delete procedure.
-                        if (*boost::min_element(p->get_shards_for_this_sstable()) == engine().cpu_id()) {
+                        if (*boost::min_element(p->get_shards_for_this_sstable()) == this_shard_id()) {
                             rp = std::max(p->get_stats_metadata().position, rp);
                             remove.emplace_back(p);
                         }
@@ -2105,8 +2085,8 @@ future<> table::generate_and_propagate_view_updates(const schema_ptr& base,
             flat_mutation_reader_from_mutations({std::move(m)}),
             std::move(existings)).then([this, base_token = std::move(base_token)] (std::vector<frozen_mutation_and_schema>&& updates) mutable {
         auto units = seastar::consume_units(*_config.view_update_concurrency_semaphore, memory_usage_of(updates));
-        //FIXME: discarded future.
-        (void)db::view::mutate_MV(std::move(base_token), std::move(updates), _view_stats, *_config.cf_stats, std::move(units)).handle_exception([] (auto ignored) { });
+        return db::view::mutate_MV(std::move(base_token), std::move(updates), _view_stats, *_config.cf_stats,
+                std::move(units), service::allow_hints::yes, db::view::wait_for_all_updates::no).handle_exception([] (auto ignored) { });
     });
 }
 
@@ -2220,7 +2200,8 @@ future<> table::populate_views(
                  units_to_consume = update_size - units_to_wait_for,
                  this] (db::timeout_semaphore_units&& units) mutable {
             units.adopt(seastar::consume_units(*_config.view_update_concurrency_semaphore, units_to_consume));
-            return db::view::mutate_MV(std::move(base_token), std::move(updates), _view_stats, *_config.cf_stats, std::move(units), service::allow_hints::no);
+            return db::view::mutate_MV(std::move(base_token), std::move(updates), _view_stats,
+                    *_config.cf_stats, std::move(units), service::allow_hints::no, db::view::wait_for_all_updates::yes);
         });
     });
 }

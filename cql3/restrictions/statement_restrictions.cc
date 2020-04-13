@@ -20,11 +20,13 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <boost/range/algorithm.hpp>
-#include <boost/range/adaptors.hpp>
+#include <algorithm>
 #include <boost/algorithm/cxx11/all_of.hpp>
 #include <boost/algorithm/cxx11/any_of.hpp>
 #include <boost/iterator/transform_iterator.hpp>
+#include <boost/range/adaptors.hpp>
+#include <boost/range/algorithm.hpp>
+#include <boost/range/algorithm/transform.hpp>
 #include <stdexcept>
 
 #include "query-result-reader.hh"
@@ -396,28 +398,45 @@ std::vector<const column_definition*> statement_restrictions::get_column_defs_fo
     if (need_filtering()) {
         auto& sim = db.find_column_family(_schema).get_index_manager();
         auto [opt_idx, _] = find_idx(sim);
-        auto column_uses_indexing = [&opt_idx] (const column_definition* cdef) {
-            return opt_idx && opt_idx->depends_on(*cdef);
+        auto column_uses_indexing = [&opt_idx] (const column_definition* cdef, ::shared_ptr<single_column_restriction> restr) {
+            return opt_idx && restr && restr->is_supported_by(*opt_idx);
         };
+        auto single_pk_restrs = dynamic_pointer_cast<single_column_partition_key_restrictions>(_partition_key_restrictions);
         if (_partition_key_restrictions->needs_filtering(*_schema)) {
             for (auto&& cdef : _partition_key_restrictions->get_column_defs()) {
-                if (!column_uses_indexing(cdef)) {
+                ::shared_ptr<single_column_restriction> restr;
+                if (single_pk_restrs) {
+                    auto it = single_pk_restrs->restrictions().find(cdef);
+                    if (it != single_pk_restrs->restrictions().end()) {
+                        restr = dynamic_pointer_cast<single_column_restriction>(it->second);
+                    }
+                }
+                if (!column_uses_indexing(cdef, restr)) {
                     column_defs_for_filtering.emplace_back(cdef);
                 }
             }
         }
+        auto single_ck_restrs = dynamic_pointer_cast<single_column_clustering_key_restrictions>(_clustering_columns_restrictions);
         const bool pk_has_unrestricted_components = _partition_key_restrictions->has_unrestricted_components(*_schema);
         if (pk_has_unrestricted_components || _clustering_columns_restrictions->needs_filtering(*_schema)) {
             column_id first_filtering_id = pk_has_unrestricted_components ? 0 : _schema->clustering_key_columns().begin()->id +
                     _clustering_columns_restrictions->num_prefix_columns_that_need_not_be_filtered();
             for (auto&& cdef : _clustering_columns_restrictions->get_column_defs()) {
-                if (cdef->id >= first_filtering_id && !column_uses_indexing(cdef)) {
+                ::shared_ptr<single_column_restriction> restr;
+                if (single_pk_restrs) {
+                    auto it = single_ck_restrs->restrictions().find(cdef);
+                    if (it != single_ck_restrs->restrictions().end()) {
+                        restr = dynamic_pointer_cast<single_column_restriction>(it->second);
+                    }
+                }
+                if (cdef->id >= first_filtering_id && !column_uses_indexing(cdef, restr)) {
                     column_defs_for_filtering.emplace_back(cdef);
                 }
             }
         }
         for (auto&& cdef : _nonprimary_key_restrictions->get_column_defs()) {
-            if (!column_uses_indexing(cdef)) {
+            auto restr = dynamic_pointer_cast<single_column_restriction>(_nonprimary_key_restrictions->get_restriction(*cdef));
+            if (!column_uses_indexing(cdef, restr)) {
                 column_defs_for_filtering.emplace_back(cdef);
             }
         }
@@ -632,7 +651,10 @@ bool single_column_restriction::EQ::is_satisfied_by(bytes_view data, const query
         fail(unimplemented::cause::COUNTERS);
     }
     auto operand = value(options);
-    return operand && _column_def.type->compare(*operand, data) == 0;
+    if (!operand) {
+        throw exceptions::invalid_request_exception(format("Invalid null value for {}", _column_def.name_as_text()));
+    }
+    return _column_def.type->compare(*operand, data) == 0;
 }
 
 bool single_column_restriction::IN::is_satisfied_by(const schema& schema,
@@ -666,7 +688,7 @@ bool single_column_restriction::IN::is_satisfied_by(bytes_view data, const query
     });
 }
 
-static query::range<bytes_view> to_range(const term_slice& slice, const query_options& options) {
+static query::range<bytes_view> to_range(const term_slice& slice, const query_options& options, const sstring& name) {
     using range_type = query::range<bytes_view>;
     auto extract_bound = [&] (statements::bound bound) -> std::optional<range_type::bound> {
         if (!slice.has_bound(bound)) {
@@ -674,7 +696,7 @@ static query::range<bytes_view> to_range(const term_slice& slice, const query_op
         }
         auto value = slice.bound(bound)->bind_and_get(options);
         if (!value) {
-            return { };
+            throw exceptions::invalid_request_exception(format("Invalid null bound for {}", name));
         }
         auto value_view = options.linearize(*value);
         return { range_type::bound(value_view, slice.is_inclusive(bound)) };
@@ -698,7 +720,8 @@ bool single_column_restriction::slice::is_satisfied_by(const schema& schema,
         return false;
     }
     return cell_value->with_linearized([&] (bytes_view cell_value_bv) {
-        return to_range(_slice, options).contains(cell_value_bv, _column_def.type->as_tri_comparator());
+        return to_range(_slice, options, _column_def.name_as_text()).contains(
+                cell_value_bv, _column_def.type->as_tri_comparator());
     });
 }
 
@@ -706,7 +729,8 @@ bool single_column_restriction::slice::is_satisfied_by(bytes_view data, const qu
     if (_column_def.type->is_counter()) {
         fail(unimplemented::cause::COUNTERS);
     }
-    return to_range(_slice, options).contains(data, _column_def.type->underlying_type()->as_tri_comparator());
+    return to_range(_slice, options, _column_def.name_as_text()).contains(
+            data, _column_def.type->underlying_type()->as_tri_comparator());
 }
 
 bool single_column_restriction::contains::is_satisfied_by(const schema& schema,
@@ -868,7 +892,9 @@ bool single_column_restriction::contains::is_satisfied_by(bytes_view collection_
             auto map_key = _entry_keys[i]->bind_and_get(options);
             auto map_value = _entry_values[i]->bind_and_get(options);
             if (!map_key || !map_value) {
-                continue;
+                throw exceptions::invalid_request_exception(
+                        format("Unsupported null map {} for column {}",
+                               map_key ? "key" : "value", _column_def.name_as_text()));
             }
             auto found = with_linearized(*map_key, [&] (bytes_view map_key_bv) {
               return std::find_if(data_map.begin(), data_map.end(), [&] (auto&& element) {
@@ -916,7 +942,7 @@ bool token_restriction::slice::is_satisfied_by(const schema& schema,
         const query_options& options,
         gc_clock::time_point now) const {
     bool satisfied = false;
-    auto range = to_range(_slice, options);
+    auto range = to_range(_slice, options, "token");
     for (auto* cdef : _column_definitions) {
         auto cell_value = do_get_value(schema, *cdef, key, ckey, cells, now);
         if (!cell_value) {
@@ -932,14 +958,17 @@ bool token_restriction::slice::is_satisfied_by(const schema& schema,
     return satisfied;
 }
 
-bool single_column_restriction::LIKE::init_matcher(const query_options& options) const {
-    auto pattern = to_bytes_opt(_value->bind_and_get(options));
-    if (!pattern) {
-        return false;
-    }
-    if (!_matcher || pattern != _last_pattern) {
-        _matcher.emplace(*pattern);
-        _last_pattern = std::move(pattern);
+bool single_column_restriction::LIKE::init_matchers(const query_options& options) const {
+    for (size_t i = 0; i < _values.size(); ++i) {
+        auto pattern = to_bytes_opt(_values[i]->bind_and_get(options));
+        if (!pattern) {
+            return false;
+        }
+        if (i < _matchers.size()) {
+            _matchers[i].reset(*pattern);
+        } else {
+            _matchers.emplace_back(*pattern);
+        }
     }
     return true;
 }
@@ -957,11 +986,11 @@ bool single_column_restriction::LIKE::is_satisfied_by(const schema& schema,
     if (!cell_value) {
         return false;
     }
-    if (!init_matcher(options)) {
+    if (!init_matchers(options)) {
         return false;
     }
     return cell_value->with_linearized([&] (bytes_view data) {
-        return (*_matcher)(data);
+        return boost::algorithm::all_of(_matchers, [&] (auto& m) { return m(data); });
     });
 }
 
@@ -969,10 +998,33 @@ bool single_column_restriction::LIKE::is_satisfied_by(bytes_view data, const que
     if (!_column_def.type->is_string()) {
         throw exceptions::invalid_request_exception("LIKE is allowed only on string types");
     }
-    if (!init_matcher(options)) {
+    if (!init_matchers(options)) {
         return false;
     }
-    return (*_matcher)(data);
+    return boost::algorithm::all_of(_matchers, [&] (auto& m) { return m(data); });
+}
+
+sstring single_column_restriction::LIKE::to_string() const {
+    std::vector<sstring> vs(_values.size());
+    for (size_t i = 0; i < _values.size(); ++i) {
+        vs[i] = _values[i]->to_string();
+    }
+    return join(" AND ", vs);
+}
+
+void single_column_restriction::LIKE::merge_with(::shared_ptr<restriction> rest) {
+    if (auto other = dynamic_pointer_cast<LIKE>(rest)) {
+        boost::copy(other->_values, back_inserter(_values));
+    } else {
+        throw exceptions::invalid_request_exception(
+                format("{} cannot be restricted by both LIKE and non-LIKE restrictions", _column_def.name_as_text()));
+    }
+}
+
+::shared_ptr<single_column_restriction> single_column_restriction::LIKE::apply_to(const column_definition& cdef) {
+    auto r = ::make_shared<LIKE>(cdef, _values[0]);
+    std::copy(_values.cbegin() + 1, _values.cend(), back_inserter(r->_values));
+    return r;
 }
 
 namespace wip {
@@ -1466,5 +1518,6 @@ bytes_opt checked_bound(restriction& r, statements::bound b, const query_options
 }
 
 } // namespace wip
+
 } // namespace restrictions
 } // namespace cql3

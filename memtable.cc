@@ -149,7 +149,7 @@ void memtable::clear() noexcept {
 }
 
 future<> memtable::clear_gently() noexcept {
-    return futurize_apply([this] {
+    return futurize_invoke([this] {
         auto t = std::make_unique<seastar::thread>([this] {
             auto& alloc = allocator();
 
@@ -617,10 +617,10 @@ public:
         }
     }
     virtual future<> fast_forward_to(const dht::partition_range&, db::timeout_clock::time_point timeout) override {
-        throw std::bad_function_call();
+        return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
     }
     virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point timeout) override {
-        throw std::bad_function_call();
+        return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
     }
     virtual size_t buffer_size() const override {
         if (_partition_reader) {
@@ -724,7 +724,7 @@ memtable::apply(const frozen_mutation& m, const schema_ptr& m_schema, db::rp_han
     with_allocator(allocator(), [this, &m, &m_schema] {
         _allocating_section(*this, [&, this] {
           with_linearized_managed_bytes([&] {
-            auto& p = find_or_create_partition_slow(m.key(*_schema));
+            auto& p = find_or_create_partition_slow(m.key());
             mutation_partition mp(m_schema);
             partition_builder pb(*m_schema, mp);
             m.partition().accept(*m_schema, pb);

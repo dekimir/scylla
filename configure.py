@@ -248,20 +248,20 @@ def find_headers(repodir, excluded_dirs):
 
 modes = {
     'debug': {
-        'cxxflags': '-DDEBUG -DDEBUG_LSA_SANITIZER -DSEASTAR_ENABLE_ALLOC_FAILURE_INJECTION',
-        'cxx_ld_flags': '',
+        'cxxflags': '-DDEBUG -DDEBUG_LSA_SANITIZER -DSEASTAR_ENABLE_ALLOC_FAILURE_INJECTION -DSCYLLA_ENABLE_ERROR_INJECTION',
+        'cxx_ld_flags': '-Wstack-usage=%s' % (1024*40),
     },
     'release': {
         'cxxflags': '',
-        'cxx_ld_flags': '-O3',
+        'cxx_ld_flags': '-O3 -Wstack-usage=%s' % (1024*29),
     },
     'dev': {
-        'cxxflags': '-DSEASTAR_ENABLE_ALLOC_FAILURE_INJECTION',
-        'cxx_ld_flags': '-O1',
+        'cxxflags': '-DSEASTAR_ENABLE_ALLOC_FAILURE_INJECTION -DSCYLLA_ENABLE_ERROR_INJECTION',
+        'cxx_ld_flags': '-O1 -Wstack-usage=%s' % (1024*29),
     },
     'sanitize': {
-        'cxxflags': '-DDEBUG -DDEBUG_LSA_SANITIZER',
-        'cxx_ld_flags': '-Os',
+        'cxxflags': '-DDEBUG -DDEBUG_LSA_SANITIZER -DSCYLLA_ENABLE_ERROR_INJECTION',
+        'cxx_ld_flags': '-Os -Wstack-usage=%s' % (1024*50),
     }
 }
 
@@ -296,6 +296,10 @@ scylla_tests = set([
     'test/boost/cql_auth_query_test',
     'test/boost/cql_auth_syntax_test',
     'test/boost/cql_query_test',
+    'test/boost/cql_query_large_test',
+    'test/boost/cql_query_like_test',
+    'test/boost/cql_query_group_test',
+    'test/boost/cql_functions_test',
     'test/boost/crc_test',
     'test/boost/data_listeners_test',
     'test/boost/database_test',
@@ -304,6 +308,7 @@ scylla_tests = set([
     'test/boost/enum_option_test',
     'test/boost/enum_set_test',
     'test/boost/extensions_test',
+    'test/boost/error_injection_test',
     'test/boost/filtering_test',
     'test/boost/flat_mutation_reader_test',
     'test/boost/flush_queue_test',
@@ -331,6 +336,7 @@ scylla_tests = set([
     'test/boost/mutation_fragment_test',
     'test/boost/mutation_query_test',
     'test/boost/mutation_reader_test',
+    'test/boost/multishard_combining_reader_as_mutation_source_test',
     'test/boost/mutation_test',
     'test/boost/mutation_writer_test',
     'test/boost/mvcc_test',
@@ -349,6 +355,7 @@ scylla_tests = set([
     'test/boost/schema_change_test',
     'test/boost/schema_registry_test',
     'test/boost/secondary_index_test',
+    'test/boost/index_with_paging_test',
     'test/boost/serialization_test',
     'test/boost/serialized_action_test',
     'test/boost/small_vector_test',
@@ -356,6 +363,8 @@ scylla_tests = set([
     'test/boost/sstable_3_x_test',
     'test/boost/sstable_datafile_test',
     'test/boost/sstable_mutation_test',
+    'test/boost/schema_changes_test',
+    'test/boost/sstable_conforms_to_mutation_source_test',
     'test/boost/sstable_resharding_test',
     'test/boost/sstable_test',
     'test/boost/storage_proxy_test',
@@ -369,6 +378,8 @@ scylla_tests = set([
     'test/boost/view_build_test',
     'test/boost/view_complex_test',
     'test/boost/view_schema_test',
+    'test/boost/view_schema_pkey_test',
+    'test/boost/view_schema_ckey_test',
     'test/boost/vint_serialization_test',
     'test/boost/virtual_reader_test',
     'test/manual/ec2_snitch_test',
@@ -458,8 +469,6 @@ arg_parser.add_argument('--tests-debuginfo', action='store', dest='tests_debugin
                         help='Enable(1)/disable(0)compiler debug information generation for tests')
 arg_parser.add_argument('--python', action='store', dest='python', default='python3',
                         help='Python3 path')
-add_tristate(arg_parser, name='hwloc', dest='hwloc', help='hwloc support')
-add_tristate(arg_parser, name='xen', dest='xen', help='Xen support')
 arg_parser.add_argument('--split-dwarf', dest='split_dwarf', action='store_true', default=False,
                         help='use of split dwarf (https://gcc.gnu.org/wiki/DebugFission) to speed up linking')
 arg_parser.add_argument('--enable-gcc6-concepts', dest='gcc6_concepts', action='store_true', default=False,
@@ -491,6 +500,7 @@ scylla_core = (['database.cc',
                 'frozen_schema.cc',
                 'schema_registry.cc',
                 'bytes.cc',
+                'timeout_config.cc',
                 'mutation.cc',
                 'mutation_fragment.cc',
                 'partition_version.cc',
@@ -509,6 +519,7 @@ scylla_core = (['database.cc',
                 'mutation_partition.cc',
                 'mutation_partition_view.cc',
                 'mutation_partition_serializer.cc',
+                'converting_mutation_partition_applier.cc',
                 'mutation_reader.cc',
                 'flat_mutation_reader.cc',
                 'mutation_query.cc',
@@ -671,6 +682,7 @@ scylla_core = (['database.cc',
                 'utils/managed_bytes.cc',
                 'utils/exceptions.cc',
                 'utils/config_file.cc',
+                'utils/multiprecision_int.cc',
                 'utils/gz/crc_combine.cc',
                 'gms/version_generator.cc',
                 'gms/versioned_value.cc',
@@ -771,7 +783,9 @@ scylla_core = (['database.cc',
                 'utils/utf8.cc',
                 'utils/ascii.cc',
                 'utils/like_matcher.cc',
+                'utils/error_injection.cc',
                 'mutation_writer/timestamp_based_splitting_writer.cc',
+                'mutation_writer/shard_based_splitting_writer.cc',
                 'lua.cc',
                 ] + [Antlr3Grammar('cql3/Cql.g')] + [Thrift('interface/cassandra.thrift', 'Cassandra')]
                )
@@ -810,6 +824,8 @@ api = ['api/api.cc',
        'api/system.cc',
        'api/config.cc',
        'api/api-doc/config.json',
+        'api/error_injection.cc',
+        'api/api-doc/error_injection.json',
        ]
 
 alternator = [
@@ -838,6 +854,7 @@ redis = [
         'redis/abstract_command.cc',
         'redis/command_factory.cc',
         'redis/commands.cc',
+        'redis/lolwut.cc',
         ]
 
 idls = ['idl/gossip_digest.idl.hh',
@@ -873,12 +890,14 @@ headers = find_headers('.', excluded_dirs=['idl', 'build', 'seastar', '.git'])
 scylla_tests_generic_dependencies = [
     'test/lib/cql_test_env.cc',
     'test/lib/test_services.cc',
+    'test/lib/log.cc',
 ]
 
 scylla_tests_dependencies = scylla_core + idls + scylla_tests_generic_dependencies + [
     'test/lib/cql_assertions.cc',
     'test/lib/result_set_assertions.cc',
     'test/lib/mutation_source_test.cc',
+    'test/lib/sstable_utils.cc',
     'test/lib/data_model.cc',
     'test/lib/exception_utils.cc',
     'test/lib/random_schema.cc',
@@ -934,11 +953,9 @@ tests_not_using_seastar_test_framework = set([
     'test/perf/perf_hash',
     'test/perf/perf_mutation',
     'test/perf/perf_row_cache_update',
-    'test/perf/perf_sstable',
     'test/unit/lsa_async_eviction_test',
     'test/unit/lsa_sync_eviction_test',
     'test/unit/row_cache_alloc_stress_test',
-    'test/unit/row_cache_stress_test',
     'test/manual/sstable_scan_footprint_test',
 ]) | pure_boost_tests
 
@@ -960,11 +977,18 @@ perf_tests_seastar_deps = [
 for t in perf_tests:
     deps[t] = [t + '.cc'] + scylla_tests_dependencies + perf_tests_seastar_deps
 
-deps['test/boost/sstable_test'] += ['test/lib/sstable_utils.cc', 'test/lib/normalizing_reader.cc']
-deps['test/boost/sstable_datafile_test'] += ['test/lib/sstable_utils.cc', 'test/lib/normalizing_reader.cc']
-deps['test/boost/mutation_reader_test'] += ['test/lib/sstable_utils.cc']
+deps['test/boost/sstable_test'] += ['test/lib/normalizing_reader.cc']
+deps['test/boost/sstable_datafile_test'] += ['test/lib/normalizing_reader.cc']
+deps['test/boost/mutation_reader_test'] += ['test/lib/dummy_sharder.cc' ]
+deps['test/boost/multishard_combining_reader_as_mutation_source_test'] += ['test/lib/dummy_sharder.cc' ]
 
-deps['test/boost/bytes_ostream_test'] = ['test/boost/bytes_ostream_test.cc', 'utils/managed_bytes.cc', 'utils/logalloc.cc', 'utils/dynamic_bitset.cc']
+deps['test/boost/bytes_ostream_test'] = [
+    "test/boost/bytes_ostream_test.cc",
+    "utils/managed_bytes.cc",
+    "utils/logalloc.cc",
+    "utils/dynamic_bitset.cc",
+    "test/lib/log.cc",
+]
 deps['test/boost/input_stream_test'] = ['test/boost/input_stream_test.cc']
 deps['test/boost/UUID_test'] = ['utils/UUID_gen.cc', 'test/boost/UUID_test.cc', 'utils/uuid.cc', 'utils/managed_bytes.cc', 'utils/logalloc.cc', 'utils/dynamic_bitset.cc', 'hashers.cc']
 deps['test/boost/murmur_hash_test'] = ['bytes.cc', 'utils/murmur_hash.cc', 'test/boost/murmur_hash_test.cc']
@@ -975,12 +999,18 @@ deps['test/perf/perf_fast_forward'] += ['release.cc']
 deps['test/perf/perf_simple_query'] += ['release.cc']
 deps['test/boost/meta_test'] = ['test/boost/meta_test.cc']
 deps['test/manual/imr_test'] = ['test/manual/imr_test.cc', 'utils/logalloc.cc', 'utils/dynamic_bitset.cc']
-deps['test/boost/reusable_buffer_test'] = ['test/boost/reusable_buffer_test.cc']
+deps['test/boost/reusable_buffer_test'] = [
+    "test/boost/reusable_buffer_test.cc",
+    "test/lib/log.cc",
+]
 deps['test/boost/utf8_test'] = ['utils/utf8.cc', 'test/boost/utf8_test.cc']
 deps['test/boost/small_vector_test'] = ['test/boost/small_vector_test.cc']
 deps['test/boost/multishard_mutation_query_test'] += ['test/boost/test_table.cc']
 deps['test/boost/vint_serialization_test'] = ['test/boost/vint_serialization_test.cc', 'vint-serialization.cc', 'bytes.cc']
-deps['test/boost/linearizing_input_stream_test'] = ['test/boost/linearizing_input_stream_test.cc']
+deps['test/boost/linearizing_input_stream_test'] = [
+    "test/boost/linearizing_input_stream_test.cc",
+    "test/lib/log.cc",
+]
 
 deps['test/boost/duration_test'] += ['test/lib/exception_utils.cc']
 
@@ -1145,11 +1175,22 @@ extra_cxxflags["release.cc"] = "-DSCYLLA_VERSION=\"\\\"" + scylla_version + "\\\
 for m in ['debug', 'release', 'sanitize']:
     modes[m]['cxxflags'] += ' ' + dbgflag
 
+get_dynamic_linker_output = subprocess.check_output(['./reloc/get-dynamic-linker.sh'], shell=True)
+dynamic_linker = get_dynamic_linker_output.decode('utf-8').strip()
+
+forced_ldflags = '-Wl,'
+
 # The default build-id used by lld is xxhash, which is 8 bytes long, but RPM
 # requires build-ids to be at least 16 bytes long
 # (https://github.com/rpm-software-management/rpm/issues/950), so let's
 # explicitly ask for SHA1 build-ids.
-args.user_ldflags = '-Wl,--build-id=sha1' + ' ' + args.user_ldflags
+forced_ldflags += '--build-id=sha1,'
+
+forced_ldflags += f'--dynamic-linker={dynamic_linker}'
+
+args.user_ldflags = forced_ldflags + ' ' + args.user_ldflags
+
+args.user_cflags += ' -Wno-error=stack-usage='
 
 seastar_cflags = args.user_cflags
 if args.target != '':
@@ -1396,9 +1437,12 @@ with open(buildfile_tmp, 'w') as f:
                         build/{mode}/gen/${{stem}}Parser.cpp
                 description = ANTLR3 $in
             rule checkhh.{mode}
-              command = $cxx -MD -MT $out -MF $out.d {seastar_cflags} $cxxflags $cxxflags_{mode} $obj_cxxflags -x c++ --include=$in -c -o $out /dev/null
+              command = $cxx -MD -MT $out -MF $out.d {seastar_cflags} $cxxflags $cxxflags_{mode} $obj_cxxflags --include $in -c -o $out build/{mode}/gen/empty.cc
               description = CHECKHH $in
               depfile = $out.d
+            rule test.{mode}
+              command = ./test.py --mode={mode}
+              description = TEST {mode}
             ''').format(mode=mode, antlr3_exec=antlr3_exec, fmt_lib=fmt_lib, **modeval))
         f.write(
             'build {mode}: phony {artifacts}\n'.format(
@@ -1491,7 +1535,24 @@ with open(buildfile_tmp, 'w') as f:
                 objs=' '.join(compiles)
             )
         )
+        f.write(
+            'build {mode}-headers: phony {header_objs}\n'.format(
+                mode=mode,
+                header_objs=' '.join(["$builddir/{mode}/{hh}.o".format(mode=mode, hh=hh) for hh in headers])
+            )
+        )
 
+        f.write(
+            'build {mode}-test: test.{mode} {test_executables} $builddir/{mode}/test/tools/cql_repl\n'.format(
+                mode=mode,
+                test_executables=' '.join(['$builddir/{}/{}'.format(mode, binary) for binary in tests]),
+            )
+        )
+        f.write(
+            'build {mode}-check: phony {mode}-headers {mode}-test\n'.format(
+                mode=mode,
+            )
+        )
 
         gen_headers = []
         for th in thrifts:
@@ -1536,8 +1597,9 @@ with open(buildfile_tmp, 'w') as f:
                     if has_sanitize_address_use_after_scope:
                         flags += ' -fno-sanitize-address-use-after-scope'
                     f.write('  obj_cxxflags = %s\n' % flags)
+        f.write(f'build build/{mode}/gen/empty.cc: gen\n')
         for hh in headers:
-            f.write('build $builddir/{mode}/{hh}.o: checkhh.{mode} {hh} || {gen_headers_dep}\n'.format(
+            f.write('build $builddir/{mode}/{hh}.o: checkhh.{mode} {hh} | build/{mode}/gen/empty.cc || {gen_headers_dep}\n'.format(
                     mode=mode, hh=hh, gen_headers_dep=gen_headers_dep))
 
         f.write('build build/{mode}/seastar/libseastar.a: ninja | always\n'
@@ -1572,6 +1634,13 @@ with open(buildfile_tmp, 'w') as f:
 
     mode = 'dev' if 'dev' in modes else modes[0]
     f.write('build checkheaders: phony || {}\n'.format(' '.join(['$builddir/{}/{}.o'.format(mode, hh) for hh in headers])))
+
+    f.write(
+            'build test: phony {}\n'.format(' '.join(['{mode}-test'.format(mode=mode) for mode in modes]))
+    )
+    f.write(
+            'build check: phony {}\n'.format(' '.join(['{mode}-check'.format(mode=mode) for mode in modes]))
+    )
 
     f.write(textwrap.dedent('''\
         rule configure

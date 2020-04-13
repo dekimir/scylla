@@ -22,6 +22,7 @@
 #include <seastar/core/sstring.hh>
 #include <seastar/core/future-util.hh>
 #include <seastar/core/align.hh>
+#include <seastar/core/aligned_buffer.hh>
 #include <seastar/core/do_with.hh>
 #include <seastar/core/sleep.hh>
 #include "sstables/sstables.hh"
@@ -43,7 +44,7 @@
 using namespace sstables;
 
 bytes as_bytes(const sstring& s) {
-    return { reinterpret_cast<const int8_t*>(s.begin()), s.size() };
+    return { reinterpret_cast<const int8_t*>(s.data()), s.size() };
 }
 
 future<> test_using_working_sst(schema_ptr s, sstring dir, int64_t gen) {

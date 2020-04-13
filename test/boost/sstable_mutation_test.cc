@@ -45,6 +45,7 @@
 #include "test/lib/make_random_string.hh"
 #include "test/lib/data_model.hh"
 #include "test/lib/random_utils.hh"
+#include "test/lib/log.hh"
 
 using namespace sstables;
 using namespace std::chrono_literals;
@@ -393,59 +394,9 @@ SEASTAR_THREAD_TEST_CASE(read_partial_range_2) {
 }
 
 static
-shared_sstable make_sstable(sstables::test_env& env, schema_ptr s, sstring dir, std::vector<mutation> mutations,
-        sstable_writer_config cfg, sstables::sstable::version_types version, gc_clock::time_point query_time = gc_clock::now()) {
-    auto sst = env.make_sstable(s,
-        dir,
-        1 /* generation */,
-        version,
-        sstables::sstable::format_types::big,
-        default_sstable_buffer_size,
-        query_time);
-
-    auto mt = make_lw_shared<memtable>(s);
-
-    for (auto&& m : mutations) {
-        mt->apply(m);
-    }
-
-    sst->write_components(mt->make_flat_reader(s), mutations.size(), s, cfg, mt->get_encoding_stats()).get();
-    sst->load().get();
-
-    return sst;
-}
-
-static
 mutation_source make_sstable_mutation_source(sstables::test_env& env, schema_ptr s, sstring dir, std::vector<mutation> mutations,
         sstable_writer_config cfg, sstables::sstable::version_types version, gc_clock::time_point query_time = gc_clock::now()) {
     return as_mutation_source(make_sstable(env, s, dir, std::move(mutations), cfg, version, query_time));
-}
-
-// Must be run in a seastar thread
-static
-void test_mutation_source(sstables::test_env& env, sstable_writer_config cfg, sstables::sstable::version_types version) {
-    std::vector<tmpdir> dirs;
-    run_mutation_source_tests([&env, &dirs, &cfg, version] (schema_ptr s, const std::vector<mutation>& partitions,
-                gc_clock::time_point query_time) -> mutation_source {
-        dirs.emplace_back();
-        return make_sstable_mutation_source(env, s, dirs.back().path().string(), partitions, cfg, version, query_time);
-    });
-}
-
-
-SEASTAR_TEST_CASE(test_sstable_conforms_to_mutation_source) {
-    return seastar::async([] {
-        auto wait_bg = seastar::defer([] { sstables::await_background_jobs().get(); });
-        storage_service_for_tests ssft;
-        sstables::test_env env;
-        for (auto version : all_sstable_versions) {
-            for (auto index_block_size : {1, 128, 64*1024}) {
-                sstable_writer_config cfg = test_sstables_manager.configure_writer();
-                cfg.promoted_index_block_size = index_block_size;
-                test_mutation_source(env, cfg, version);
-            }
-        }
-    });
 }
 
 SEASTAR_TEST_CASE(test_sstable_can_write_and_read_range_tombstone) {
@@ -1440,19 +1391,19 @@ SEASTAR_TEST_CASE(test_key_count_estimation) {
             shared_sstable sst = make_sstable(env, s, dir.path().string(), muts, test_sstables_manager.configure_writer(), version);
 
             auto max_est = sst->get_estimated_key_count();
-            BOOST_TEST_MESSAGE(format("count = {}", count));
-            BOOST_TEST_MESSAGE(format("est = {}", max_est));
+            testlog.trace("count = {}", count);
+            testlog.trace("est = {}", max_est);
 
             {
                 auto est = sst->estimated_keys_for_range(dht::token_range::make_open_ended_both_sides());
-                BOOST_TEST_MESSAGE(format("est([-inf; +inf]) = {}", est));
+                testlog.trace("est([-inf; +inf]) = {}", est);
                 BOOST_REQUIRE_EQUAL(est, sst->get_estimated_key_count());
             }
 
             for (int size : {1, 64, 256, 512, 1024, 4096, count}) {
                 auto r = dht::token_range::make(pks[0].token(), pks[size - 1].token());
                 auto est = sst->estimated_keys_for_range(r);
-                BOOST_TEST_MESSAGE(format("est([0; {}] = {}", size - 1, est));
+                testlog.trace("est([0; {}] = {}", size - 1, est);
                 BOOST_REQUIRE_GE(est, size);
                 BOOST_REQUIRE_LE(est, max_est);
             }
@@ -1462,7 +1413,7 @@ SEASTAR_TEST_CASE(test_key_count_estimation) {
                 auto upper = std::min(count - 1, lower + size - 1);
                 auto r = dht::token_range::make(pks[lower].token(), pks[upper].token());
                 auto est = sst->estimated_keys_for_range(r);
-                BOOST_TEST_MESSAGE(format("est([{}; {}]) = {}", lower, upper, est));
+                testlog.trace("est([{}; {}]) = {}", lower, upper, est);
                 BOOST_REQUIRE_GE(est, upper - lower + 1);
                 BOOST_REQUIRE_LE(est, max_est);
             }
@@ -1470,14 +1421,14 @@ SEASTAR_TEST_CASE(test_key_count_estimation) {
             {
                 auto r = dht::token_range::make(all_pks[0].token(), all_pks[0].token());
                 auto est = sst->estimated_keys_for_range(r);
-                BOOST_TEST_MESSAGE(format("est(non-overlapping to the left) = {}", est));
+                testlog.trace("est(non-overlapping to the left) = {}", est);
                 BOOST_REQUIRE_EQUAL(est, 0);
             }
 
             {
                 auto r = dht::token_range::make(all_pks[all_pks.size() - 1].token(), all_pks[all_pks.size() - 1].token());
                 auto est = sst->estimated_keys_for_range(r);
-                BOOST_TEST_MESSAGE(format("est(non-overlapping to the right) = {}", est));
+                testlog.trace("est(non-overlapping to the right) = {}", est);
                 BOOST_REQUIRE_EQUAL(est, 0);
             }
         }
@@ -1561,63 +1512,10 @@ SEASTAR_THREAD_TEST_CASE(test_large_index_pages_do_not_cause_large_allocations) 
     auto large_allocs_after = memory::stats().large_allocations();
     auto duration = std::chrono::steady_clock::now() - t0;
 
-    BOOST_TEST_MESSAGE(format("Read took {:d} us", duration / 1us));
+    testlog.trace("Read took {:d} us", duration / 1us);
 
     assert_that(actual).is_equal_to(expected);
     BOOST_REQUIRE_EQUAL(large_allocs_after - large_allocs_before, 0);
-}
-
-SEASTAR_THREAD_TEST_CASE(test_schema_changes) {
-    auto dir = tmpdir();
-    storage_service_for_tests ssft;
-    auto wait_bg = seastar::defer([] { sstables::await_background_jobs().get(); });
-    int gen = 1;
-
-    std::map<std::tuple<sstables::sstable::version_types, schema_ptr>, std::tuple<shared_sstable, int>> cache;
-    for_each_schema_change([&] (schema_ptr base, const std::vector<mutation>& base_mutations,
-                                schema_ptr changed, const std::vector<mutation>& changed_mutations) {
-        for (auto version : all_sstable_versions) {
-            auto it = cache.find(std::tuple { version, base });
-
-            shared_sstable created_with_base_schema;
-            shared_sstable created_with_changed_schema;
-            sstables::test_env env;
-            if (it == cache.end()) {
-                auto mt = make_lw_shared<memtable>(base);
-                for (auto& m : base_mutations) {
-                    mt->apply(m);
-                }
-                created_with_base_schema = env.make_sstable(base, dir.path().string(), gen, version, sstables::sstable::format_types::big);
-                created_with_base_schema->write_components(mt->make_flat_reader(base), base_mutations.size(), base, test_sstables_manager.configure_writer(), mt->get_encoding_stats()).get();
-                created_with_base_schema->load().get();
-
-                created_with_changed_schema = env.make_sstable(changed, dir.path().string(), gen, version, sstables::sstable::format_types::big);
-                created_with_changed_schema->load().get();
-
-                cache.emplace(std::tuple { version, base }, std::tuple { created_with_base_schema, gen });
-                gen++;
-            } else {
-                created_with_base_schema = std::get<shared_sstable>(it->second);
-
-                created_with_changed_schema = env.make_sstable(changed, dir.path().string(), std::get<int>(it->second), version, sstables::sstable::format_types::big);
-                created_with_changed_schema->load().get();
-            }
-
-            auto mr = assert_that(created_with_base_schema->as_mutation_source()
-                        .make_reader(changed, no_reader_permit(), dht::partition_range::make_open_ended_both_sides(), changed->full_slice()));
-            for (auto& m : changed_mutations) {
-                mr.produces(m);
-            }
-            mr.produces_end_of_stream();
-
-            mr = assert_that(created_with_changed_schema->as_mutation_source()
-                    .make_reader(changed, no_reader_permit(), dht::partition_range::make_open_ended_both_sides(), changed->full_slice()));
-            for (auto& m : changed_mutations) {
-                mr.produces(m);
-            }
-            mr.produces_end_of_stream();
-        }
-    });
 }
 
 SEASTAR_THREAD_TEST_CASE(test_reading_serialization_header) {

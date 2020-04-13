@@ -382,7 +382,13 @@ class std_list:
         self._dereference_node = std_list._make_dereference_func(self.ref.type.strip_typedefs().template_argument(0))
 
     def __len__(self):
-        return int(self.ref['_M_impl']['_M_node']['_M_size'])
+        try:
+            return int(self.ref['_M_impl']['_M_node']['_M_size'])
+        except gdb.error:
+            i = 0
+            for _ in self:
+                i += 1
+            return i
 
     def __nonzero__(self):
         return self.__len__() > 0
@@ -634,7 +640,12 @@ def list_unordered_set(map, cache=True):
 def get_text_range():
     try:
         vptr_type = gdb.lookup_type('uintptr_t').pointer()
-        reactor_backend = gdb.parse_and_eval('&seastar::local_engine->_backend')
+        reactor_backend = gdb.parse_and_eval('seastar::local_engine->_backend')
+        # 2019.1 has value member, >=3.0 has std::unique_ptr<>
+        if reactor_backend.type.strip_typedefs().name.startswith('std::unique_ptr<'):
+            reactor_backend = std_unique_ptr(reactor_backend).get()
+        else:
+            reactor_backend = gdb.parse_and_eval('&seastar::local_engine->_backend')
         known_vptr = int(reactor_backend.reinterpret_cast(vptr_type).dereference())
     except Exception as e:
         gdb.write("get_text_range(): Falling back to locating .rodata section because lookup to reactor backend to use as known vptr failed: {}\n".format(e))
@@ -1242,6 +1253,62 @@ class scylla_memory(gdb.Command):
         return [(c, tables_by_count[c]) for c in reversed(sorted(tables_by_count.keys()))]
 
     @staticmethod
+    def summarize_storage_proxy_coordinator_stats(sp):
+        try:
+            return sp['_stats'], {None: sp['_stats']}
+        except gdb.error: # > 3.3
+            pass
+
+        stats_ptr_type = gdb.lookup_type('service::storage_proxy::stats').pointer()
+        key_id = int(sp['_stats_key']['_id'])
+        per_sg_stats = {}
+        for tq in get_local_task_queues():
+            stats = std_vector(tq['_scheduling_group_specific_vals'])[key_id].reinterpret_cast(stats_ptr_type).dereference()
+            if int(stats['writes']) == 0 and int(stats['background_writes']) == 0 and int(stats['foreground_reads']) == 0 and int(stats['reads']) == 0:
+                continue
+            per_sg_stats[tq] = stats
+
+        return sp['_global_stats'], per_sg_stats
+
+    @staticmethod
+    def print_coordinator_stats():
+        sp = sharded(gdb.parse_and_eval('service::_the_storage_proxy')).local()
+        global_sp_stats, per_sg_sp_stats = scylla_memory.summarize_storage_proxy_coordinator_stats(sp)
+
+        hm = std_optional(sp['_hints_manager']).get()
+        view_hm = sp['_hints_for_views_manager']
+
+        gdb.write('Coordinator:\n'
+                '  bg write bytes: {bg_wr_bytes:>13} B\n'
+                '  hints:          {regular:>13} B\n'
+                '  view hints:     {views:>13} B\n'
+                .format(
+                        bg_wr_bytes=int(global_sp_stats['background_write_bytes']),
+                        regular=int(hm['_stats']['size_of_hints_in_progress']),
+                        views=int(view_hm['_stats']['size_of_hints_in_progress'])))
+
+        for sg_tq, stats in per_sg_sp_stats.items():
+            if sg_tq is None:
+                sg_header = ''
+            else:
+                sg_header = '  {sg_id:02} {sg_name}\n'.format(sg_id=int(sg_tq['_id']), sg_name=str(sg_tq['_name']))
+
+            gdb.write(
+                    '{sg_header}'
+                    '    fg writes:  {fg_wr:>13}\n'
+                    '    bg writes:  {bg_wr:>13}\n'
+                    '    fg reads:   {fg_rd:>13}\n'
+                    '    bg reads:   {bg_rd:>13}\n'
+                    .format(
+                        sg_header=sg_header,
+                        fg_wr=int(stats['writes']) - int(stats['background_writes']),
+                        bg_wr=int(stats['background_writes']),
+                        fg_rd=int(stats['foreground_reads']),
+                        bg_rd=int(stats['reads']) - int(stats['foreground_reads'])))
+
+        gdb.write('\n')
+
+    @staticmethod
     def print_replica_stats():
         db = sharded(gdb.parse_and_eval('::debug::db')).local()
 
@@ -1342,25 +1409,7 @@ class scylla_memory(gdb.Command):
                           str_real_dirty=dirty_mem_mgr(db['_streaming_dirty_memory_manager']).real_dirty(),
                           str_virt_dirty=dirty_mem_mgr(db['_streaming_dirty_memory_manager']).virt_dirty()))
 
-        sp = sharded(gdb.parse_and_eval('service::_the_storage_proxy')).local()
-        hm = std_optional(sp['_hints_manager']).get()
-        view_hm = sp['_hints_for_views_manager']
-
-        gdb.write('Coordinator:\n'
-          '  fg writes:  {fg_wr:>13}\n'
-          '  bg writes:  {bg_wr:>13}, {bg_wr_bytes:>} B\n'
-          '  fg reads:   {fg_rd:>13}\n'
-          '  bg reads:   {bg_rd:>13}\n'
-          '  hints:      {regular:>13} B\n'
-          '  view hints: {views:>13} B\n\n'
-          .format(fg_wr=int(sp['_stats']['writes']) - int(sp['_stats']['background_writes']),
-                  bg_wr=int(sp['_stats']['background_writes']),
-                  bg_wr_bytes=int(sp['_stats']['background_write_bytes']),
-                  fg_rd=int(sp['_stats']['foreground_reads']),
-                  bg_rd=int(sp['_stats']['reads']) - int(sp['_stats']['foreground_reads']),
-                  regular=int(hm['_stats']['size_of_hints_in_progress']),
-                  views=int(view_hm['_stats']['size_of_hints_in_progress'])))
-
+        scylla_memory.print_coordinator_stats()
         scylla_memory.print_replica_stats()
 
         gdb.write('Small pools:\n')
@@ -1870,9 +1919,9 @@ def resolve(addr, cache=True, startswith=None):
 
     infosym = gdb.execute('info symbol 0x%x' % (addr), False, True)
     if infosym.startswith('No symbol'):
-        name = None
-    else:
-        name = infosym[:infosym.find('in section')]
+        return None
+
+    name = infosym[:infosym.find('in section')]
     if startswith and not name.startswith(startswith):
         return None
     if cache:
@@ -2843,7 +2892,7 @@ class scylla_sstables(gdb.Command):
             )
 
     def invoke(self, arg, from_tty):
-        parser = argparse.ArgumentParser(description="scylla generate-object-graph")
+        parser = argparse.ArgumentParser(description="scylla sstables")
         parser.add_argument("-t", "--tables", action="store_true", help="Only consider sstables attached to tables")
         try:
             args = parser.parse_args(arg.split())
@@ -3144,6 +3193,8 @@ class scylla_smp_queues(gdb.Command):
                 name = resolve(vptr, startswith='vtable for seastar::smp_message_queue::async_work_item')
                 if name:
                     known_vptrs[vptr] = None
+                else:
+                    continue
 
             offset = known_vptrs[vptr]
 
@@ -3167,6 +3218,238 @@ class scylla_smp_queues(gdb.Command):
             h[(a, b)] += 1
 
         gdb.write('{}\n'.format(h))
+
+
+class scylla_small_objects(gdb.Command):
+    """List live objects from one of the seastar allocator's small pools
+
+    The pool is selected with the `-o|--object-size` flag. Results are paginated by
+    default as there can be millions of objects. Default page size is 20.
+    To list a certain page, use the `-p|--page` flag. To find out the number of
+    total objects and pages, use `--summarize`.
+    To sample random pages, use `--random-page`.
+
+    If objects have a vtable, its type is resolved and this will appear in the
+    listing.
+
+    Note that to reach a certain page, the command has to traverse the memory
+    spans belonging to the pool linearly, until the desired range of object is
+    found. This can take a long time for well populated pools. To speed this
+    up, the span iterator is saved and reused when possible. This caching can
+    only be exploited withing the same pool and only with monotonically
+    increasing pages.
+
+    For usage see: scylla small-objects --help
+
+    Examples:
+
+    (gdb) scylla small-objects -o 32 --summarize
+    number of objects: 60196912
+    page size        : 20
+    number of pages  : 3009845
+
+    (gdb) scylla small-objects -o 32 -p 100
+    page 100: 2000-2019
+    [2000] 0x635002ecba00
+    [2001] 0x635002ecba20
+    [2002] 0x635002ecba40
+    [2003] 0x635002ecba60
+    [2004] 0x635002ecba80
+    [2005] 0x635002ecbaa0
+    [2006] 0x635002ecbac0
+    [2007] 0x635002ecbae0
+    [2008] 0x635002ecbb00
+    [2009] 0x635002ecbb20
+    [2010] 0x635002ecbb40
+    [2011] 0x635002ecbb60
+    [2012] 0x635002ecbb80
+    [2013] 0x635002ecbba0
+    [2014] 0x635002ecbbc0
+    [2015] 0x635002ecbbe0
+    [2016] 0x635002ecbc00
+    [2017] 0x635002ecbc20
+    [2018] 0x635002ecbc40
+    [2019] 0x635002ecbc60
+    """
+    class small_object_iterator():
+        def __init__(self, small_pool, resolve_symbols):
+            self._small_pool = small_pool
+            self._resolve_symbols = resolve_symbols
+
+            self._text_start, self._text_end = get_text_range()
+            self._vptr_type = gdb.lookup_type('uintptr_t').pointer()
+            self._free_object_ptr = gdb.lookup_type('void').pointer().pointer()
+            self._page_size = int(gdb.parse_and_eval('\'seastar::memory::page_size\''))
+            self._free_in_pool = set()
+            self._free_in_span = set()
+
+            pool_next_free = self._small_pool['_free']
+            while pool_next_free:
+                self._free_in_pool.add(int(pool_next_free))
+                pool_next_free = pool_next_free.reinterpret_cast(self._free_object_ptr).dereference()
+
+            self._span_it = iter(spans())
+            self._obj_it = iter([]) # initialize to exhausted iterator
+
+        def _next_span(self):
+            # Let any StopIteration bubble up, as it signals we are done with
+            # all spans.
+            span = next(self._span_it)
+            while span.pool() != self._small_pool.address:
+                span = next(self._span_it)
+
+            self._free_in_span = set()
+            span_start = int(span.start)
+            span_end = int(span_start + span.size() * self._page_size)
+
+            # span's free list
+            span_next_free = span.page['freelist']
+            while span_next_free:
+                self._free_in_span.add(int(span_next_free))
+                span_next_free = span_next_free.reinterpret_cast(self._free_object_ptr).dereference()
+
+            return span_start, span_end
+
+        def _next_obj(self):
+            try:
+                return next(self._obj_it)
+            except StopIteration:
+                # Don't call self._next_span() here as it might throw another StopIteration.
+                pass
+
+            span_start, span_end = self._next_span()
+            self._obj_it = iter(range(span_start, span_end, int(self._small_pool['_object_size'])))
+            return next(self._obj_it)
+
+        def __next__(self):
+            obj = self._next_obj()
+            while obj in self._free_in_span or obj in self._free_in_pool:
+                obj = self._next_obj()
+
+            if self._resolve_symbols:
+                addr = gdb.Value(obj).reinterpret_cast(self._vptr_type).dereference()
+                if addr >= self._text_start and addr <= self._text_end:
+                    return (obj, resolve(addr))
+                else:
+                    return (obj, None)
+            else:
+                return (obj, None)
+
+        def __iter__(self):
+            return self
+
+    def __init__(self):
+        gdb.Command.__init__(self, 'scylla small-objects', gdb.COMMAND_USER, gdb.COMPLETE_COMMAND)
+
+        self._parser = None
+        self._iterator = None
+        self._last_pos = 0
+        self._last_object_size = None
+
+    @staticmethod
+    def get_object_sizes():
+        cpu_mem = gdb.parse_and_eval('\'seastar::memory::cpu_mem\'')
+        small_pools = cpu_mem['small_pools']
+        nr = int(small_pools['nr_small_pools'])
+        return [int(small_pools['_u']['a'][i]['_object_size']) for i in range(nr)]
+
+    @staticmethod
+    def find_small_pool(object_size):
+        cpu_mem = gdb.parse_and_eval('\'seastar::memory::cpu_mem\'')
+        small_pools = cpu_mem['small_pools']
+        nr = int(small_pools['nr_small_pools'])
+        for i in range(nr):
+            sp = small_pools['_u']['a'][i]
+            if object_size == int(sp['_object_size']):
+                return sp
+
+        return None
+
+    def init_parser(self):
+        parser = argparse.ArgumentParser(description="scylla small-objects")
+        parser.add_argument("-o", "--object-size", action="store", type=int, required=True,
+                help="Object size, valid sizes are: {}".format(scylla_small_objects.get_object_sizes()))
+        parser.add_argument("-p", "--page", action="store", type=int, default=0, help="Page to show.")
+        parser.add_argument("-s", "--page-size", action="store", type=int, default=20,
+                help="Number of objects in a page. A page size of 0 turns off paging.")
+        parser.add_argument("--random-page", action="store_true", help="Show a random page.")
+        parser.add_argument("--summarize", action="store_true",
+                help="Print the number of objects and pages in the pool.")
+        parser.add_argument("--verbose", action="store_true",
+                help="Print additional details on what is going on.")
+
+        self._parser = parser
+
+    def get_objects(self, small_pool, offset=0, count=0, resolve_symbols=False, verbose=False):
+        if self._last_object_size != int(small_pool['_object_size']) or offset < self._last_pos:
+            self._last_pos = 0
+            self._iterator = scylla_small_objects.small_object_iterator(small_pool, resolve_symbols)
+
+        skip = offset - self._last_pos
+        if verbose:
+            gdb.write('get_objects(): offset={}, count={}, last_pos={}, skip={}\n'.format(offset, count, self._last_pos, skip))
+
+        for _ in range(skip):
+            next(self._iterator)
+
+        if count:
+            objects = []
+            for _ in range(count):
+                objects.append(next(self._iterator))
+        else:
+            objects = list(self._iterator)
+
+        self._last_pos += skip
+        self._last_pos += len(objects)
+
+        return objects
+
+    def invoke(self, arg, from_tty):
+        if self._parser is None:
+            self.init_parser()
+
+        try:
+            args = self._parser.parse_args(arg.split())
+        except SystemExit:
+            return
+
+        small_pool = scylla_small_objects.find_small_pool(args.object_size)
+        if small_pool is None:
+            raise ValueError("{} is not a valid object size for any small pools, valid object sizes are: {}", scylla_small_objects.get_object_sizes())
+
+        if args.summarize:
+            if self._last_object_size != args.object_size:
+                if args.verbose:
+                    gdb.write("Object size changed ({} -> {}), scanning pool.\n".format(self._last_object_size, args.object_size))
+                self._num_objects = len(self.get_objects(small_pool, verbose=args.verbose))
+                self._last_object_size = args.object_size
+            gdb.write("number of objects: {}\n"
+                      "page size        : {}\n"
+                      "number of pages  : {}\n"
+                .format(
+                    self._num_objects,
+                    args.page_size,
+                    int(self._num_objects / args.page_size)))
+            return
+
+        if args.random_page:
+            if self._last_object_size != args.object_size:
+                if args.verbose:
+                    gdb.write("Object size changed ({} -> {}), scanning pool.\n".format(self._last_object_size, args.object_size))
+                self._num_objects = len(self.get_objects(small_pool, verbose=args.verbose))
+                self._last_object_size = args.object_size
+            page = random.randint(0, int(self._num_objects / args.page_size) - 1)
+        else:
+            page = args.page
+
+        offset = page * args.page_size
+        gdb.write("page {}: {}-{}\n".format(page, offset, offset + args.page_size - 1))
+        for i, (obj, sym) in enumerate(self.get_objects(small_pool, offset, args.page_size, resolve_symbols=True, verbose=args.verbose)):
+            if sym is None:
+                sym_text = ""
+            else:
+                sym_text = sym
+            gdb.write("[{}] 0x{:x} {}\n".format(offset + i, obj, sym_text))
 
 
 class scylla_gdb_func_dereference_smart_ptr(gdb.Function):
@@ -3258,7 +3541,7 @@ class scylla_gdb_func_downcast_vptr(gdb.Function):
         if m is None:
             raise ValueError("Failed to extract type name from symbol name `{}'".format(symbol_name))
 
-        actual_type = gdb.lookup_type(m[1]).pointer()
+        actual_type = gdb.lookup_type(m.group(1)).pointer()
         return ptr.reinterpret_cast(actual_type)
 
 
@@ -3343,6 +3626,28 @@ class scylla_gdb_func_collection_element(gdb.Function):
         raise ValueError("Unsupported container type: {}".format(typ.name))
 
 
+class scylla_gdb_func_sharded_local(gdb.Function):
+    """Get the local instance of a sharded object
+
+    Usage:
+    $sharded_local($obj)
+
+    Where:
+    $obj - a variable, or an expression that evaluates to any `seastar::sharded`
+    instance.
+
+    Example:
+    (gdb) p $sharded_local(cql3::_the_query_processor)
+    $1 = (cql3::query_processor *) 0x6350001f2390
+    """
+
+    def __init__(self):
+        super(scylla_gdb_func_sharded_local, self).__init__('sharded_local')
+
+    def invoke(self, obj):
+        return sharded(obj).local()
+
+
 # Commands
 scylla()
 scylla_databases()
@@ -3377,6 +3682,7 @@ scylla_memtables()
 scylla_generate_object_graph()
 scylla_smp_queues()
 scylla_features()
+scylla_small_objects()
 
 
 # Convenience functions
@@ -3389,3 +3695,4 @@ scylla_features()
 scylla_gdb_func_dereference_smart_ptr()
 scylla_gdb_func_downcast_vptr()
 scylla_gdb_func_collection_element()
+scylla_gdb_func_sharded_local()

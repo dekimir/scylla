@@ -40,7 +40,9 @@
 
 #include "exceptions/exceptions.hh"
 #include "timestamp.hh"
+#include "tracing/trace_state.hh"
 #include "cdc_options.hh"
+#include "utils/UUID.hh"
 
 class schema;
 using schema_ptr = seastar::lw_shared_ptr<const schema>;
@@ -64,13 +66,9 @@ class partition_key;
 
 namespace cdc {
 
+struct operation_result_tracker;
 class db_context;
 class metadata;
-
-// Callback to be invoked on mutation finish to fix
-// the whole bit about post-image.
-// TODO: decide on what the parameters are to be for this.
-using result_callback = std::function<future<>()>;
 
 /// \brief CDC service, responsible for schema listeners
 ///
@@ -90,9 +88,10 @@ public:
     // appropriate augments to set the log entries.
     // Iff post-image is enabled for any of these, a non-empty callback is also
     // returned to be invoked post the mutation query.
-    future<std::tuple<std::vector<mutation>, result_callback>> augment_mutation_call(
+    future<std::tuple<std::vector<mutation>, lw_shared_ptr<operation_result_tracker>>> augment_mutation_call(
         lowres_clock::time_point timeout,
-        std::vector<mutation>&& mutations
+        std::vector<mutation>&& mutations,
+        tracing::trace_state_ptr tr_state
         );
     bool needs_cdc_augmentation(const std::vector<mutation>&) const;
 };
@@ -125,6 +124,7 @@ enum class operation : int8_t {
     // enum decl, so don't change the constant values (or the datatype).
     pre_image = 0, update = 1, insert = 2, row_delete = 3, partition_delete = 4,
     range_delete_start_inclusive = 5, range_delete_start_exclusive = 6, range_delete_end_inclusive = 7, range_delete_end_exclusive = 8,
+    post_image = 9,
 };
 
 bool is_log_for_some_table(const sstring& ks_name, const std::string_view& table_name);
@@ -139,5 +139,7 @@ bytes log_data_column_deleted_name_bytes(const bytes& column_name);
 
 seastar::sstring log_data_column_deleted_elements_name(std::string_view column_name);
 bytes log_data_column_deleted_elements_name_bytes(const bytes& column_name);
+
+utils::UUID generate_timeuuid(api::timestamp_type t);
 
 } // namespace cdc

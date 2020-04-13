@@ -50,7 +50,7 @@
 #include <exception>
 
 #include <seastar/core/align.hh>
-#include <seastar/core/reactor.hh>
+#include <seastar/core/seastar.hh>
 #include <seastar/core/metrics.hh>
 #include <seastar/core/future-util.hh>
 #include <seastar/core/file.hh>
@@ -614,11 +614,17 @@ public:
     future<sseg_ptr> terminate() {
         assert(_closed);
         if (!std::exchange(_terminated, true)) {
-            clogger.trace("{} is closed but not terminated.", *this);
-            if (_buffer.empty()) {
-                new_buffer(0);
+            // write a terminating zero block iff we are ending (a reused)
+            // block before actual file end.
+            // we should only get here when all actual data is 
+            // already flushed (see below, close()).
+            if (size_on_disk() < _segment_manager->max_size) {
+                clogger.trace("{} is closed but not terminated.", *this);
+                if (_buffer.empty()) {
+                    new_buffer(0);
+                }
+                return cycle(true, true);
             }
-            return cycle(true, true);
         }
         return make_ready_future<sseg_ptr>(shared_from_this());
     }
@@ -1095,7 +1101,7 @@ db::commitlog::segment_manager::list_descriptors(sstring dirname) {
         future<> process(directory_entry de) {
             auto entry_type = [this](const directory_entry & de) {
                 if (!de.type && !de.name.empty()) {
-                    return engine().file_type(_dirname + "/" + de.name);
+                    return file_type(_dirname + "/" + de.name);
                 }
                 return make_ready_future<std::optional<directory_entry_type>>(de.type);
             };
@@ -1143,10 +1149,10 @@ future<> db::commitlog::segment_manager::init() {
         }
 
         // base id counter is [ <shard> | <base> ]
-        _ids = replay_position(engine().cpu_id(), id).id;
+        _ids = replay_position(this_shard_id(), id).id;
         // always run the timer now, since we need to handle segment pre-alloc etc as well.
         _timer.set_callback(std::bind(&segment_manager::on_timer, this));
-        auto delay = engine().cpu_id() * std::ceil(double(cfg.commitlog_sync_period_in_ms) / smp::count);
+        auto delay = this_shard_id() * std::ceil(double(cfg.commitlog_sync_period_in_ms) / smp::count);
         clogger.trace("Delaying timer loop {} ms", delay);
         // We need to wait until we have scanned all other segments to actually start serving new
         // segments. We are ready now
@@ -1271,7 +1277,7 @@ void db::commitlog::segment_manager::flush_segments(bool force) {
 template <typename Func>
 static auto close_on_failure(future<file> file_fut, Func func) {
     return file_fut.then([func = std::move(func)](file f) {
-        return futurize_apply(func, f).handle_exception([f] (std::exception_ptr e) mutable {
+        return futurize_invoke(func, f).handle_exception([f] (std::exception_ptr e) mutable {
             return f.close().then_wrapped([f, e = std::move(e)] (future<> x) {
                 using futurator = futurize<std::result_of_t<Func(file)>>;
                 return futurator::make_exception_future(e);
@@ -1305,31 +1311,43 @@ future<db::commitlog::segment_manager::sseg_ptr> db::commitlog::segment_manager:
         // instead of just truncate/fallocate. Otherwise we get crappy
         // behaviour.
         if ((flags & open_flags::dsync) != open_flags{}) {
-            clogger.trace("Pre-writing {}KB to segment {}", max_size/1024, filename);
+            auto fsiz = (flags & open_flags::create) == open_flags{}
+                ? f.size()
+                : make_ready_future<uint64_t>(0)
+                ;
+
             // would be super nice if we just could mmap(/dev/zero) and do sendto
             // instead of this, but for now we must do explicit buffer writes.
-            fut = f.allocate(0, max_size).then([f, this]() mutable {
-                static constexpr size_t buf_size = 4 * segment::alignment;
-                return do_with(allocate_single_buffer(buf_size), max_size, [this, f](temporary_buffer<char>& buf, uint64_t& rem) mutable {
-                    std::fill(buf.get_write(), buf.get_write() + buf.size(), 0);
-                    return repeat([this, f, &rem, &buf]() mutable {
-                        if (rem == 0) {
-                            return make_ready_future<stop_iteration>(stop_iteration::yes);
-                        }
-                        static constexpr size_t max_write = 128 * 1024;
-                        auto n = std::min(max_write / buf_size, 1 + rem / buf_size);
+            fut = fsiz.then([f, this, filename](uint64_t existing_size) mutable {
+                // if recycled (or from last run), we might have either truncated smaller or written it 
+                // (slighty) larger due to final zeroing of file
+                if (existing_size >= max_size) {
+                    return f.truncate(max_size);
+                }
+                clogger.trace("Pre-writing {} of {} KB to segment {}", (max_size - existing_size)/1024, max_size/1024, filename);
+                return f.allocate(existing_size, max_size - existing_size).then([this, existing_size, f]() mutable {
+                    static constexpr size_t buf_size = 4 * segment::alignment;
+                    return do_with(allocate_single_buffer(buf_size), max_size - existing_size, [this, f](temporary_buffer<char>& buf, uint64_t& rem) mutable {
+                        std::fill(buf.get_write(), buf.get_write() + buf.size(), 0);
+                        return repeat([this, f, &rem, &buf]() mutable {
+                            if (rem == 0) {
+                                return make_ready_future<stop_iteration>(stop_iteration::yes);
+                            }
+                            static constexpr size_t max_write = 128 * 1024;
+                            auto n = std::min(max_write / buf_size, 1 + rem / buf_size);
 
-                        std::vector<iovec> v;
-                        v.reserve(n);
-                        size_t m = 0;
-                        while (m < rem && n--) {
-                            auto s = std::min(rem - m, buf_size);
-                            v.emplace_back(iovec{ buf.get_write(), s});
-                            m += s;
-                        }
-                        return f.dma_write(max_size - rem, std::move(v), service::get_local_commitlog_priority()).then([&rem](size_t s) {
-                            rem -= s;
-                            return stop_iteration::no;
+                            std::vector<iovec> v;
+                            v.reserve(n);
+                            size_t m = 0;
+                            while (m < rem && n--) {
+                                auto s = std::min(rem - m, buf_size);
+                                v.emplace_back(iovec{ buf.get_write(), s});
+                                m += s;
+                            }
+                            return f.dma_write(max_size - rem, std::move(v), service::get_local_commitlog_priority()).then([&rem](size_t s) {
+                                rem -= s;
+                                return stop_iteration::no;
+                            });
                         });
                     });
                 });
@@ -1406,7 +1424,7 @@ future<db::commitlog::segment_manager::sseg_ptr> db::commitlog::segment_manager:
                 promise<> p;
                 _segment_allocating.emplace(p.get_future());
                 auto f = _segment_allocating->get_future(timeout);
-                futurize_apply([this] {
+                futurize_invoke([this] {
                     return with_gate(_gate, [this] {
                         return new_segment().discard_result().finally([this]() {
                             _segment_allocating = std::nullopt;

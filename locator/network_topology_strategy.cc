@@ -85,6 +85,7 @@ network_topology_strategy::network_topology_strategy(
                 "NetworkTopologyStrategy");
         }
 
+        validate_replication_factor(val);
         _dc_rep_factor.emplace(key, std::stol(val));
         _datacenteres.push_back(key);
     }

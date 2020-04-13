@@ -46,11 +46,6 @@ uint32_t cql3::statements::authorization_statement::get_bound_terms() const {
     return 0;
 }
 
-std::unique_ptr<cql3::statements::prepared_statement> cql3::statements::authorization_statement::prepare(
-                database& db, cql_stats& stats) {
-    return std::make_unique<prepared_statement>(this->shared_from_this());
-}
-
 bool cql3::statements::authorization_statement::uses_function(
                 const sstring& ks_name, const sstring& function_name) const {
     return parsed_statement::uses_function(ks_name, function_name);
@@ -71,7 +66,7 @@ void cql3::statements::authorization_statement::validate(
                 const service::client_state& state) const {
 }
 
-future<> cql3::statements::authorization_statement::check_access(const service::client_state& state) const {
+future<> cql3::statements::authorization_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const {
     return make_ready_future<>();
 }
 

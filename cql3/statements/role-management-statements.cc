@@ -83,8 +83,6 @@ static future<result_message_ptr> void_result_message() {
 }
 
 void validate_cluster_support(service::storage_proxy& proxy) {
-    // TODO(jhaberku): All other feature-checking CQL statements also grab the `storage_service` globally. I'm not sure
-    // if it's accessible through some other object, but for now I'm sticking with convention.
     if (!proxy.features().cluster_supports_roles()) {
         throw exceptions::invalid_request_exception(
                 "You cannot modify access-control information until the cluster has fully upgraded.");
@@ -94,6 +92,11 @@ void validate_cluster_support(service::storage_proxy& proxy) {
 //
 // `create_role_statement`
 //
+
+std::unique_ptr<prepared_statement> create_role_statement::prepare(
+                database& db, cql_stats& stats) {
+    return std::make_unique<prepared_statement>(::make_shared<create_role_statement>(*this));
+}
 
 future<> create_role_statement::grant_permissions_to_creator(const service::client_state& cs) const {
     return do_with(auth::make_role_resource(_role), [&cs](const auth::resource& r) {
@@ -110,7 +113,7 @@ void create_role_statement::validate(service::storage_proxy& p, const service::c
     validate_cluster_support(p);
 }
 
-future<> create_role_statement::check_access(const service::client_state& state) const {
+future<> create_role_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const {
     state.ensure_not_anonymous();
 
     return async([this, &state] {
@@ -159,11 +162,16 @@ create_role_statement::execute(service::storage_proxy&,
 // `alter_role_statement`
 //
 
+std::unique_ptr<prepared_statement> alter_role_statement::prepare(
+                database& db, cql_stats& stats) {
+    return std::make_unique<prepared_statement>(::make_shared<alter_role_statement>(*this));
+}
+
 void alter_role_statement::validate(service::storage_proxy& p, const service::client_state&) const {
     validate_cluster_support(p);
 }
 
-future<> alter_role_statement::check_access(const service::client_state& state) const {
+future<> alter_role_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const {
     state.ensure_not_anonymous();
 
     return async([this, &state] {
@@ -235,6 +243,11 @@ alter_role_statement::execute(service::storage_proxy&, service::query_state& sta
 // `drop_role_statement`
 //
 
+std::unique_ptr<prepared_statement> drop_role_statement::prepare(
+                database& db, cql_stats& stats) {
+    return std::make_unique<prepared_statement>(::make_shared<drop_role_statement>(*this));
+}
+
 void drop_role_statement::validate(service::storage_proxy& p, const service::client_state& state) const {
     validate_cluster_support(p);
 
@@ -243,7 +256,7 @@ void drop_role_statement::validate(service::storage_proxy& p, const service::cli
     }
 }
 
-future<> drop_role_statement::check_access(const service::client_state& state) const {
+future<> drop_role_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const {
     state.ensure_not_anonymous();
 
     return async([this, &state] {
@@ -287,7 +300,12 @@ drop_role_statement::execute(service::storage_proxy&, service::query_state& stat
 // `list_roles_statement`
 //
 
-future<> list_roles_statement::check_access(const service::client_state& state) const {
+std::unique_ptr<prepared_statement> list_roles_statement::prepare(
+                database& db, cql_stats& stats) {
+    return std::make_unique<prepared_statement>(::make_shared<list_roles_statement>(*this));
+}
+
+future<> list_roles_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const {
     state.ensure_not_anonymous();
 
     return async([this, &state] {
@@ -417,7 +435,12 @@ list_roles_statement::execute(service::storage_proxy&, service::query_state& sta
 // `grant_role_statement`
 //
 
-future<> grant_role_statement::check_access(const service::client_state& state) const {
+std::unique_ptr<prepared_statement> grant_role_statement::prepare(
+                database& db, cql_stats& stats) {
+    return std::make_unique<prepared_statement>(::make_shared<grant_role_statement>(*this));
+}
+
+future<> grant_role_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const {
     state.ensure_not_anonymous();
 
     return do_with(auth::make_role_resource(_role), [this, &state](const auto& r) {
@@ -440,7 +463,12 @@ grant_role_statement::execute(service::storage_proxy&, service::query_state& sta
 // `revoke_role_statement`
 //
 
-future<> revoke_role_statement::check_access(const service::client_state& state) const {
+std::unique_ptr<prepared_statement> revoke_role_statement::prepare(
+                database& db, cql_stats& stats) {
+    return std::make_unique<prepared_statement>(::make_shared<revoke_role_statement>(*this));
+}
+
+future<> revoke_role_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const {
     state.ensure_not_anonymous();
 
     return do_with(auth::make_role_resource(_role), [this, &state](const auto& r) {

@@ -23,7 +23,9 @@
 
 #include <memory>
 #include <seastar/core/memory.hh>
-#include <seastar/core/reactor.hh>
+#include <seastar/core/idle_cpu_handler.hh>
+#include <seastar/core/condition-variable.hh>
+#include <seastar/core/smp.hh>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/shared_future.hh>
 #include <seastar/core/gate.hh>
@@ -197,7 +199,7 @@ class region_group {
         Func func;
     public:
         void allocate() override {
-            futurator::apply(func).forward_to(std::move(pr));
+            futurator::invoke(func).forward_to(std::move(pr));
         }
         void fail(std::exception_ptr e) override {
             pr.set_exception(e);
@@ -339,14 +341,13 @@ public:
         // We disallow future-returning functions here, because otherwise memory may be available
         // when we start executing it, but no longer available in the middle of the execution.
         static_assert(!is_future<std::result_of_t<Func()>>::value, "future-returning functions are not permitted.");
-        using futurator = futurize<std::result_of_t<Func()>>;
 
         auto blocked_at = do_for_each_parent(this, [] (auto rg) {
             return (rg->_blocked_requests.empty() && !rg->under_pressure()) ? stop_iteration::no : stop_iteration::yes;
         });
 
         if (!blocked_at) {
-            return futurator::apply(func);
+            return futurize_invoke(func);
         }
 
         auto fn = std::make_unique<concrete_allocating_function<Func>>(std::forward<Func>(func));
@@ -465,7 +466,7 @@ public:
 
     // Compacts one segment at a time from sparsest segment to least sparse until work_waiting_on_reactor returns true
     // or there are no more segments to compact.
-    reactor::idle_cpu_handler_result compact_on_idle(reactor::work_waiting_on_reactor);
+    idle_cpu_handler_result compact_on_idle(work_waiting_on_reactor);
 
     // Compacts as much as possible. Very expensive, mainly for testing.
     // Guarantees that every live object from reclaimable regions will be moved.
@@ -565,10 +566,10 @@ public:
 class basic_region_impl : public allocation_strategy {
 protected:
     bool _reclaiming_enabled = true;
-    seastar::shard_id _cpu = seastar::local_engine->cpu_id();
+    seastar::shard_id _cpu = this_shard_id();
 public:
     void set_reclaiming_enabled(bool enabled) {
-        assert(seastar::local_engine->cpu_id() == _cpu);
+        assert(this_shard_id() == _cpu);
         _reclaiming_enabled = enabled;
     }
 

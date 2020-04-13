@@ -236,7 +236,7 @@ public:
     virtual void destroy_reader(shard_id shard, future<stopped_reader> reader_fut) noexcept override;
 
     virtual reader_concurrency_semaphore& semaphore() override {
-        return _readers[engine().cpu_id()].rparts->semaphore;
+        return _readers[this_shard_id()].rparts->semaphore;
     }
 
     future<> lookup_readers();
@@ -270,7 +270,7 @@ flat_mutation_reader read_context::create_reader(
         const io_priority_class& pc,
         tracing::trace_state_ptr trace_state,
         mutation_reader::forwarding) {
-    const auto shard = engine().cpu_id();
+    const auto shard = this_shard_id();
     auto& rm = _readers[shard];
 
     if (rm.state != reader_state::used && rm.state != reader_state::successful_lookup && rm.state != reader_state::inexistent) {
@@ -358,7 +358,7 @@ future<> read_context::stop() {
 
 read_context::dismantle_buffer_stats read_context::dismantle_combined_buffer(circular_buffer<mutation_fragment> combined_buffer,
         const dht::decorated_key& pkey) {
-    auto& partitioner = _schema->get_partitioner();
+    auto& sharder = _schema->get_sharder();
 
     std::vector<mutation_fragment> tmp_buffer;
     dismantle_buffer_stats stats;
@@ -367,7 +367,7 @@ read_context::dismantle_buffer_stats read_context::dismantle_combined_buffer(cir
     const auto rend = std::reverse_iterator(combined_buffer.begin());
     for (;rit != rend; ++rit) {
         if (rit->is_partition_start()) {
-            const auto shard = partitioner.shard_of(rit->as_partition_start().key().token());
+            const auto shard = sharder.shard_of(rit->as_partition_start().key().token());
 
             // It is possible that the reader this partition originates from
             // does not exist anymore. Either because we failed stopping it or
@@ -394,7 +394,7 @@ read_context::dismantle_buffer_stats read_context::dismantle_combined_buffer(cir
         }
     }
 
-    const auto shard = partitioner.shard_of(pkey.token());
+    const auto shard = sharder.shard_of(pkey.token());
     auto& shard_buffer = _readers[shard].buffer;
     for (auto& smf : tmp_buffer) {
         stats.add(*_schema, smf);
@@ -406,8 +406,8 @@ read_context::dismantle_buffer_stats read_context::dismantle_combined_buffer(cir
 
 read_context::dismantle_buffer_stats read_context::dismantle_compaction_state(detached_compaction_state compaction_state) {
     auto stats = dismantle_buffer_stats();
-    auto& partitioner = _schema->get_partitioner();
-    const auto shard = partitioner.shard_of(compaction_state.partition_start.key().token());
+    auto& sharder = _schema->get_sharder();
+    const auto shard = sharder.shard_of(compaction_state.partition_start.key().token());
 
     // It is possible that the reader this partition originates from does not
     // exist anymore. Either because we failed stopping it or because it was
@@ -585,7 +585,7 @@ static future<reconcilable_result> do_query_mutations(
         tracing::trace_state_ptr trace_state,
         db::timeout_clock::time_point timeout,
         query::result_memory_accounter&& accounter) {
-    return do_with(seastar::make_shared<read_context>(db, s, cmd, ranges, trace_state), [s, &cmd, &ranges, trace_state, timeout,
+    return do_with(seastar::make_shared<read_context>(db, s, cmd, ranges, trace_state), [&db, s, &cmd, &ranges, trace_state, timeout,
             accounter = std::move(accounter)] (shared_ptr<read_context>& ctx) mutable {
         return ctx->lookup_readers().then([&ctx, s = std::move(s), &cmd, &ranges, trace_state, timeout,
                 accounter = std::move(accounter)] () mutable {
@@ -597,8 +597,7 @@ static future<reconcilable_result> do_query_mutations(
                     tracing::trace_state_ptr trace_state,
                     streamed_mutation::forwarding,
                     mutation_reader::forwarding fwd_mr) {
-                    auto& partitioner = s->get_partitioner();
-                return make_multishard_combining_reader(ctx, partitioner, std::move(s), pr, ps, pc, std::move(trace_state), fwd_mr);
+                return make_multishard_combining_reader(ctx, std::move(s), pr, ps, pc, std::move(trace_state), fwd_mr);
             });
             auto reader = make_flat_multi_range_reader(s, std::move(ms), ranges, cmd.slice,
                     service::get_local_sstable_query_read_priority(), trace_state, mutation_reader::forwarding::no);

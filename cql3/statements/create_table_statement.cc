@@ -52,10 +52,10 @@
 #include "auth/resource.hh"
 #include "auth/service.hh"
 #include "schema_builder.hh"
-#include "service/storage_service.hh"
 #include "db/extensions.hh"
 #include "database.hh"
 #include "types/user.hh"
+#include "gms/feature_service.hh"
 
 namespace cql3 {
 
@@ -75,7 +75,7 @@ create_table_statement::create_table_statement(::shared_ptr<cf_name> name,
 {
 }
 
-future<> create_table_statement::check_access(const service::client_state& state) const {
+future<> create_table_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const {
     return state.has_keyspace_access(keyspace(), auth::permission::CREATE);
 }
 
@@ -105,7 +105,7 @@ future<shared_ptr<cql_transport::event::schema_change>> create_table_statement::
         try {
             f.get();
             using namespace cql_transport;
-            return make_shared<event::schema_change>(
+            return ::make_shared<event::schema_change>(
                     event::schema_change::change_type::CREATED,
                     event::schema_change::target_type::TABLE,
                     this->keyspace(),
@@ -148,7 +148,7 @@ void create_table_statement::apply_properties_to(schema_builder& builder, const 
         addColumnMetadataFromAliases(cfmd, Collections.singletonList(valueAlias), defaultValidator, ColumnDefinition.Kind.COMPACT_VALUE);
 #endif
 
-    _properties->apply_to_builder(builder, db);
+    _properties->apply_to_builder(builder, _properties->make_schema_extensions(db.extensions()));
 }
 
 void create_table_statement::add_column_metadata_from_aliases(schema_builder& builder, std::vector<bytes> aliases, const std::vector<data_type>& types, column_kind kind) const
@@ -203,7 +203,7 @@ std::unique_ptr<prepared_statement> create_table_statement::raw_statement::prepa
         throw exceptions::invalid_request_exception(format("Multiple definition of identifier {}", (*i)->text()));
     }
 
-    _properties.validate(db.extensions());
+    _properties.validate(db, _properties.properties()->make_schema_extensions(db.extensions()));
 
     auto stmt = ::make_shared<create_table_statement>(_cf_name, _properties.properties(), _if_not_exists, _static_columns, _properties.properties()->get_id());
 

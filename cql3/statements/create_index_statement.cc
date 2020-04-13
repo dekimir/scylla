@@ -44,12 +44,12 @@
 #include "validation.hh"
 #include "service/storage_proxy.hh"
 #include "service/migration_manager.hh"
-#include "service/storage_service.hh"
 #include "schema.hh"
 #include "schema_builder.hh"
 #include "request_validations.hh"
 #include "database.hh"
 #include "index/target_parser.hh"
+#include "gms/feature_service.hh"
 
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/algorithm/string/join.hpp>
@@ -72,7 +72,7 @@ create_index_statement::create_index_statement(::shared_ptr<cf_name> name,
 }
 
 future<>
-create_index_statement::check_access(const service::client_state& state) const {
+create_index_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const {
     return state.has_column_family_access(keyspace(), column_family(), auth::permission::ALTER);
 }
 
@@ -315,7 +315,7 @@ create_index_statement::announce_migration(service::storage_proxy& proxy, bool i
     return service::get_local_migration_manager().announce_column_family_update(
             builder.build(), false, {}, is_local_only).then([this]() {
         using namespace cql_transport;
-        return make_shared<event::schema_change>(
+        return ::make_shared<event::schema_change>(
                 event::schema_change::change_type::UPDATED,
                 event::schema_change::target_type::TABLE,
                 keyspace(),

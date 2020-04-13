@@ -74,10 +74,6 @@ class view_update_generator;
 }
 }
 
-namespace cql3 {
-class cql_config;
-}
-
 namespace cql_transport {
     class cql_server;
 }
@@ -157,7 +153,6 @@ private:
     distributed<database>& _db;
     gms::gossiper& _gossiper;
     sharded<auth::service>& _auth_service;
-    sharded<cql3::cql_config>& _cql_config;
     sharded<service::migration_notifier>& _mnotifier;
     // Note that this is obviously only valid for the current shard. Users of
     // this facility should elect a shard to be the coordinator based on any
@@ -166,8 +161,8 @@ private:
     // It shouldn't be impossible to actively serialize two callers if the need
     // ever arise.
     bool _loading_new_sstables = false;
-    std::optional<distributed<cql_transport::cql_server>> _cql_server;
-    std::optional<distributed<thrift_server>> _thrift_server;
+    std::unique_ptr<distributed<cql_transport::cql_server>> _cql_server;
+    std::unique_ptr<distributed<thrift_server>> _thrift_server;
     sstring _operation_in_progress;
     bool _force_remove_completion = false;
     bool _ms_stopped = false;
@@ -187,7 +182,7 @@ private:
      */
     bool _for_testing;
 public:
-    storage_service(abort_source& as, distributed<database>& db, gms::gossiper& gossiper, sharded<auth::service>&, sharded<cql3::cql_config>& cql_config, sharded<db::system_distributed_keyspace>&, sharded<db::view::view_update_generator>&, gms::feature_service& feature_service, storage_service_config config, sharded<service::migration_notifier>& mn, locator::token_metadata& tm, /* only for tests */ bool for_testing = false);
+    storage_service(abort_source& as, distributed<database>& db, gms::gossiper& gossiper, sharded<auth::service>&, sharded<db::system_distributed_keyspace>&, sharded<db::view::view_update_generator>&, gms::feature_service& feature_service, storage_service_config config, sharded<service::migration_notifier>& mn, locator::token_metadata& tm, /* only for tests */ bool for_testing = false);
     void isolate_on_error();
     void isolate_on_commit_error();
 
@@ -226,7 +221,7 @@ public:
     }
 
     future<> gossip_snitch_info();
-    future<> gossip_sharding_info();
+    future<> gossip_sharder();
 
     distributed<database>& db() {
         return _db;
@@ -234,6 +229,10 @@ public:
 
     gms::feature_service& features() { return _feature_service; }
     const gms::feature_service& features() const { return _feature_service; }
+
+    semaphore& service_memory_limiter() {
+        return _service_memory_limiter;
+    }
 
 private:
     bool is_auto_bootstrap() const;
@@ -313,9 +312,14 @@ private:
      */
     std::optional<db_clock::time_point> _cdc_streams_ts;
 
-    sstables::sstable_version_types _sstables_format = sstables::sstable_version_types::ka;
+    // _sstables_format is the format used for writing new sstables.
+    // Here we set its default value, but if we discover that all the nodes
+    // in the cluster support a newer format, _sstables_format will be set to
+    // that format. read_sstables_format() also overwrites _sstables_format
+    // if an sstable format was chosen earlier (and this choice was persisted
+    // in the system table).
+    sstables::sstable_version_types _sstables_format = sstables::sstable_version_types::la;
     seastar::named_semaphore _feature_listeners_sem = {1, named_semaphore_exception_factory{"feature listeners"}};
-    feature_enabled_listener _la_feature_listener;
     feature_enabled_listener _mc_feature_listener;
 public:
     sstables::sstable_version_types sstables_format() const { return _sstables_format; }
@@ -912,9 +916,9 @@ public:
     utils::UUID get_local_id() const { return _local_host_id; }
 
     sstring get_config_supported_features();
-    std::set<sstring> get_config_supported_features_set();
+    std::set<std::string_view> get_config_supported_features_set();
 private:
-    std::set<sstring> get_known_features_set();
+    std::set<std::string_view> get_known_features_set();
     future<> set_cql_ready(bool ready);
     void notify_down(inet_address endpoint);
     void notify_left(inet_address endpoint);
@@ -927,7 +931,7 @@ public:
 };
 
 future<> init_storage_service(sharded<abort_source>& abort_sources, distributed<database>& db, sharded<gms::gossiper>& gossiper, sharded<auth::service>& auth_service,
-        sharded<cql3::cql_config>& cql_config, sharded<db::system_distributed_keyspace>& sys_dist_ks,
+        sharded<db::system_distributed_keyspace>& sys_dist_ks,
         sharded<db::view::view_update_generator>& view_update_generator, sharded<gms::feature_service>& feature_service,
         storage_service_config config, sharded<service::migration_notifier>& mn, sharded<locator::token_metadata>& tm);
 future<> deinit_storage_service();

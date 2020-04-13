@@ -67,7 +67,7 @@ const sstring& create_keyspace_statement::keyspace() const
     return _name;
 }
 
-future<> create_keyspace_statement::check_access(const service::client_state& state) const
+future<> create_keyspace_statement::check_access(service::storage_proxy& proxy, const service::client_state& state) const
 {
     return state.has_all_keyspaces_access(auth::permission::CREATE);
 }
@@ -115,7 +115,7 @@ future<shared_ptr<cql_transport::event::schema_change>> create_keyspace_statemen
         try {
             f.get();
             using namespace cql_transport;
-            return make_shared<event::schema_change>(
+            return ::make_shared<event::schema_change>(
                     event::schema_change::change_type::CREATED,
                     event::schema_change::target_type::KEYSPACE,
                     this->keyspace());

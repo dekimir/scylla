@@ -194,7 +194,7 @@ SEASTAR_TEST_CASE(test_secondary_index_if_exists) {
         e.execute_cql("drop index if exists cf_a_idx").get();
         // Expect exceptions::invalid_request_exception: Index 'cf_a_idx'
         // could not be found in any of the tables of keyspace 'ks'
-        assert_that_failed(seastar::futurize_apply([&e] { return e.execute_cql("drop index cf_a_idx"); }));
+        assert_that_failed(seastar::futurize_invoke([&e] { return e.execute_cql("drop index cf_a_idx"); }));
     });
 }
 
@@ -395,31 +395,6 @@ SEASTAR_TEST_CASE(test_index_with_partition_key) {
     });
 }
 
-SEASTAR_TEST_CASE(test_index_with_paging) {
-    return do_with_cql_env_thread([] (auto& e) {
-        e.execute_cql("CREATE TABLE tab (pk int, ck text, v int, v2 int, v3 text, PRIMARY KEY (pk, ck))").get();
-        e.execute_cql("CREATE INDEX ON tab (v)").get();
-
-        sstring big_string(4096, 'j');
-        // There should be enough rows to use multiple pages
-        for (int i = 0; i < 64 * 1024; ++i) {
-            e.execute_cql(format("INSERT INTO tab (pk, ck, v, v2, v3) VALUES ({}, 'hello{}', 1, {}, '{}')", i % 3, i, i, big_string)).get();
-        }
-
-        eventually([&] {
-            auto qo = std::make_unique<cql3::query_options>(db::consistency_level::LOCAL_ONE, infinite_timeout_config, std::vector<cql3::raw_value>{},
-                    cql3::query_options::specific_options{4321, nullptr, {}, api::new_timestamp()});
-            auto res = e.execute_cql("SELECT * FROM tab WHERE v = 1", std::move(qo)).get0();
-            assert_that(res).is_rows().with_size(4321);
-        });
-
-        eventually([&] {
-            auto res = e.execute_cql("SELECT * FROM tab WHERE v = 1").get0();
-            assert_that(res).is_rows().with_size(64 * 1024);
-        });
-    });
-}
-
 SEASTAR_TEST_CASE(test_index_on_pk_ck_with_paging) {
     return do_with_cql_env_thread([] (auto& e) {
         e.execute_cql("CREATE TABLE tab (pk int, pk2 int, ck text, ck2 text, v int, v2 int, v3 text, PRIMARY KEY ((pk, pk2), ck, ck2))").get();
@@ -556,6 +531,43 @@ SEASTAR_TEST_CASE(test_simple_index_paging) {
                 {int32_type->decompose(1)}, {int32_type->decompose(2)}, {int32_type->decompose(1)},
             }});
         });
+
+        {
+            auto qo = std::make_unique<cql3::query_options>(db::consistency_level::LOCAL_ONE, infinite_timeout_config, std::vector<cql3::raw_value>{},
+                    cql3::query_options::specific_options{1, nullptr, {}, api::new_timestamp()});
+            auto res = e.execute_cql("SELECT * FROM tab WHERE c = 2", std::move(qo)).get0();
+            auto paging_state = extract_paging_state(res);
+
+            assert_that(res).is_rows().with_rows({{
+                {int32_type->decompose(3)}, {int32_type->decompose(2)}, {int32_type->decompose(1)},
+            }});
+
+            // Override the actual paging state with one with empty keys,
+            // which is a valid paging state as well, and should return
+            // no rows.
+            paging_state = make_lw_shared<service::pager::paging_state>(partition_key::make_empty(),
+                    std::nullopt, paging_state->get_remaining(), paging_state->get_query_uuid(),
+                    paging_state->get_last_replicas(), paging_state->get_query_read_repair_decision(),
+                    paging_state->get_rows_fetched_for_last_partition());
+
+            qo = std::make_unique<cql3::query_options>(db::consistency_level::LOCAL_ONE, infinite_timeout_config, std::vector<cql3::raw_value>{},
+                    cql3::query_options::specific_options{1, paging_state, {}, api::new_timestamp()});
+            res = e.execute_cql("SELECT * FROM tab WHERE c = 2", std::move(qo)).get0();
+
+            assert_that(res).is_rows().with_size(0);
+        }
+
+        {
+            // An artificial paging state with an empty key pair is also valid and is expected
+            // not to return rows (since no row matches an empty partition key)
+            auto paging_state = make_lw_shared<service::pager::paging_state>(partition_key::make_empty(), std::nullopt,
+                    1, utils::make_random_uuid(), service::pager::paging_state::replicas_per_token_range{}, std::nullopt, 1);
+            auto qo = std::make_unique<cql3::query_options>(db::consistency_level::LOCAL_ONE, infinite_timeout_config, std::vector<cql3::raw_value>{},
+                    cql3::query_options::specific_options{1, paging_state, {}, api::new_timestamp()});
+            auto res = e.execute_cql("SELECT * FROM tab WHERE v = 1", std::move(qo)).get0();
+
+            assert_that(res).is_rows().with_size(0);
+        }
     });
 }
 
@@ -1220,6 +1232,49 @@ SEASTAR_TEST_CASE(test_computed_columns) {
         assert_that(msg).is_rows().with_rows({
             {{bytes_type->decompose(token_computation)}},
             {{bytes_type->decompose(token_computation)}}
+        });
+    });
+}
+
+// Ref: #5708 - filtering should be applied on an indexed column
+// if the restriction is not eligible for indexing (it's not EQ)
+SEASTAR_TEST_CASE(test_filtering_indexed_column) {
+    return do_with_cql_env_thread([] (auto& e) {
+        cquery_nofail(e, "CREATE TABLE test_index (a INT, b INT, c INT, d INT, e INT, PRIMARY KEY ((a, b),c));");
+        cquery_nofail(e, "CREATE INDEX ON test_index(d);");
+        cquery_nofail(e, "INSERT INTO test_index (a, b, c, d, e) VALUES (1, 2, 3, 4, 5);");
+        cquery_nofail(e, "INSERT INTO test_index (a, b, c, d, e) VALUES (11, 22, 33, 44, 55);");
+        cquery_nofail(e, "select c,e from ks.test_index where d = 44 ALLOW FILTERING;");
+        cquery_nofail(e, "select a from ks.test_index where d > 43 ALLOW FILTERING;");
+
+        eventually([&] {
+            auto msg = cquery_nofail(e, "select c,e from ks.test_index where d = 44 ALLOW FILTERING;");
+            assert_that(msg).is_rows().with_rows({
+                {int32_type->decompose(33), int32_type->decompose(55)}
+            });
+        });
+        eventually([&] {
+            auto msg = cquery_nofail(e, "select a from ks.test_index where d > 43 ALLOW FILTERING;");
+            // NOTE: Column d will also be fetched, because it needs to be filtered.
+            // It's not the case in the previous select, where d was only used as an index.
+            assert_that(msg).is_rows().with_rows({
+                {int32_type->decompose(11), int32_type->decompose(44)}
+            });
+        });
+
+        cquery_nofail(e, "CREATE INDEX ON test_index(b);");
+        cquery_nofail(e, "CREATE INDEX ON test_index(c);");
+        eventually([&] {
+            auto msg = cquery_nofail(e, "select e from ks.test_index where b > 12 ALLOW FILTERING;");
+            assert_that(msg).is_rows().with_rows({
+                {int32_type->decompose(55), int32_type->decompose(22)}
+            });
+        });
+        eventually([&] {
+            auto msg = cquery_nofail(e, "select d from ks.test_index where c > 25 ALLOW FILTERING;");
+            assert_that(msg).is_rows().with_rows({
+                {int32_type->decompose(44), int32_type->decompose(33)}
+            });
         });
     });
 }

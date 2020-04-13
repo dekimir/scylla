@@ -22,6 +22,7 @@
 #include "build_id.hh"
 #include "supervisor.hh"
 #include "database.hh"
+#include <seastar/core/reactor.hh>
 #include <seastar/core/app-template.hh>
 #include <seastar/core/distributed.hh>
 #include "transport/server.hh"
@@ -433,12 +434,8 @@ int main(int ac, char** av) {
     app_template app(std::move(app_cfg));
 
     auto ext = std::make_shared<db::extensions>();
-    ext->add_schema_extension(alternator::tags_extension::NAME, [](db::extensions::schema_ext_config cfg) {
-        return std::visit([](auto v) { return ::make_shared<alternator::tags_extension>(v); }, cfg);
-    });
-    ext->add_schema_extension(cdc::cdc_extension::NAME, [](db::extensions::schema_ext_config cfg) {
-        return std::visit([](auto v) { return ::make_shared<cdc::cdc_extension>(v); }, cfg);
-    });
+    ext->add_schema_extension<alternator::tags_extension>(alternator::tags_extension::NAME);
+    ext->add_schema_extension<cdc::cdc_extension>(cdc::cdc_extension::NAME);
 
     auto cfg = make_lw_shared<db::config>(ext);
     auto init = app.get_options_description().add_options();
@@ -550,8 +547,11 @@ int main(int ac, char** av) {
             gms::feature_config fcfg = gms::feature_config_from_db_config(*cfg);
 
             feature_service.start(fcfg).get();
-            // FIXME: feature_service.stop(), when we fix up shutdown
-            dht::set_global_partitioner(cfg->partitioner(), cfg->murmur3_partitioner_ignore_msb_bits());
+            auto stop_feature_service = defer_verbose_shutdown("feature service", [&feature_service] {
+                feature_service.stop().get();
+            });
+
+            schema::set_default_partitioner(cfg->partitioner(), cfg->murmur3_partitioner_ignore_msb_bits());
             auto make_sched_group = [&] (sstring name, unsigned shares) {
                 if (cfg->cpu_scheduler()) {
                     return seastar::create_scheduling_group(name, shares).get0();
@@ -663,9 +663,17 @@ int main(int ac, char** av) {
 
             supervisor::notify("starting tokens manager");
             token_metadata.start().get();
-            auto stop_token_metadata = defer_verbose_shutdown("token metadata", [ &token_metadata ] {
-                token_metadata.stop().get();
-            });
+            // storage_proxy holds a reference on it and is not yet stopped.
+            // what's worse is that the calltrace
+            //   storage_proxy::do_query 
+            //                ::query_partition_key_range
+            //                ::query_partition_key_range_concurrent
+            // leaves unwaited futures on the reactor and once it gets there
+            // the token_metadata instance is accessed and ...
+            //
+            //auto stop_token_metadata = defer_verbose_shutdown("token metadata", [ &token_metadata ] {
+            //    token_metadata.stop().get();
+            //});
 
             supervisor::notify("starting migration manager notifier");
             mm_notifier.start().get();
@@ -712,7 +720,7 @@ int main(int ac, char** av) {
             supervisor::notify("initializing storage service");
             service::storage_service_config sscfg;
             sscfg.available_memory = memory::stats().total_memory();
-            service::init_storage_service(stop_signal.as_sharded_abort_source(), db, gossiper, auth_service, cql_config, sys_dist_ks, view_update_generator, feature_service, sscfg, mm_notifier, token_metadata).get();
+            service::init_storage_service(stop_signal.as_sharded_abort_source(), db, gossiper, auth_service, sys_dist_ks, view_update_generator, feature_service, sscfg, mm_notifier, token_metadata).get();
             supervisor::notify("starting per-shard database core");
 
             // Note: changed from using a move here, because we want the config object intact.
@@ -828,7 +836,7 @@ int main(int ac, char** av) {
             });
             supervisor::notify("starting query processor");
             cql3::query_processor::memory_config qp_mcfg = {memory::stats().total_memory() / 256, memory::stats().total_memory() / 2560};
-            qp.start(std::ref(proxy), std::ref(db), std::ref(mm_notifier), qp_mcfg).get();
+            qp.start(std::ref(proxy), std::ref(db), std::ref(mm_notifier), qp_mcfg, std::ref(cql_config)).get();
             // #293 - do not stop anything
             // engine().at_exit([&qp] { return qp.stop(); });
             supervisor::notify("initializing batchlog manager");
@@ -1018,7 +1026,7 @@ int main(int ac, char** av) {
                         return cf_cache_hitrate_calculator.stop().get();
                     }
             );
-            cf_cache_hitrate_calculator.local().run_on(engine().cpu_id());
+            cf_cache_hitrate_calculator.local().run_on(this_shard_id());
 
             supervisor::notify("starting view update backlog broker");
             static sharded<service::view_update_backlog_broker> view_backlog_broker;
@@ -1056,10 +1064,12 @@ int main(int ac, char** av) {
             // Truncate `clients' CF - this table should not persist between server restarts.
             clear_clientlist().get();
 
-            supervisor::notify("starting native transport");
-            with_scheduling_group(dbcfg.statement_scheduling_group, [] {
-                return service::get_local_storage_service().start_native_transport();
-            }).get();
+            if (cfg->start_native_transport()) {
+                supervisor::notify("starting native transport");
+                with_scheduling_group(dbcfg.statement_scheduling_group, [] {
+                    return service::get_local_storage_service().start_native_transport();
+                }).get();
+            }
             if (cfg->start_rpc()) {
                 with_scheduling_group(dbcfg.statement_scheduling_group, [] {
                     return service::get_local_storage_service().start_rpc_server();
@@ -1070,16 +1080,19 @@ int main(int ac, char** av) {
                 static sharded<alternator::executor> alternator_executor;
                 static sharded<alternator::server> alternator_server;
 
-                if (!cfg->check_experimental(db::experimental_features_t::LWT)) {
-                    throw std::runtime_error("Alternator enabled, but needs experimental LWT feature which wasn't enabled");
-                }
                 net::inet_address addr;
                 try {
                     addr = net::dns::get_host_by_name(cfg->alternator_address(), family).get0().addr_list.front();
                 } catch (...) {
                     std::throw_with_nested(std::runtime_error(fmt::format("Unable to resolve alternator_address {}", cfg->alternator_address())));
                 }
-                alternator_executor.start(std::ref(proxy), std::ref(mm)).get();
+                // Create an smp_service_group to be used for limiting the
+                // concurrency when forwarding Alternator request between
+                // shards - if necessary for LWT.
+                smp_service_group_config c;
+                c.max_nonlocal_requests = 5000;
+                smp_service_group ssg = create_smp_service_group(c).get0();
+                alternator_executor.start(std::ref(proxy), std::ref(mm), ssg).get();
                 alternator_server.start(std::ref(alternator_executor)).get();
                 std::optional<uint16_t> alternator_port;
                 if (cfg->alternator_port()) {
@@ -1110,12 +1123,14 @@ int main(int ac, char** av) {
                         [addr, alternator_port, alternator_https_port, creds = std::move(creds), alternator_enforce_authorization] () mutable {
                     return alternator_server.invoke_on_all(
                             [addr, alternator_port, alternator_https_port, creds = std::move(creds), alternator_enforce_authorization] (alternator::server& server) mutable {
-                        return server.init(addr, alternator_port, alternator_https_port, creds, alternator_enforce_authorization);
+                        auto& ss = service::get_local_storage_service();
+                        return server.init(addr, alternator_port, alternator_https_port, creds, alternator_enforce_authorization, &ss.service_memory_limiter());
                     });
                 }).get();
-                auto stop_alternator = [] {
+                auto stop_alternator = [ssg] {
                     alternator_server.stop().get();
                     alternator_executor.stop().get();
+                    destroy_smp_service_group(ssg).get();
                 };
 
                 ss.register_client_shutdown_hook("alternator", std::move(stop_alternator));
@@ -1181,7 +1196,7 @@ int main(int ac, char** av) {
             startlog.info("Signal received; shutting down");
 	    // At this point, all objects destructors and all shutdown hooks registered with defer() are executed
           } catch (...) {
-            startlog.info("Startup failed: {}", std::current_exception());
+            startlog.error("Startup failed: {}", std::current_exception());
             // We should be returning 1 here, but the system is not yet prepared for orderly rollback of main() objects
             // and thread_local variables.
             _exit(1);

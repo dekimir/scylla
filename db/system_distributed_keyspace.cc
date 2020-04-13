@@ -33,7 +33,7 @@
 #include "cdc/generation.hh"
 #include "cql3/query_processor.hh"
 
-#include <seastar/core/reactor.hh>
+#include <seastar/core/seastar.hh>
 #include <seastar/core/shared_ptr.hh>
 
 #include <boost/range/adaptor/transformed.hpp>
@@ -46,13 +46,12 @@ extern logging::logger cdc_log;
 
 namespace db {
 
-thread_local data_type cdc_stream_tuple_type = tuple_type_impl::get_instance({long_type, long_type});
-thread_local data_type cdc_streams_set_type = set_type_impl::get_instance(cdc_stream_tuple_type, false);
+thread_local data_type cdc_streams_set_type = set_type_impl::get_instance(bytes_type, false);
 
 /* See `token_range_description` struct */
-thread_local data_type cdc_streams_list_type = list_type_impl::get_instance(cdc_stream_tuple_type, false);
+thread_local data_type cdc_streams_list_type = list_type_impl::get_instance(bytes_type, false);
 thread_local data_type cdc_token_range_description_type = tuple_type_impl::get_instance(
-        { utf8_type             // dht::token token_range_end;
+        { long_type             // dht::token token_range_end;
         , cdc_streams_list_type // std::vector<stream_id> streams;
         , byte_type             // uint8_t sharding_ignore_msb;
         });
@@ -120,12 +119,12 @@ system_distributed_keyspace::system_distributed_keyspace(cql3::query_processor& 
 }
 
 future<> system_distributed_keyspace::start() {
-    if (engine().cpu_id() != 0) {
+    if (this_shard_id() != 0) {
         return make_ready_future<>();
     }
 
     static auto ignore_existing = [] (seastar::noncopyable_function<future<>()> func) {
-        return futurize_apply(std::move(func)).handle_exception_type([] (exceptions::already_exists_exception& ignored) { });
+        return futurize_invoke(std::move(func)).handle_exception_type([] (exceptions::already_exists_exception& ignored) { });
     };
 
     // We use min_timestamp so that the default keyspace metadata will lose with any manual adjustments.
@@ -236,11 +235,11 @@ static list_type_impl::native_type prepare_cdc_generation_description(const cdc:
     for (auto& e: description.entries()) {
         list_type_impl::native_type streams;
         for (auto& s: e.streams) {
-            streams.push_back(make_tuple_value(cdc_stream_tuple_type, { s.first(), s.second() }));
+            streams.push_back(data_value(s.to_bytes()));
         }
 
         ret.push_back(make_tuple_value(cdc_token_range_description_type,
-                { data_value(e.token_range_end.to_sstring())
+                { data_value(dht::token::to_int64(e.token_range_end))
                 , make_list_value(cdc_streams_list_type, std::move(streams))
                 , data_value(int8_t(e.sharding_ignore_msb))
                 }));
@@ -248,19 +247,11 @@ static list_type_impl::native_type prepare_cdc_generation_description(const cdc:
     return ret;
 }
 
-static cdc::stream_id get_stream_from_value(const data_value& v) {
-    auto tup = value_cast<tuple_type_impl::native_type>(v);
-    if (tup.size() != 2) {
-        on_internal_error(cdc_log, "get_stream_from_value: stream tuple type size != 2");
-    }
-    return { value_cast<int64_t>(tup[0]), value_cast<int64_t>(tup[1]) };
-}
-
 static std::vector<cdc::stream_id> get_streams_from_list_value(const data_value& v) {
     std::vector<cdc::stream_id> ret;
     auto& list_val = value_cast<list_type_impl::native_type>(v);
     for (auto& s_val: list_val) {
-        ret.push_back(get_stream_from_value(s_val));
+        ret.push_back(value_cast<bytes>(s_val));
     }
     return ret;
 }
@@ -271,7 +262,7 @@ static cdc::token_range_description get_token_range_description_from_value(const
         on_internal_error(cdc_log, "get_token_range_description_from_value: stream tuple type size != 3");
     }
 
-    auto token = dht::token::from_sstring(value_cast<sstring>(tup[0]));
+    auto token = dht::token::from_int64(value_cast<int64_t>(tup[0]));
     auto streams = get_streams_from_list_value(tup[1]);
     auto sharding_ignore_msb = uint8_t(value_cast<int8_t>(tup[2]));
 
@@ -334,7 +325,7 @@ system_distributed_keyspace::expire_cdc_topology_description(
 static set_type_impl::native_type prepare_cdc_streams(const std::vector<cdc::stream_id>& streams) {
     set_type_impl::native_type ret;
     for (auto& s: streams) {
-        ret.push_back(make_tuple_value(cdc_stream_tuple_type, { s.first(), s.second() }));
+        ret.push_back(data_value(s.to_bytes()));
     }
     return ret;
 }

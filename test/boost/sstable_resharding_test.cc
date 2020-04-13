@@ -22,38 +22,9 @@
 #include "test/lib/flat_mutation_reader_assertions.hh"
 #include "test/lib/sstable_utils.hh"
 #include "service/storage_proxy.hh"
+#include "db/config.hh"
 
 using namespace sstables;
-
-static inline std::vector<std::pair<sstring, dht::token>> token_generation_for_shard(shard_id shard, unsigned tokens_to_generate) {
-    unsigned tokens = 0;
-    unsigned key_id = 0;
-    std::vector<std::pair<sstring, dht::token>> key_and_token_pair;
-
-    key_and_token_pair.reserve(tokens_to_generate);
-    dht::murmur3_partitioner partitioner(smp::count, 12);
-
-    while (tokens < tokens_to_generate) {
-        sstring key = to_sstring(key_id++);
-        dht::token token = create_token_from_key(partitioner, key);
-        if (shard != partitioner.shard_of(token)) {
-            continue;
-        }
-        tokens++;
-        key_and_token_pair.emplace_back(key, token);
-    }
-    assert(key_and_token_pair.size() == tokens_to_generate);
-
-    std::sort(key_and_token_pair.begin(),key_and_token_pair.end(), [] (auto& i, auto& j) {
-        return i.second < j.second;
-    });
-
-    return key_and_token_pair;
-}
-
-static std::vector<std::pair<sstring, dht::token>> token_generation_for_current_shard(unsigned tokens_to_generate) {
-    return token_generation_for_shard(engine().cpu_id(), tokens_to_generate);
-}
 
 static schema_ptr get_schema() {
     auto builder = schema_builder("tests", "sstable_resharding_test")
@@ -85,8 +56,9 @@ void run_sstable_resharding_test() {
             m.set_clustered_cell(clustering_key::make_empty(), bytes("value"), data_value(int32_t(value)), api::timestamp_type(0));
             return m;
         };
+        auto cfg = std::make_unique<db::config>();
         for (auto i : boost::irange(0u, smp::count)) {
-            auto key_token_pair = token_generation_for_shard(i, keys_per_shard);
+            auto key_token_pair = token_generation_for_shard(keys_per_shard, i, cfg->murmur3_partitioner_ignore_msb_bits());
             BOOST_REQUIRE(key_token_pair.size() == keys_per_shard);
             muts[i].reserve(keys_per_shard);
             for (auto k : boost::irange(0u, keys_per_shard)) {
@@ -109,7 +81,9 @@ void run_sstable_resharding_test() {
     auto filter_fname = sstables::test(sst).filename(component_type::Filter);
     uint64_t bloom_filter_size_before = file_size(filter_fname).get0();
 
-    auto creator = [&env, &cf, &tmp, version] (shard_id shard) mutable {
+    auto descriptor = sstables::compaction_descriptor({sst}, 0, std::numeric_limits<uint64_t>::max());
+    descriptor.options = sstables::compaction_options::make_reshard();
+    descriptor.creator = [&env, &cf, &tmp, version] (shard_id shard) mutable {
         // we need generation calculated by instance of cf at requested shard,
         // or resource usage wouldn't be fairly distributed among shards.
         auto gen = smp::submit_to(shard, [&cf] () {
@@ -119,7 +93,8 @@ void run_sstable_resharding_test() {
         return env.make_sstable(cf->schema(), tmp.path().string(), gen,
             version, sstables::sstable::format_types::big);
     };
-    auto new_sstables = sstables::reshard_sstables({ sst }, *cf, creator, std::numeric_limits<uint64_t>::max(), 0).get0();
+    auto info = sstables::compact_sstables(std::move(descriptor), *cf).get0();
+    auto new_sstables = std::move(info.new_sstables);
     BOOST_REQUIRE(new_sstables.size() == smp::count);
 
     uint64_t bloom_filter_size_after = 0;
@@ -182,7 +157,7 @@ SEASTAR_THREAD_TEST_CASE(sstable_resharding_strategy_tests) {
         {
             auto ssts = std::vector<sstables::shared_sstable>{ sst1, sst2 };
             auto descriptors = lcs.get_resharding_jobs(*cf, ssts);
-            auto expected_jobs = ssts.size()/smp::count + ssts.size()%smp::count;
+            auto expected_jobs = (ssts.size()+smp::count-1)/smp::count;
             BOOST_REQUIRE(descriptors.size() == expected_jobs);
         }
     }

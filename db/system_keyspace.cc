@@ -187,7 +187,7 @@ schema_ptr batchlog() {
         {{"cf_id", uuid_type}},
         // regular columns
         {
-            {"in_progress_ballot", timeuuid_type},
+            {"promise", timeuuid_type},
             {"most_recent_commit", bytes_type}, // serialization format is defined by frozen_mutation idl
             {"most_recent_commit_at", timeuuid_type},
             {"proposal", bytes_type}, // serialization format is defined by frozen_mutation idl
@@ -1297,10 +1297,18 @@ typedef std::unordered_map<truncation_key, truncation_record> truncation_map;
 
 static constexpr uint8_t current_version = 1;
 static bool need_legacy_truncation_records = true;
-static thread_local shared_promise<> migration_complete;
+
+static thread_local struct {
+    std::optional<future<>> done;
+    gms::feature::listener_registration reg;
+} migration_complete;
 
 future<> wait_for_truncation_record_migration_complete() {
-   return migration_complete.get_shared_future();
+    // caller of this helper (test) first synchronously
+    // enables the feature migration_complete listens on,
+    // thus making thie future emplaced here
+    assert(migration_complete.done);
+    return std::move(*migration_complete.done);
 }
 
 /**
@@ -1425,8 +1433,7 @@ future<> migrate_truncation_records(const gms::feature& cluster_supports_truncat
             });
         }).then([&cluster_supports_truncation_table, tmp = std::move(tmp)] {
             if (!cluster_supports_truncation_table || !tmp.empty()) {
-                //FIXME: discarded future.
-                (void)cluster_supports_truncation_table.when_enabled().then([] {
+                migration_complete.reg = cluster_supports_truncation_table.when_enabled([] {
                     // this potentially races with a truncation, i.e. someone could be inserting into
                     // the legacy column while we delete it. But this is ok, it will just mean we have
                     // some unneeded data and will do a merge again next boot, but eventually we
@@ -1435,13 +1442,10 @@ future<> migrate_truncation_records(const gms::feature& cluster_supports_truncat
                     slogger.log(level, "Got cluster agreement on truncation table feature. Removing legacy records.");
                     need_legacy_truncation_records = false;
                     sstring req = format("DELETE truncated_at from system.{} WHERE key = '{}'", LOCAL, LOCAL);
-                    return qctx->qp().execute_internal(req).discard_result().then([level] {
+
+                    migration_complete.done = qctx->qp().execute_internal(req).discard_result().then([level] {
                         slogger.log(level, "Legacy records deleted.");
-                        return force_blocking_flush(LOCAL).then([] {
-                            return smp::invoke_on_all([] {
-                                migration_complete.set_value();
-                            });
-                        });
+                        return force_blocking_flush(LOCAL);
                     });
                 });
             }
@@ -2107,7 +2111,7 @@ future<> register_view_for_building(sstring ks_name, sstring view_name, const dh
             std::move(ks_name),
             std::move(view_name),
             0,
-            int32_t(engine().cpu_id()),
+            int32_t(this_shard_id()),
             token.to_sstring()).discard_result();
 }
 
@@ -2119,7 +2123,7 @@ future<> update_view_build_progress(sstring ks_name, sstring view_name, const dh
             std::move(ks_name),
             std::move(view_name),
             token.to_sstring(),
-            int32_t(engine().cpu_id())).discard_result();
+            int32_t(this_shard_id())).discard_result();
 }
 
 future<> remove_view_build_progress_across_all_shards(sstring ks_name, sstring view_name) {
@@ -2134,7 +2138,7 @@ future<> remove_view_build_progress(sstring ks_name, sstring view_name) {
             format("DELETE FROM system.{} WHERE keyspace_name = ? AND view_name = ? AND cpu_id = ?", v3::SCYLLA_VIEWS_BUILDS_IN_PROGRESS),
             std::move(ks_name),
             std::move(view_name),
-            int32_t(engine().cpu_id())).discard_result();
+            int32_t(this_shard_id())).discard_result();
 }
 
 future<> mark_view_as_built(sstring ks_name, sstring view_name) {
@@ -2197,8 +2201,8 @@ future<service::paxos::paxos_state> load_paxos_state(const partition_key& key, s
             return service::paxos::paxos_state();
         }
         auto& row = results->one();
-        auto promised = row.has("in_progress_ballot")
-                        ? row.get_as<utils::UUID>("in_progress_ballot") : utils::UUID_gen::min_time_UUID(0);
+        auto promised = row.has("promise")
+                        ? row.get_as<utils::UUID>("promise") : utils::UUID_gen::min_time_UUID(0);
 
         std::optional<service::paxos::proposal> accepted;
         if (row.has("proposal")) {
@@ -2224,7 +2228,7 @@ static int32_t paxos_ttl_sec(const schema& s) {
 }
 
 future<> save_paxos_promise(const schema& s, const partition_key& key, const utils::UUID& ballot, db::timeout_clock::time_point timeout) {
-    static auto cql = format("UPDATE system.{} USING TIMESTAMP ? AND TTL ? SET in_progress_ballot = ? WHERE row_key = ? AND cf_id = ?", PAXOS);
+    static auto cql = format("UPDATE system.{} USING TIMESTAMP ? AND TTL ? SET promise = ? WHERE row_key = ? AND cf_id = ?", PAXOS);
     return execute_cql_with_timeout(cql,
             timeout,
             utils::UUID_gen::micros_timestamp(ballot),
@@ -2237,7 +2241,7 @@ future<> save_paxos_promise(const schema& s, const partition_key& key, const uti
 
 future<> save_paxos_proposal(const schema& s, const service::paxos::proposal& proposal, db::timeout_clock::time_point timeout) {
     static auto cql = format("UPDATE system.{} USING TIMESTAMP ? AND TTL ? SET proposal_ballot = ?, proposal = ? WHERE row_key = ? AND cf_id = ?", PAXOS);
-    partition_key_view key = proposal.update.key(s);
+    partition_key_view key = proposal.update.key();
     return execute_cql_with_timeout(cql,
             timeout,
             utils::UUID_gen::micros_timestamp(proposal.ballot),
@@ -2258,13 +2262,27 @@ future<> save_paxos_decision(const schema& s, const service::paxos::proposal& de
     // recent commit.
     static auto cql = format("UPDATE system.{} USING TIMESTAMP ? AND TTL ? SET proposal_ballot = null, proposal = null,"
             " most_recent_commit_at = ?, most_recent_commit = ? WHERE row_key = ? AND cf_id = ?", PAXOS);
-    partition_key_view key = decision.update.key(s);
+    partition_key_view key = decision.update.key();
     return execute_cql_with_timeout(cql,
             timeout,
             utils::UUID_gen::micros_timestamp(decision.ballot),
             paxos_ttl_sec(s),
             decision.ballot,
             ser::serialize_to_buffer<bytes>(decision.update),
+            to_legacy(*key.get_compound_type(s), key.representation()),
+            s.id()
+        ).discard_result();
+}
+
+future<> delete_paxos_decision(const schema& s, const partition_key& key, const utils::UUID& ballot, db::timeout_clock::time_point timeout) {
+    // This should be called only if a learn stage succeeded on all replicas.
+    // In this case we can remove the paxos row using ballot's timestamp which
+    // guarantees that if there is more recent round it will not be affected.
+    static auto cql = format("DELETE FROM system.{} USING TIMESTAMP ?  WHERE row_key = ? AND cf_id = ?", PAXOS);
+
+    return execute_cql_with_timeout(cql,
+            timeout,
+            utils::UUID_gen::micros_timestamp(ballot),
             to_legacy(*key.get_compound_type(s), key.representation()),
             s.id()
         ).discard_result();

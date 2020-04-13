@@ -105,14 +105,11 @@ table_schema_version schema_mutations::digest() const {
     return utils::UUID_gen::get_name_UUID(h.finalize());
 }
 
-std::optional<std::map<sstring, sstring>> schema_mutations::cdc_options() const {
+std::optional<sstring> schema_mutations::partitioner() const {
     if (_scylla_tables) {
         auto rs = query::result_set(*_scylla_tables);
         if (!rs.empty()) {
-            auto map = db::schema_tables::get_map<sstring, sstring>(rs.row(0), "cdc");
-            if (map && !map->empty()) {
-                return map;
-            }
+            return rs.row(0).get<sstring>("partitioner");
         }
     }
     return { };

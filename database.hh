@@ -62,7 +62,6 @@
 #include "atomic_cell.hh"
 #include "query-request.hh"
 #include "keys.hh"
-#include "mutation.hh"
 #include "memtable.hh"
 #include <list>
 #include "mutation_reader.hh"
@@ -78,7 +77,7 @@
 #include <seastar/core/shared_future.hh>
 #include <seastar/core/metrics_registration.hh>
 #include "tracing/trace_state.hh"
-#include "db/view/view.hh"
+#include "db/view/view_stats.hh"
 #include "db/view/view_update_backlog.hh"
 #include "db/view/row_locking.hh"
 #include "lister.hh"
@@ -98,6 +97,7 @@
 class cell_locker;
 class cell_locker_stats;
 class locked_cell;
+class mutation;
 
 class frozen_mutation;
 class reconcilable_result;
@@ -546,6 +546,7 @@ private:
     // The master resides in system.truncated table
     db_clock::time_point _truncated_at = db_clock::time_point::min();
 
+    bool _is_bootstrap_or_replace = false;
 public:
     future<> add_sstable_and_update_cache(sstables::shared_sstable sst);
     future<> move_sstables_from_staging(std::vector<sstables::shared_sstable>);
@@ -563,6 +564,14 @@ public:
     }
     db_clock::time_point get_truncation_record() {
         return _truncated_at;
+    }
+
+    void notify_bootstrap_or_replace_start() {
+        _is_bootstrap_or_replace = true;
+    }
+
+    void notify_bootstrap_or_replace_end() {
+        _is_bootstrap_or_replace = false;
     }
 private:
     void update_stats_for_new_sstable(uint64_t disk_space_used_by_sstable, const std::vector<unsigned>& shards_for_the_sstable) noexcept;
@@ -597,7 +606,7 @@ private:
         assert(_sstable_generation);
         // FIXME: better way of ensuring we don't attempt to
         // overwrite an existing table.
-        return (*_sstable_generation)++ * smp::count + engine().cpu_id();
+        return (*_sstable_generation)++ * smp::count + this_shard_id();
     }
 
     // inverse of calculate_generation_for_new_table(), used to determine which
@@ -830,11 +839,6 @@ public:
     future<> compact_all_sstables();
     // Compact all sstables provided in the vector.
     future<> compact_sstables(sstables::compaction_descriptor descriptor);
-    // Compact all sstables provided in the descriptor one-by-one.
-    //
-    // Will call `compact_sstables()` for each sstable. Use by compaction
-    // types such as cleanup or upgrade.
-    future<> rewrite_sstables(sstables::compaction_descriptor descriptor);
 
     future<bool> snapshot_exists(sstring name);
 
@@ -870,7 +874,20 @@ public:
     }
 
     bool compaction_enforce_min_threshold() const {
-        return _config.compaction_enforce_min_threshold;
+        return _config.compaction_enforce_min_threshold || _is_bootstrap_or_replace;
+    }
+
+    unsigned min_compaction_threshold() {
+        // During receiving stream operations, the less we compact the faster streaming is. For
+        // bootstrap and replace thereThere are no readers so it is fine to be less aggressive with
+        // compactions as long as we don't ignore them completely (this could create a problem for
+        // when streaming ends)
+        if (_is_bootstrap_or_replace) {
+            auto target = std::min(schema()->max_compaction_threshold(), 16);
+            return std::max(schema()->min_compaction_threshold(), target);
+        } else {
+            return schema()->min_compaction_threshold();
+        }
     }
 
     /*!
@@ -1612,7 +1629,7 @@ future<> stop_database(sharded<database>& db);
 //
 // Shard readers are created via `table::make_streaming_reader()`.
 // Range generator must generate disjoint, monotonically increasing ranges.
-flat_mutation_reader make_multishard_streaming_reader(distributed<database>& db, dht::i_partitioner& partitioner, schema_ptr schema,
+flat_mutation_reader make_multishard_streaming_reader(distributed<database>& db, schema_ptr schema,
         std::function<std::optional<dht::partition_range>()> range_generator);
 
 future<utils::UUID> update_schema_version(distributed<service::storage_proxy>& proxy, db::schema_features);
