@@ -1022,14 +1022,6 @@ bytes_opt get_value(const column_value& col, const selection& selection, row_dat
     }
 }
 
-// True iff lhs is a single list column.  In this case, rhs holds list elements, not tuple values for
-// multi-column comparison.
-//
-// TODO: eliminate this; the front-end should make a more sensible representation for this.
-bool is_special_list_case(const std::vector<column_value>& columns) {
-    return columns.size() == 1 && columns[0].col->type->is_list();
-}
-
 /// The comparator type for cv.
 data_type comparator(const column_value& cv) {
     return cv.sub ?
@@ -1052,8 +1044,11 @@ bool equal(const bytes_opt& rhs, const column_value& lhs,
 /// True iff columns' values equal t.
 bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const selection& selection,
            row_data& cells, const query_options& options) {
-    auto multi = dynamic_pointer_cast<multi_item_terminal>(t);
-    if (multi && !is_special_list_case(columns)) {
+    if (columns.size() > 1) {
+        auto multi = dynamic_pointer_cast<multi_item_terminal>(t);
+        if (!multi) {
+            throw std::logic_error("RHS for multi-column is not a tuple");
+        }
         const auto& rhs = multi->get_elements();
         if (__builtin_expect(rhs.size() != columns.size(), false)) {
             throw std::logic_error("LHS and RHS size mismatch");
@@ -1064,11 +1059,10 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
             }
         }
         return true;
-    } else {
-        if (columns.size() != 1) {
-            throw std::logic_error("RHS for multi-column is not a tuple");
-        }
+    } else if (columns.size() == 1) {
         return equal(to_bytes_opt(t->bind_and_get(options)), columns[0], selection, cells, options);
+    } else {
+        throw std::logic_error("empty tuple on LHS of =");
     }
 }
 
@@ -1094,8 +1088,11 @@ bool limits(const binary_operator& opr, const selection& selection, row_data& ce
         throw std::logic_error("limits() called on non-slice op");
     }
     const auto& columns = std::get<0>(opr.lhs);
-    auto multi = dynamic_pointer_cast<multi_item_terminal>(opr.rhs);
-    if (multi && !is_special_list_case(columns)) {
+    if (columns.size() > 1) {
+        auto multi = dynamic_pointer_cast<multi_item_terminal>(opr.rhs);
+        if (!multi) {
+            throw std::logic_error("RHS for multi-column is not a tuple");
+        }
         const auto& rhs = multi->get_elements();
         if (rhs.size() != columns.size()) {
             throw std::logic_error("LHS and RHS size mismatch");
@@ -1126,10 +1123,7 @@ bool limits(const binary_operator& opr, const selection& selection, row_data& ce
         }
         // Getting here means LHS == RHS.
         return opr.op == operator_type::LTE || opr.op == operator_type::GTE;
-    } else {
-        if (columns.size() != 1) {
-            throw std::logic_error("RHS for multi-column is not a tuple");
-        }
+    } else if (columns.size() == 1) {
         auto lhs = get_value(columns[0], selection, cells, options);
         if (!lhs) {
             lhs = bytes();
@@ -1139,6 +1133,8 @@ bool limits(const binary_operator& opr, const selection& selection, row_data& ce
             return true; // Compatible with old code, which creates an unbounded slice containing all points.
         }
         return limits(*lhs, opr.op, *rhs, *columns[0].col->type);
+    } else {
+        throw std::logic_error("empty tuple on LHS of an inequality");
     }
 }
 
