@@ -90,7 +90,7 @@ public:
         auto as_pkr = static_pointer_cast<clustering_key_restrictions>(other);
         do_merge_with(as_pkr);
         update_asc_desc_existence();
-        wip_equivalent = make_conjunction(wip_equivalent, other->wip_equivalent);
+        expression = make_conjunction(expression, other->expression);
     }
 
     bool is_satisfied_by(const schema& schema,

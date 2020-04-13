@@ -174,7 +174,7 @@ protected:
         auto term = to_term(to_receivers(*schema, column_def), *_value, db, schema->ks_name(), bound_names);
         auto restr = ::make_shared<restrictions::single_column_restriction::slice>(column_def, bound, inclusive, term);
         using namespace restrictions::wip;
-        restr->wip_equivalent = ::make_shared<expression>(
+        restr->expression = ::make_shared<expression>(
                 binary_operator{std::vector{column_value(&column_def)}, _relation_type, term});
         return restr;
     }
@@ -186,7 +186,7 @@ protected:
         auto term = to_term(to_receivers(*schema, column_def), *_value, db, schema->ks_name(), bound_names);
         auto restr = ::make_shared<restrictions::single_column_restriction::contains>(column_def, term, is_key);
         using namespace restrictions::wip;
-        restr->wip_equivalent = ::make_shared<expression>(binary_operator{
+        restr->expression = ::make_shared<expression>(binary_operator{
                 std::vector{column_value(&column_def)},
                 is_key ? operator_type::CONTAINS_KEY : operator_type::CONTAINS,
                 term});

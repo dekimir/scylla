@@ -145,7 +145,7 @@ protected:
     enum_set<op_enum> _ops;
     target _target = target::SINGLE_COLUMN;
 public:
-    ::shared_ptr<wip::expression> wip_equivalent;
+    ::shared_ptr<wip::expression> expression; ///< wip equivalent of *this.
     virtual ~restriction() {}
 
     restriction() = default;

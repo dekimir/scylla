@@ -422,7 +422,7 @@ bool result_set_builder::restrictions_filter::do_filter(const selection& selecti
         clustering_key_prefix ckey = clustering_key_prefix::from_exploded(clustering_key);
         const bool match = multi_column_restriction->is_satisfied_by(*_schema, ckey, _options);
         restrictions::wip::check_is_satisfied_by(
-                clustering_columns_restrictions->wip_equivalent,
+                clustering_columns_restrictions->expression,
                 partition_key, clustering_key, static_row, row, selection, _options, match);
         return match;
     }
@@ -458,7 +458,7 @@ bool result_set_builder::restrictions_filter::do_filter(const selection& selecti
                 regular_restriction_matches = result_view_opt->with_linearized([&, this](bytes_view data) {
                     const bool match = restriction.is_satisfied_by(data, _options);
                     restrictions::wip::check_is_satisfied_by(
-                            restriction.wip_equivalent,
+                            restriction.expression,
                             partition_key, clustering_key, static_row, row, selection, _options,
                             match);
                     return match;
@@ -466,7 +466,7 @@ bool result_set_builder::restrictions_filter::do_filter(const selection& selecti
             } else {
                 regular_restriction_matches = restriction.is_satisfied_by(bytes(), _options);
                 restrictions::wip::check_is_satisfied_by(
-                        restriction.wip_equivalent,
+                        restriction.expression,
                         partition_key, clustering_key, static_row, row, selection, _options,
                         regular_restriction_matches);
             }
@@ -489,7 +489,7 @@ bool result_set_builder::restrictions_filter::do_filter(const selection& selecti
             const bytes& value_to_check = partition_key[cdef->id];
             bool pk_restriction_matches = restriction.is_satisfied_by(value_to_check, _options);
             restrictions::wip::check_is_satisfied_by(
-                    restriction.wip_equivalent, partition_key, clustering_key, static_row, row, selection, _options,
+                    restriction.expression, partition_key, clustering_key, static_row, row, selection, _options,
                     pk_restriction_matches);
             if (!pk_restriction_matches) {
                 _current_partition_key_does_not_match = true;
@@ -513,7 +513,7 @@ bool result_set_builder::restrictions_filter::do_filter(const selection& selecti
             const bytes& value_to_check = clustering_key[cdef->id];
             bool pk_restriction_matches = restriction.is_satisfied_by(value_to_check, _options);
             restrictions::wip::check_is_satisfied_by(
-                    restriction.wip_equivalent, partition_key, clustering_key, static_row, row, selection, _options,
+                    restriction.expression, partition_key, clustering_key, static_row, row, selection, _options,
                     pk_restriction_matches);
             if (!pk_restriction_matches) {
                 return false;

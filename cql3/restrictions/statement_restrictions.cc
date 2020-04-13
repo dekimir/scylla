@@ -1473,8 +1473,8 @@ void check_is_satisfied_by(
 bytes_opt checked_bound(restriction& r, statements::bound b, const query_options& options) {
     const auto res = r.bounds(b, options)[0];
     if (options.get_cql_config().restrictions.use_wip) {
-        if (r.wip_equivalent) {
-            if (get_bound(*r.wip_equivalent, options, b).value() != res) {
+        if (r.expression) {
+            if (get_bound(*r.expression, options, b).value() != res) {
                 throw std::logic_error("WIP restrictions mismatch: bounds");
             }
         } else {
