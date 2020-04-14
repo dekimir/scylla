@@ -1050,7 +1050,7 @@ struct row_data {
 };
 
 /// Returns col's value from the fetched data.
-bytes_opt get_value(const column_value& col, const selection& selection, row_data& cells,
+bytes_opt get_value(const column_value& col, const selection& selection, row_data cells,
                     const query_options& options) {
     auto cdef = col.col;
     if (col.sub) {
@@ -1091,7 +1091,7 @@ data_type comparator(const column_value& cv) {
 
 /// True iff lhs's value equals rhs.
 bool equal(const bytes_opt& rhs, const column_value& lhs,
-           const selection& selection, row_data& cells, const query_options& options) {
+           const selection& selection, row_data cells, const query_options& options) {
     if (!rhs) {
         return false;
     }
@@ -1104,7 +1104,7 @@ bool equal(const bytes_opt& rhs, const column_value& lhs,
 
 /// True iff columns' values equal t.
 bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const selection& selection,
-           row_data& cells, const query_options& options) {
+           row_data cells, const query_options& options) {
     if (columns.size() > 1) {
         auto multi = dynamic_pointer_cast<multi_item_terminal>(t);
         if (!multi) {
@@ -1143,7 +1143,7 @@ bool limits(const bytes& lhs, const operator_type& op, const bytes& rhs, const a
 }
 
 /// True iff the value of opr.lhs is limited by opr.rhs in the manner prescribed by opr.op.
-bool limits(const binary_operator& opr, const selection& selection, row_data& cells,
+bool limits(const binary_operator& opr, const selection& selection, row_data cells,
             const query_options& options) {
     if (!opr.op->is_slice()) { // For EQ or NEQ, use equals().
         throw std::logic_error("limits() called on non-slice op");
