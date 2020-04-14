@@ -1111,7 +1111,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
             throw std::logic_error("RHS for multi-column is not a tuple");
         }
         const auto& rhs = multi->get_elements();
-        if (__builtin_expect(rhs.size() != columns.size(), false)) {
+        if (rhs.size() != columns.size()) {
             throw std::logic_error("LHS and RHS size mismatch");
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
