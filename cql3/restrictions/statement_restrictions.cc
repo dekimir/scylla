@@ -1377,7 +1377,7 @@ class bound_t {
     bool _unbounded;
     bytes_opt _value; // Invalid when _unbounded is true.
     const abstract_type& _value_type;
-  public:
+public:
     explicit bound_t(const abstract_type& t) : _unbounded(true), _value_type(t) {}
     bound_t(const abstract_type& t, const bytes_opt& v) : _unbounded(false), _value(v), _value_type(t) {}
 
