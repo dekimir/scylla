@@ -1224,7 +1224,8 @@ bool contains(const data_value& collection, const raw_value_view& value) {
             }
         } else {
             auto data_map = value_cast<map_type_impl::native_type>(collection);
-            if (!exists_in(data_map | boost::adaptors::transformed([] (auto&& p) { return p.second; }))) {
+            using entry = std::pair<data_value, data_value>;
+            if (!exists_in(data_map | boost::adaptors::transformed([] (const entry& e) { return e.second; }))) {
                 return false;
             }
         }
