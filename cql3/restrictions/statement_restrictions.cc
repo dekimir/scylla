@@ -1031,13 +1031,13 @@ namespace wip {
 
 namespace {
 
-using children_t = std::vector<::shared_ptr<expression>>; // conjunction's children.
+using children_t = std::vector<expression>; // conjunction's children.
 
-children_t explode_conjunction(shared_ptr<expression> e) {
-    return !e ? children_t{} : std::visit(overloaded_functor{
-            [&] (const conjunction& c) { return c.children; },
+children_t explode_conjunction(const expression& e) {
+    return std::visit(overloaded_functor{
+            [] (const conjunction& c) { return c.children; },
             [&] (const auto&) { return children_t{e}; },
-        }, *e);
+        }, e);
 }
 
 using cql3::selection::selection;
@@ -1145,7 +1145,7 @@ bool limits(const bytes& lhs, const operator_type& op, const bytes& rhs, const a
 /// True iff the value of opr.lhs is limited by opr.rhs in the manner prescribed by opr.op.
 bool limits(const binary_operator& opr, const selection& selection, row_data& cells,
             const query_options& options) {
-    if (!opr.op.is_slice()) { // For EQ or NEQ, use equals().
+    if (!opr.op->is_slice()) { // For EQ or NEQ, use equals().
         throw std::logic_error("limits() called on non-slice op");
     }
     const auto& columns = std::get<0>(opr.lhs);
@@ -1164,17 +1164,17 @@ bool limits(const binary_operator& opr, const selection& selection, row_data& ce
                     *rhs[i]);
             // If the components aren't equal, then we just learned the LHS/RHS order.
             if (cmp < 0) {
-                if (opr.op == operator_type::LT || opr.op == operator_type::LTE) {
+                if (*opr.op == operator_type::LT || *opr.op == operator_type::LTE) {
                     return true;
-                } else if (opr.op == operator_type::GT || opr.op == operator_type::GTE) {
+                } else if (*opr.op == operator_type::GT || *opr.op == operator_type::GTE) {
                     return false;
                 } else {
                     throw std::logic_error("Unknown slice operator");
                 }
             } else if (cmp > 0) {
-                if (opr.op == operator_type::LT || opr.op == operator_type::LTE) {
+                if (*opr.op == operator_type::LT || *opr.op == operator_type::LTE) {
                     return false;
-                } else if (opr.op == operator_type::GT || opr.op == operator_type::GTE) {
+                } else if (*opr.op == operator_type::GT || *opr.op == operator_type::GTE) {
                     return true;
                 } else {
                     throw std::logic_error("Unknown slice operator");
@@ -1183,7 +1183,7 @@ bool limits(const binary_operator& opr, const selection& selection, row_data& ce
             // Otherwise, we don't know the LHS/RHS order, so check the next component.
         }
         // Getting here means LHS == RHS.
-        return opr.op == operator_type::LTE || opr.op == operator_type::GTE;
+        return *opr.op == operator_type::LTE || *opr.op == operator_type::GTE;
     } else if (columns.size() == 1) {
         auto lhs = get_value(columns[0], selection, cells, options);
         if (!lhs) {
@@ -1193,7 +1193,7 @@ bool limits(const binary_operator& opr, const selection& selection, row_data& ce
         if (!rhs) {
             return false;
         }
-        return limits(*lhs, opr.op, *rhs, *columns[0].col->type);
+        return limits(*lhs, *opr.op, *rhs, *columns[0].col->type);
     } else {
         throw std::logic_error("empty tuple on LHS of an inequality");
     }
@@ -1328,9 +1328,10 @@ bool is_satisfied_by(
         const query::result_row_view& static_row, const query::result_row_view* row,
         const selection& selection, const query_options& options) {
     return std::visit(overloaded_functor{
+            [&] (bool v) { return v; },
             [&] (const conjunction& conj) {
-                return boost::algorithm::all_of(conj.children, [&] (const ::shared_ptr<expression>& c) {
-                    return is_satisfied_by(*c, partition_key, clustering_key, static_row, row, selection, options);
+                return boost::algorithm::all_of(conj.children, [&] (const expression& c) {
+                    return is_satisfied_by(c, partition_key, clustering_key, static_row, row, selection, options);
                 });
             },
             [&] (const binary_operator& opr) {
@@ -1340,16 +1341,16 @@ bool is_satisfied_by(
                                 partition_key, clustering_key,
                                 get_non_pk_values(selection, static_row, row)
                             };
-                            if (opr.op == operator_type::EQ) {
+                            if (*opr.op == operator_type::EQ) {
                                 return equal(opr.rhs, cvs, selection, cells, options);
-                            } else if (opr.op == operator_type::NEQ) {
+                            } else if (*opr.op == operator_type::NEQ) {
                                 return !equal(opr.rhs, cvs, selection, cells, options);
-                            } else if (opr.op.is_slice()) {
+                            } else if (opr.op->is_slice()) {
                                 return limits(opr, selection, cells, options);
-                            } else if (opr.op == operator_type::CONTAINS) {
+                            } else if (*opr.op == operator_type::CONTAINS) {
                                 return contains(opr.rhs->bind_and_get(options), cvs,
                                                 selection, cells);
-                            } else if (opr.op == operator_type::CONTAINS_KEY) {
+                            } else if (*opr.op == operator_type::CONTAINS_KEY) {
                                 return contains_key(
                                         std::get<0>(opr.lhs), opr.rhs->bind_and_get(options), cells, selection);
                             } else {
@@ -1414,13 +1415,18 @@ class bound_t {
 
 bound_t get_bound(const expression& restr, const query_options& options, statements::bound bnd) {
     return std::visit(overloaded_functor{
+            [&] (bool v) {
+                if (v) {
+                    return bound_t(*byte_type);
+                } else {
+                    throw std::logic_error("empty set has no bounds");
+                }
+            },
             [&] (const conjunction& conj) {
                 if (conj.children.empty()) {
                     throw std::logic_error("Empty conjunction");
                 }
-                auto invoke_get_bound = [&] (const ::shared_ptr<expression>& p) {
-                    return get_bound(*p, options, bnd);
-                };
+                auto invoke_get_bound = [&] (const expression& e) { return get_bound(e, options, bnd); };
                 // All conjunction elements have the same LHS; this is how
                 // single_column_restrictions::add_restriction constructs it.
                 std::vector<bound_t> children_bounds(
@@ -1448,7 +1454,7 @@ bound_t get_bound(const expression& restr, const query_options& options, stateme
                     {&operator_type::EQ, &operator_type::LT, &operator_type::LTE}, // These mean an upper bound.
                 };
                 const auto zero_if_lower_one_if_upper = get_idx(bnd);
-                if (boost::algorithm::any_of_equal(operators[zero_if_lower_one_if_upper], &opr.op)) {
+                if (boost::algorithm::any_of_equal(operators[zero_if_lower_one_if_upper], opr.op)) {
                     return bound_t(*cmptype, to_bytes_opt(opr.rhs->bind_and_get(options)));
                 }
                 return bound_t(*cmptype);
@@ -1461,14 +1467,14 @@ bound_t get_bound(const expression& restr, const query_options& options, stateme
 
 } // anonymous namespace
 
-::shared_ptr<expression> make_conjunction(::shared_ptr<expression> a, ::shared_ptr<expression> b) {
+expression make_conjunction(const expression& a, const expression& b) {
     auto children = explode_conjunction(a);
     boost::copy(explode_conjunction(b), back_inserter(children));
-    return ::make_shared<expression>(conjunction{children});
+    return conjunction{children};
 }
 
 void check_is_satisfied_by(
-        shared_ptr<expression> restr,
+        const expression& restr,
         const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
         const query::result_row_view& static_row, const query::result_row_view* row,
         const selection& selection, const query_options& options,
@@ -1476,11 +1482,7 @@ void check_is_satisfied_by(
     if (!options.get_cql_config().restrictions.use_wip) {
         return;
     }
-    if (!restr) {
-        rlogger.warn("Unimplemented wip restriction");
-        return;
-    }
-    if (expected != is_satisfied_by(*restr, partition_key, clustering_key, static_row, row, selection, options)) {
+    if (expected != is_satisfied_by(restr, partition_key, clustering_key, static_row, row, selection, options)) {
         throw std::logic_error("WIP restrictions mismatch: is_satisfied_by");
     }
 }
@@ -1488,12 +1490,8 @@ void check_is_satisfied_by(
 bytes_opt checked_bound(restriction& r, statements::bound b, const query_options& options) {
     const auto res = r.bounds(b, options)[0];
     if (options.get_cql_config().restrictions.use_wip) {
-        if (r.expression) {
-            if (get_bound(*r.expression, options, b).value() != res) {
-                throw std::logic_error("WIP restrictions mismatch: bounds");
-            }
-        } else {
-            rlogger.warn("Unimplemented wip restriction");
+        if (get_bound(r.expression, options, b).value() != res) {
+            throw std::logic_error("WIP restrictions mismatch: bounds");
         }
     }
     return res;

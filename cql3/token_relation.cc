@@ -87,8 +87,7 @@ std::vector<::shared_ptr<cql3::column_specification>> cql3::token_relation::to_r
             schema->ks_name(), bound_names);
     auto restr = ::make_shared<restrictions::token_restriction::EQ>(column_defs, term);
     using namespace restrictions::wip;
-    restr->expression = ::make_shared<expression>(
-            binary_operator{restrictions::wip::token{}, operator_type::EQ, term});
+    restr->expression = binary_operator{restrictions::wip::token{}, &operator_type::EQ, term};
     return restr;
 }
 
@@ -111,8 +110,7 @@ std::vector<::shared_ptr<cql3::column_specification>> cql3::token_relation::to_r
     auto restr = ::make_shared<restrictions::token_restriction::slice>(column_defs,
             bound, inclusive, term);
     using namespace restrictions::wip;
-    restr->expression = ::make_shared<expression>(
-            binary_operator{restrictions::wip::token{}, _relation_type, term});
+    restr->expression = binary_operator{restrictions::wip::token{}, &_relation_type, term};
     return restr;
 }
 

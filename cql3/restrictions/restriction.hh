@@ -82,8 +82,8 @@ namespace wip {
 class binary_operator;
 class conjunction;
 
-/// A restriction expression -- union of all possible restriction types.
-using expression = std::variant<binary_operator, conjunction>;
+/// A restriction expression -- union of all possible restriction types.  bool means a Boolean constant.
+using expression = std::variant<bool, conjunction, binary_operator>;
 
 /// A column, optionally subscripted by a term (eg, c1 or c2['abc']).
 struct column_value {
@@ -102,23 +102,23 @@ struct token {};
 /// Operator restriction: LHS op RHS.
 struct binary_operator {
     std::variant<std::vector<column_value>, token> lhs;
-    const operator_type& op;
+    const operator_type* op; // Pointer because operator_type isn't copyable or assignable.
     ::shared_ptr<term> rhs;
 };
 
 /// A conjunction of restrictions.
 struct conjunction {
-    std::vector<::shared_ptr<expression>> children;
+    std::vector<expression> children;
 };
 
 /// Creates a conjunction of a and b.  If either a or b is itself a conjunction, its children are inserted
 /// directly into the resulting conjunction's children, flattening the expression tree.
-extern ::shared_ptr<expression> make_conjunction(::shared_ptr<expression> a, ::shared_ptr<expression> b);
+extern expression make_conjunction(const expression& a, const expression& b);
 
 /// Checks if restr is satisfied by the given data, then throws if the result is different from
 /// expected.
 extern void check_is_satisfied_by(
-        shared_ptr<expression> restr,
+        const expression& restr,
         const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
         const query::result_row_view& static_row, const query::result_row_view* row,
         const selection::selection&, const query_options&,
@@ -145,7 +145,7 @@ protected:
     enum_set<op_enum> _ops;
     target _target = target::SINGLE_COLUMN;
 public:
-    ::shared_ptr<wip::expression> expression; ///< wip equivalent of *this.
+    wip::expression expression = false; ///< wip equivalent of *this.
     virtual ~restriction() {}
 
     restriction() = default;
