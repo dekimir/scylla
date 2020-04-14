@@ -1235,15 +1235,14 @@ bool contains(const data_value& collection, const raw_value_view& value) {
 
 /// True iff columns is a single collection containing value.
 bool contains(const raw_value_view& value, const std::vector<column_value>& columns, const selection& selection,
-              row_data cells) {
+              row_data cells, const query_options& options) {
     if (columns.size() != 1) {
         throw exceptions::unsupported_operation_exception("tuple CONTAINS not allowed");
     }
     if (columns[0].sub) {
         throw exceptions::unsupported_operation_exception("CONTAINS lhs is subscripted");
     }
-    const auto collection = get_value(columns[0], selection, cells,
-                                      query_options::DEFAULT /*unused when .sub is null*/);
+    const auto collection = get_value(columns[0], selection, cells, options);
     if (collection) {
         return contains(columns[0].col->type->deserialize(*collection), value);
     } else {
@@ -1252,8 +1251,8 @@ bool contains(const raw_value_view& value, const std::vector<column_value>& colu
 }
 
 /// True iff \p columns has a single element that's a map containing \p key.
-bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view key, row_data cells,
-                  const selection& selection) {
+bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view key,
+                  const selection& selection, row_data cells, const query_options& options) {
     if (columns.size() != 1) {
         throw exceptions::unsupported_operation_exception("CONTAINS KEY on a tuple");
     }
@@ -1261,8 +1260,7 @@ bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view
         throw exceptions::unsupported_operation_exception("CONTAINS KEY lhs is subscripted");
     }
     auto cdef = columns[0].col;
-    const auto collection = get_value(columns[0], selection, cells,
-                                      query_options::DEFAULT /*unused when .sub is null*/);
+    const auto collection = get_value(columns[0], selection, cells, options);
     if (!collection) {
         return false;
     }
@@ -1351,10 +1349,10 @@ bool is_satisfied_by(
                                 return limits(opr, selection, cells, options);
                             } else if (*opr.op == operator_type::CONTAINS) {
                                 return contains(opr.rhs->bind_and_get(options), cvs,
-                                                selection, cells);
+                                                selection, cells, options);
                             } else if (*opr.op == operator_type::CONTAINS_KEY) {
-                                return contains_key(
-                                        std::get<0>(opr.lhs), opr.rhs->bind_and_get(options), cells, selection);
+                                return contains_key(std::get<0>(opr.lhs), opr.rhs->bind_and_get(options),
+                                                    selection, cells, options);
                             } else {
                                 throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
                             }
