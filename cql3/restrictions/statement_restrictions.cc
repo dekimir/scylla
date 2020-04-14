@@ -1029,40 +1029,16 @@ void single_column_restriction::LIKE::merge_with(::shared_ptr<restriction> rest)
 
 namespace wip {
 
-::shared_ptr<expression> make_conjunction(::shared_ptr<expression> a, ::shared_ptr<expression> b) {
-    if (!a) {
-        return b;
-    }
-    if (!b) {
-        return a;
-    }
-    return std::visit(overloaded_functor{
-            [&] (const conjunction& a_conj) {
-                auto operands = a_conj.children;
-                std::visit(overloaded_functor{
-                        [&] (const conjunction& b_conj) {
-                            operands.insert(operands.end(), b_conj.children.cbegin(), b_conj.children.cend());
-                        },
-                        [&] (const binary_operator&) {
-                            operands.push_back(b);
-                        },
-                    }, *b);
-                return ::make_shared<expression>(conjunction{operands});
-            },
-            [&] (const binary_operator& a_binop) {
-                return std::visit(overloaded_functor{
-                        [&] (const conjunction&) {
-                            return make_conjunction(b, a);
-                        },
-                        [&] (const binary_operator&) {
-                            return ::make_shared<expression>(conjunction{std::vector{a, b}});
-                        },
-                    }, *b);
-            },
-        }, *a);
-}
-
 namespace {
+
+using children_t = std::vector<::shared_ptr<expression>>; // conjunction's children.
+
+children_t explode_conjunction(shared_ptr<expression> e) {
+    return !e ? children_t{} : std::visit(overloaded_functor{
+            [&] (const conjunction& c) { return c.children; },
+            [&] (const auto&) { return children_t{e}; },
+        }, *e);
+}
 
 using cql3::selection::selection;
 
@@ -1484,6 +1460,12 @@ bound_t get_bound(const expression& restr, const query_options& options, stateme
 }
 
 } // anonymous namespace
+
+::shared_ptr<expression> make_conjunction(::shared_ptr<expression> a, ::shared_ptr<expression> b) {
+    auto children = explode_conjunction(a);
+    boost::copy(explode_conjunction(b), back_inserter(children));
+    return ::make_shared<expression>(conjunction{children});
+}
 
 void check_is_satisfied_by(
         shared_ptr<expression> restr,
