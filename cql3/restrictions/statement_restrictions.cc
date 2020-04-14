@@ -1160,6 +1160,7 @@ bool limits(const binary_operator& opr, const selection& selection, row_data cel
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
             const auto cmp = comparator(columns[i])->as_tri_comparator()(
+                    // CQL dictates that columns[i] is a clustering column and non-null.
                     *get_value(columns[i], selection, cells, options),
                     *rhs[i]);
             // If the components aren't equal, then we just learned the LHS/RHS order.
