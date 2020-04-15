@@ -298,14 +298,20 @@ SEASTAR_THREAD_TEST_CASE(set_contains) {
         wip_require_rows(e, "select * from t where p contains 999 allow filtering", {});
         wip_require_rows(e, "select p from t where p contains 3 allow filtering", {{SI({1, 3})}});
         wip_require_rows(e, "select p from t where p contains 1 allow filtering", {{SI({1, 3})}, {SI({1})}});
+        wip_require_rows(e, "select p from t where p contains null allow filtering",
+                         {{SI({1, 3})}, {SI({1})}, {SI({2})}});
         wip_require_rows(e, "select p from t where p contains 1 and s contains 'a1' allow filtering",
                      {{SI({1}), ST({"a1", "b1"})}});
         wip_require_rows(e, "select c from t where c contains 31 allow filtering", {{SI({31, 32})}});
+        wip_require_rows(e, "select c from t where c contains null allow filtering",
+                         {{SI({11, 12})}, {SI({21, 22})}, {SI({31, 32})}});
         wip_require_rows(e, "select c from t where c contains 11 and p contains 1 allow filtering",
                      {{SI({11, 12}), SI({1})}});
         wip_require_rows(e, "select s from t where s contains 'a1' allow filtering", {{ST({"a1", "b1"})}});
         wip_require_rows(e, "select s from t where s contains 'b1' allow filtering",
                      {{ST({"a1", "b1"})}, {ST({"a2", "b1"})}});
+        wip_require_rows(e, "select s from t where s contains null allow filtering",
+                     {{ST({"a1", "b1"})}, {ST({"a2", "b1"})}, {ST({"a3", "b3"})}});
         wip_require_rows(e, "select s from t where s contains 'b1' and s contains '' allow filtering", {});
         wip_require_rows(e, "select s from t where s contains 'b1' and p contains 4 allow filtering", {});
         cquery_nofail(e, "insert into t (p, c, st) values ({4}, {41}, {104})");
@@ -317,6 +323,8 @@ SEASTAR_THREAD_TEST_CASE(set_contains) {
                      {{SI({41}), SI({105})}, {SI({42}), SI({105})}});
         cquery_nofail(e, "insert into t (p, c, st) values ({5}, {52}, {104, 105})");
         wip_require_rows(e, "select p from t where st contains 105 allow filtering",
+                     {{SI({4}), SI({105})}, {SI({4}), SI({105})}, {SI({5}), SI({104, 105})}});
+        wip_require_rows(e, "select p from t where st contains null allow filtering",
                      {{SI({4}), SI({105})}, {SI({4}), SI({105})}, {SI({5}), SI({104, 105})}});
         cquery_nofail(e, "delete from t where p={4}");
         wip_require_rows(e, "select p from t where st contains 105 allow filtering", {{SI({5}), SI({104, 105})}});
@@ -338,12 +346,20 @@ SEASTAR_THREAD_TEST_CASE(list_contains) {
         wip_require_rows(e, "select p from t where st contains 'xyz' allow filtering", {});
         wip_require_rows(e, "select p from t where p contains 1 allow filtering", {{LI({1})}});
         wip_require_rows(e, "select p from t where p contains 4 allow filtering", {{LI({4})}, {LI({4})}});
+        wip_require_rows(e, "select p from t where p contains null allow filtering",
+                         {{LI({1})}, {LI({2})}, {LI({3})}, {LI({4})}, {LI({4})}});
         wip_require_rows(e, "select c from t where c contains 22 allow filtering", {{LI({21,22,23})}});
         wip_require_rows(e, "select c from t where c contains 21 allow filtering", {{LI({21,22,23})}, {LI({21,32,33})}});
+        wip_require_rows(e, "select c from t where c contains null allow filtering",
+                         {{LI({11,12,13})}, {LI({21,22,23})}, {LI({21,32,33})}, {LI({41,42,43})}, {LI({41,42})}});
         wip_require_rows(e, "select c from t where c contains 21 and ls contains 102 allow filtering",
                      {{LI({21,22,23}), LI({102})}});
         wip_require_rows(e, "select ls from t where ls contains 102 allow filtering", {{LI({102})}});
-        wip_require_rows(e, "select st from t where st contains 'a' allow filtering", {{LT({"a"})}, {LT({"a"})}, {LT({"a", "b"})}});
+        wip_require_rows(e, "select ls from t where ls contains null allow filtering", {{LI({102})}, {LI({103})}});
+        wip_require_rows(e, "select st from t where st contains 'a' allow filtering",
+                         {{LT({"a"})}, {LT({"a"})}, {LT({"a", "b"})}});
+        wip_require_rows(e, "select st from t where st contains null allow filtering",
+                         {{LT({"a"})}, {LT({"a"})}, {LT({"a", "b"})}});
         wip_require_rows(e, "select st from t where st contains 'b' allow filtering", {{LT({"a", "b"})}});
         cquery_nofail(e, "delete from t where p=[2]");
         wip_require_rows(e, "select c from t where c contains 21 allow filtering", {{LI({21,32,33})}});
@@ -361,6 +377,14 @@ SEASTAR_THREAD_TEST_CASE(map_contains) {
         cquery_nofail(e, "insert into t (p, c, s) values ({3:3}, {31:31}, {3:100})");
         cquery_nofail(e, "insert into t (p, c, s) values ({4:4}, {40:40}, {4:100})");
         const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
+        const auto p3 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{3, 3}})));
+        wip_require_rows(e, "select p from t where p contains 3 allow filtering", {{p3}, {p3}});
+        const auto p1 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{1, 1}})));
+        const auto p2 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{2, 2}})));
+        const auto p4 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{4, 4}})));
+        wip_require_rows(e, "select p from t where p contains null allow filtering", {{p1}, {p2}, {p3}, {p3}, {p4}});
+        const auto c4 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{40, 40}})));
+        wip_require_rows(e, "select c from t where c contains 40 allow filtering", {{c4}});
         const auto m2 = my_map_type->decompose(
                 make_map_value(my_map_type, map_type_impl::native_type({{1, 21}, {2, 12}})));
         wip_require_rows(e, "select m from t where m contains 21 allow filtering", {{m2}});
@@ -368,6 +392,7 @@ SEASTAR_THREAD_TEST_CASE(map_contains) {
                 make_map_value(my_map_type, map_type_impl::native_type({{1, 11}, {2, 12}})));
         wip_require_rows(e, "select m from t where m contains 11 allow filtering", {{m1}});
         wip_require_rows(e, "select m from t where m contains 12 allow filtering", {{m1}, {m2}});
+        wip_require_rows(e, "select m from t where m contains null allow filtering", {{m1}, {m2}});
         wip_require_rows(e, "select m from t where m contains 11 and m contains 12 allow filtering", {{m1}});
         cquery_nofail(e, "delete from t where p={2:2}");
         wip_require_rows(e, "select m from t where m contains 12 allow filtering", {{m1}});
@@ -388,20 +413,29 @@ SEASTAR_THREAD_TEST_CASE(contains_key) {
         wip_require_rows(e, "select * from t where p contains key 3 allow filtering", {});
         wip_require_rows(e, "select * from t where c contains key 'x' allow filtering", {});
         wip_require_rows(e, "select * from t where m contains key 3 allow filtering", {});
+        wip_require_rows(e, "select * from t where s contains key 3 allow filtering", {});
         cquery_nofail(e, "insert into t (p,c,m) values ({3:33}, {'th':33}, {11:33})");
         const auto int_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
         const auto m1 = int_map_type->decompose(
                 make_map_value(int_map_type, map_type_impl::native_type({{11, 11}, {12, 12}})));
-        const auto m2 = int_map_type->decompose(make_map_value(int_map_type, map_type_impl::native_type({{11, 33}})));
+        const auto m3 = int_map_type->decompose(make_map_value(int_map_type, map_type_impl::native_type({{11, 33}})));
         wip_require_rows(e, "select m from t where m contains key 12 allow filtering", {{m1}});
-        wip_require_rows(e, "select m from t where m contains key 11 allow filtering", {{m1}, {m2}});
+        wip_require_rows(e, "select m from t where m contains key 11 allow filtering", {{m1}, {m3}});
+        wip_require_rows(e, "select m from t where m contains key null allow filtering", {{m1}, {m3}});
         const auto text_map_type = map_type_impl::get_instance(utf8_type, int32_type, true);
         const auto c1 = text_map_type->decompose(
                 make_map_value(text_map_type, map_type_impl::native_type({{"el", 11}, {"twel", 12}})));
         wip_require_rows(e, "select c from t where c contains key 'el' allow filtering", {{c1}});
         wip_require_rows(e, "select c from t where c contains key 'twel' allow filtering", {{c1}});
+        const auto c3 = text_map_type->decompose(
+                make_map_value(text_map_type, map_type_impl::native_type({{"th", 33}})));
+        wip_require_rows(e, "select c from t where c contains key null allow filtering", {{c1}, {c3}});
         const auto p3 = int_map_type->decompose(make_map_value(int_map_type, map_type_impl::native_type({{3, 33}})));
         wip_require_rows(e, "select p from t where p contains key 3 allow filtering", {{p3}});
+        wip_require_rows(e, "select p from t where p contains key 3 and m contains key null allow filtering", {{p3, m3}});
+        const auto p1 = int_map_type->decompose(
+                make_map_value(int_map_type, map_type_impl::native_type({{1, 11}, {2, 12}})));
+        wip_require_rows(e, "select p from t where p contains key null allow filtering", {{p1}, {p3}});
         cquery_nofail(e, "insert into t (p,c) values ({4:44}, {'aaaa':44})");
         wip_require_rows(e, "select m from t where m contains key 12 allow filtering", {{m1}});
         cquery_nofail(e, "delete from t where p={1:11, 2:12}");
@@ -413,6 +447,8 @@ SEASTAR_THREAD_TEST_CASE(contains_key) {
         const auto s5 = int_text_map_type->decompose(
                 make_map_value(int_text_map_type, map_type_impl::native_type({{55, "aaaa"}})));
         wip_require_rows(e, "select s from t where s contains key 55 allow filtering", {{s5}, {s5}});
+        wip_require_rows(e, "select s from t where s contains key 55 and s contains key null allow filtering",
+                         {{s5}, {s5}});
         const auto c51 = text_map_type->decompose(
                 make_map_value(text_map_type, map_type_impl::native_type({{"aaaa", 55}})));
         const auto c52 = text_map_type->decompose(

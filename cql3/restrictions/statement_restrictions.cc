@@ -1259,6 +1259,9 @@ bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view
     if (columns[0].sub) {
         throw exceptions::unsupported_operation_exception("CONTAINS KEY lhs is subscripted");
     }
+    if (!key) {
+        return true; // Compatible with old code, which skips null terms in key comparisons.
+    }
     auto cdef = columns[0].col;
     const auto collection = get_value(columns[0], selection, cells, options);
     if (!collection) {
