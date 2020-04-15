@@ -1128,7 +1128,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
 }
 
 /// True iff lhs is limited by rhs in the manner prescribed by op.
-bool limits(const bytes& lhs, const operator_type& op, const bytes& rhs, const abstract_type& type) {
+bool limits(bytes_view lhs, const operator_type& op, bytes_view rhs, const abstract_type& type) {
     if (!op.is_compare()) {
         throw std::logic_error("limits() called on non-compare op");
     }
