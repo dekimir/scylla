@@ -1383,10 +1383,8 @@ public:
 
     /// True iff *this is a tighter lower bound than \p that.
     bool is_tighter_lb_than(const bound_t& that) const {
-        if (that._unbounded) {
-            return true; // Anything is tighter than no bound.
-        } else if (this->_unbounded || !this->_value || !that._value) {
-            return false;
+        if (auto sc = shortcircuit(that)) {
+            return *sc;
         } else {
             // *this is a tighter lower bound if it's larger.
             return _value_type.compare(*this->_value, *that._value) > 0;
@@ -1395,10 +1393,8 @@ public:
 
     /// True iff *this is a tighter upper bound than \p that.
     bool is_tighter_ub_than(const bound_t& that) const {
-        if (that._unbounded) {
-            return true; // Anything is tighter than no bound.
-        } else if (this->_unbounded || !this->_value || !that._value) {
-            return false;
+        if (auto sc = shortcircuit(that)) {
+            return *sc;
         } else {
             // *this is a tighter upper bound if it's smaller.
             return _value_type.compare(*this->_value, *that._value) < 0;
@@ -1410,6 +1406,21 @@ public:
             throw std::logic_error("bound_t::value() called on unbounded");
         }
         return _value;
+    }
+
+private:
+    /// If the comparison *this<=>that can be shortcircuited (due to unbounded or null cases), returns the
+    /// comparison result.  Otherwise, returns nullopt.
+    std::optional<bool> shortcircuit(const bound_t& that) const {
+        if (that._unbounded) {
+            return true; // Anything is tighter than no bound.
+        } else if (this->_unbounded || !that._value) { // null always wins: it makes the slice empty.
+            return false;
+        } else if (!this->_value) { // Now that we're sure _value is valid, check it for null.
+            return true;
+        } else {
+            return std::nullopt;
+        }
     }
 };
 
