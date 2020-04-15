@@ -1361,14 +1361,8 @@ bool is_satisfied_by(
                         [] (const token& tok) -> bool {
                             throw exceptions::unsupported_operation_exception("wip::token");
                         },
-                        [] (auto& default_case) -> bool {
-                            throw exceptions::unsupported_operation_exception("Unknown wip::binary_operator subtype");
-                        }
                     }, opr.lhs);
             },
-            [] (auto& default_case) {
-                throw exceptions::unsupported_operation_exception("Unknown wip::expression subtype");
-            }
         }, restr);
 }
 
@@ -1470,9 +1464,6 @@ bound_t get_bound(const expression& restr, const query_options& options, stateme
                 }
                 return bound_t(*cmptype);
             },
-            [] (auto& default_case) {
-                throw exceptions::unsupported_operation_exception("Unknown wip::expression subtype");
-            }
         }, restr);
 }
 
