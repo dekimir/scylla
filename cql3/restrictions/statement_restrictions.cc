@@ -38,6 +38,7 @@
 #include "cql3/constants.hh"
 #include "cql3/selection/selection.hh"
 #include "cql3/single_column_relation.hh"
+#include "cql3/tuples.hh"
 #include "types/list.hh"
 #include "types/map.hh"
 #include "types/set.hh"
@@ -1419,6 +1420,16 @@ private:
     }
 };
 
+/// True iff op means bnd type of bound.
+bool matches(const operator_type* op, statements::bound bnd) {
+    static const std::vector<std::vector<const operator_type*>> operators{
+        {&operator_type::EQ, &operator_type::GT, &operator_type::GTE}, // These mean a lower bound.
+        {&operator_type::EQ, &operator_type::LT, &operator_type::LTE}, // These mean an upper bound.
+    };
+    const auto zero_if_lower_one_if_upper = get_idx(bnd);
+    return boost::algorithm::any_of_equal(operators[zero_if_lower_one_if_upper], op);
+}
+
 bound_t get_bound(const expression& restr, const query_options& options, statements::bound bnd) {
     return std::visit(overloaded_functor{
             [&] (bool v) {
@@ -1455,16 +1466,43 @@ bound_t get_bound(const expression& restr, const query_options& options, stateme
                     throw std::logic_error("get_bound invoked on multi-column restriction");
                 }
                 const auto cmptype = comparator(cv[0]);
-                static const std::vector<std::vector<const operator_type*>> operators{
-                    {&operator_type::EQ, &operator_type::GT, &operator_type::GTE}, // These mean a lower bound.
-                    {&operator_type::EQ, &operator_type::LT, &operator_type::LTE}, // These mean an upper bound.
-                };
-                const auto zero_if_lower_one_if_upper = get_idx(bnd);
-                if (boost::algorithm::any_of_equal(operators[zero_if_lower_one_if_upper], opr.op)) {
-                    return bound_t(*cmptype, to_bytes_opt(opr.rhs->bind_and_get(options)));
-                }
-                return bound_t(*cmptype);
+                return matches(opr.op, bnd) ?
+                        bound_t(*cmptype, to_bytes_opt(opr.rhs->bind_and_get(options))) : bound_t(*cmptype);
             },
+        }, restr);
+}
+
+/// Finds the first multi-column binary_operator in restr that represents bnd and returns its RHS value.  If
+/// no such binary_operator exists, returns an empty vector.  The search is depth first.
+std::vector<bytes_opt> multicolumn_bound(const expression& restr, const query_options& options, statements::bound bnd) {
+    std::vector<bytes_opt> empty;
+    return std::visit(overloaded_functor{
+            [&] (const conjunction& conj) {
+                for (const auto& c : conj.children) {
+                    auto cb = multicolumn_bound(c, options, bnd);
+                    if (!cb.empty()) {
+                        return cb;
+                    }
+                }
+                return empty;
+            },
+            [&] (const binary_operator& opr) {
+                if (!matches(opr.op, bnd)) {
+                    return empty;
+                }
+                return std::visit(overloaded_functor{
+                        [&] (const std::vector<column_value>& cvs) {
+                            if (cvs.size() > 1) {
+                                auto value = static_pointer_cast<tuples::value>(opr.rhs->bind(options));
+                                return value->get_elements();
+                            } else {
+                                return empty;
+                            }
+                        },
+                        [&] (auto& default_case) { return empty; },
+                    }, opr.lhs);
+            },
+            [&] (auto& others) { return empty; },
         }, restr);
 }
 
@@ -1498,6 +1536,16 @@ bytes_opt checked_bound(restriction& r, statements::bound b, const query_options
         }
     }
     return res;
+}
+
+void check_multicolumn_bound(const expression& restr, const query_options& options, statements::bound bnd,
+                             const std::vector<bytes_opt>& expected) {
+    if (!options.get_cql_config().restrictions.use_wip) {
+        return;
+    }
+    if (expected != multicolumn_bound(restr, options, bnd)) {
+        throw std::logic_error("WIP restrictions mismatch: multicolumn bound");
+    }
 }
 
 } // namespace wip

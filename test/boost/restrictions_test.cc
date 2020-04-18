@@ -237,6 +237,7 @@ SEASTAR_THREAD_TEST_CASE(multi_col_eq) {
         cquery_nofail(e, "insert into t (p, c1, c2) values (1, 'one', 11);");
         cquery_nofail(e, "insert into t (p, c1, c2) values (2, 'two', 12);");
         wip_require_rows(e, "select c2 from t where p=1 and (c1,c2)=('one',11)", {{F(11)}});
+        wip_require_rows(e, "select c2 from t where p=2 and (c1,c2)=('one',11)", {});
         wip_require_rows(e, "select p from t where (c1,c2)=('two',12) allow filtering", {{I(2), T("two"), F(12)}});
         wip_require_rows(e, "select c2 from t where (c1,c2)=('one',12) allow filtering", {});
         wip_require_rows(e, "select c2 from t where (c1,c2)=('two',11) allow filtering", {});
