@@ -123,7 +123,7 @@ extern void check_is_satisfied_by(
         bool expected);
 
 /// Returns a restriction's bounds, but throws if the result is different from the wip result.
-bytes_opt checked_bound(restriction&, statements::bound, const query_options&);
+bytes_opt checked_bound(const restriction&, statements::bound, const query_options&);
 
 /// Calculates bound of a multicolumn restriction, then throws if the result is different from expected.
 void check_multicolumn_bound(const expression&, const query_options&, statements::bound,

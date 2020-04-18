@@ -1460,14 +1460,22 @@ bound_t get_bound(const expression& restr, const query_options& options, stateme
                 }
             },
             [&] (const binary_operator& opr) {
-                // lhs must be column_values; CQL forbids token.
-                auto cv = std::get<0>(opr.lhs);
-                if (cv.size() != 1) {
-                    throw std::logic_error("get_bound invoked on multi-column restriction");
-                }
-                const auto cmptype = comparator(cv[0]);
-                return matches(opr.op, bnd) ?
-                        bound_t(*cmptype, to_bytes_opt(opr.rhs->bind_and_get(options))) : bound_t(*cmptype);
+                return std::visit(overloaded_functor{
+                        [&] (const std::vector<column_value>& cvs) {
+                            if (cvs.size() != 1) {
+                                throw std::logic_error("get_bound invoked on multi-column restriction");
+                            }
+                            const auto cmptype = comparator(cvs[0]);
+                            return matches(opr.op, bnd) ?
+                                    bound_t(*cmptype, to_bytes_opt(opr.rhs->bind_and_get(options)))
+                                    : bound_t(*cmptype);
+                        },
+                        [&] (const token& tok) {
+                            return matches(opr.op, bnd) ?
+                                    bound_t(*int32_type, to_bytes_opt(opr.rhs->bind_and_get(options)))
+                                    : bound_t(*int32_type);
+                        },
+                    }, opr.lhs);
             },
         }, restr);
 }
@@ -1528,7 +1536,7 @@ void check_is_satisfied_by(
     }
 }
 
-bytes_opt checked_bound(restriction& r, statements::bound b, const query_options& options) {
+bytes_opt checked_bound(const restriction& r, statements::bound b, const query_options& options) {
     const auto res = r.bounds(b, options)[0];
     if (options.get_cql_config().restrictions.use_wip) {
         if (get_bound(r.expression, options, b).value() != res) {
