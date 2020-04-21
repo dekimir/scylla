@@ -463,3 +463,34 @@ SEASTAR_THREAD_TEST_CASE(contains_key) {
         wip_require_rows(e, "select p from t where s contains key 55 allow filtering", {{p5, s5}, {p5, s5}, {p6, s6}});
     }).get();
 }
+
+SEASTAR_THREAD_TEST_CASE(like) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (pk text, ck1 text, ck2 text, r text, s text static, primary key (pk, ck1, ck2))");
+        wip_require_rows(e, "select * from t where pk like 'a' allow filtering", {});
+        cquery_nofail(e, "insert into t (pk, ck1, ck2) values ('pa', 'c1a', 'c2a');");
+        wip_require_rows(e, "select * from t where pk like 'a' allow filtering", {});
+        wip_require_rows(e, "select pk from t where pk like '_a' allow filtering", {{T("pa")}});
+        // TODO: enable when fixed.
+        //wip_require_rows(e, "select pk from t where pk like '_a' and ck1 like '' allow filtering", {});
+        wip_require_rows(e, "select pk from t where r like '_a' allow filtering", {});
+        wip_require_rows(e, "select pk from t where pk like '_a' and ck2 like '_2%' allow filtering",
+                         {{T("pa"), T("c2a")}});
+        cquery_nofail(e, "insert into t (pk, ck1, ck2, r, s) values ('pb', 'c1b', 'c2b', 'rb', 'sb');");
+        wip_require_rows(e, "select pk from t where pk like '_a' allow filtering", {{T("pa")}});
+        wip_require_rows(e, "select r from t where r like '_a' allow filtering", {});
+        wip_require_rows(e, "select r from t where r like '_b' allow filtering", {{T("rb")}});
+        cquery_nofail(e, "insert into t (pk, ck1, ck2, r) values ('pb', 'c1ba', 'c2ba', 'rba');");
+        wip_require_rows(e, "select r from t where r like 'rb%' allow filtering", {{T("rb")}, {T("rba")}});
+        wip_require_rows(e, "select pk from t where s like '_b%' allow filtering",
+                         {{T("pb"), T("sb")}, {T("pb"), T("sb")}});
+        cquery_nofail(e, "insert into t (pk, ck1, ck2, r, s) values ('pc', 'c1c', 'c2c', 'rc', 'sc');");
+        wip_require_rows(e, "select s from t where s like 's%' allow filtering", {{T("sb")}, {T("sb")}, {T("sc")}});
+        wip_require_rows(e, "select r from t where ck1 like '' allow filtering", {});
+        wip_require_rows(e, "select ck1 from t where ck1 like '%c' allow filtering", {{T("c1c")}});
+        wip_require_rows(e, "select ck2 from t where ck2 like 'c%' allow filtering",
+                         {{T("c2a")}, {T("c2b")}, {T("c2ba")}, {T("c2c")}});
+        wip_require_rows(e, "select * from t where ck1 like '' and ck2 like '_2a' allow filtering", {});
+        wip_require_rows(e, "select r from t where r='rb' and ck2 like 'c2_' allow filtering", {{T("rb"), T("c2b")}});
+    }).get();
+}

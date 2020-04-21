@@ -1109,11 +1109,12 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
     if (columns.size() > 1) {
         auto multi = dynamic_pointer_cast<multi_item_terminal>(t);
         if (!multi) {
-            throw std::logic_error("RHS for multi-column is not a tuple");
+            throw exceptions::invalid_request_exception("RHS for multi-column = is not a tuple");
         }
         const auto& rhs = multi->get_elements();
         if (rhs.size() != columns.size()) {
-            throw std::logic_error("LHS and RHS size mismatch");
+            throw exceptions::invalid_request_exception(
+                    format("tuple equality size mismatch: {} on LHS, {} on RHS", columns.size(), rhs.size()));
         }
         return boost::equal(rhs, columns, [&] (const bytes_opt& rhs, const column_value& lhs) {
             return equal(rhs, lhs, selection, cells, options);
@@ -1150,11 +1151,12 @@ bool limits(const binary_operator& opr, const selection& selection, row_data cel
     if (columns.size() > 1) {
         auto multi = dynamic_pointer_cast<multi_item_terminal>(opr.rhs);
         if (!multi) {
-            throw std::logic_error("RHS for multi-column is not a tuple");
+            throw exceptions::invalid_request_exception("RHS for multi-column comparison is not a tuple");
         }
         const auto& rhs = multi->get_elements();
         if (rhs.size() != columns.size()) {
-            throw std::logic_error("LHS and RHS size mismatch");
+            throw exceptions::invalid_request_exception(
+                    format("tuple comparison size mismatch: {} on LHS, {} on RHS", columns.size(), rhs.size()));
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
             const auto cmp = comparator(columns[i])->as_tri_comparator()(
@@ -1323,6 +1325,43 @@ std::vector<bytes_opt> get_non_pk_values(const selection& selection, const query
     return vals;
 }
 
+bool like(const column_value& cv, const bytes_opt& pattern, const selection& selection, row_data cells,
+          const query_options& options) {
+    if (!cv.col->type->is_string()) {
+        throw exceptions::invalid_request_exception(
+                format("LIKE is allowed only on string types, which {} is not", cv.col->name_as_text()));
+    }
+    auto value = get_value(cv, selection, cells, options);
+    return (pattern && value) ? like_matcher(*pattern)(*value) : false;
+}
+
+bool like(const decltype(binary_operator{}.lhs)& lhs, term& rhs, const selection& selection, row_data cells,
+          const query_options& options) {
+    auto cvs = std::get_if<0>(&lhs);
+    if (!cvs) {
+        throw exceptions::invalid_request_exception("LIKE is not allowed on tokens");
+    }
+    // TODO: reuse matchers.
+    if (cvs->size() > 1) {
+        if (auto multi = dynamic_cast<multi_item_terminal*>(&rhs)) {
+            const auto& elements = multi->get_elements();
+            if (elements.size() != cvs->size()) {
+                throw exceptions::invalid_request_exception(
+                        format("LIKE tuple size mismatch: {} on LHS, {} on RHS", cvs->size(), elements.size()));
+            }
+            return boost::equal(*cvs, elements, [&] (const column_value& cv, const bytes_opt& pattern) {
+                return like(cv, pattern, selection, cells, options);
+            });
+        } else {
+            throw std::logic_error("RHS for multi-column LIKE is not a tuple");
+        }
+    } else if (cvs->size() == 1) {
+        return like(cvs->front(), to_bytes_opt(rhs.bind_and_get(options)), selection, cells, options);
+    } else {
+        throw exceptions::invalid_request_exception("empty tuple on LHS of LIKE");
+    }
+}
+
 /// WIP equivalent of restriction::is_satisfied_by.
 bool is_satisfied_by(
         const expression& restr,
@@ -1355,6 +1394,8 @@ bool is_satisfied_by(
                             } else if (*opr.op == operator_type::CONTAINS_KEY) {
                                 return contains_key(std::get<0>(opr.lhs), opr.rhs->bind_and_get(options),
                                                     selection, cells, options);
+                            } else if (*opr.op == operator_type::LIKE) {
+                                return like(opr.lhs, *opr.rhs, selection, cells, options);
                             } else {
                                 throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
                             }
