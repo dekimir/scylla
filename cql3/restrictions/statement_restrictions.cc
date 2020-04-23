@@ -1502,8 +1502,8 @@ bound_t get_bound(const expression& restr, const query_options& options, stateme
                         },
                         [&] (const token& tok) {
                             return matches(opr.op, bnd) ?
-                                    bound_t(*int32_type, to_bytes_opt(opr.rhs->bind_and_get(options)))
-                                    : bound_t(*int32_type);
+                                    bound_t(*long_type, to_bytes_opt(opr.rhs->bind_and_get(options)))
+                                    : bound_t(*long_type);
                         },
                     }, opr.lhs);
             },
