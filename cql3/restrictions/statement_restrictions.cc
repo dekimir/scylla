@@ -1331,27 +1331,23 @@ bool like(const column_value& cv, const bytes_opt& pattern, row_data data) {
     return (pattern && value) ? like_matcher(*pattern)(*value) : false;
 }
 
-bool like(const decltype(binary_operator{}.lhs)& lhs, term& rhs, row_data data) {
-    auto cvs = std::get_if<0>(&lhs);
-    if (!cvs) {
-        throw exceptions::invalid_request_exception("LIKE is not allowed on tokens");
-    }
+bool like(const std::vector<column_value>& columns, term& rhs, row_data data) {
     // TODO: reuse matchers.
-    if (cvs->size() > 1) {
+    if (columns.size() > 1) {
         if (auto multi = dynamic_cast<multi_item_terminal*>(&rhs)) {
             const auto& elements = multi->get_elements();
-            if (elements.size() != cvs->size()) {
+            if (elements.size() != columns.size()) {
                 throw exceptions::invalid_request_exception(
-                        format("LIKE tuple size mismatch: {} on LHS, {} on RHS", cvs->size(), elements.size()));
+                        format("LIKE tuple size mismatch: {} on LHS, {} on RHS", columns.size(), elements.size()));
             }
-            return boost::equal(*cvs, elements, [&] (const column_value& cv, const bytes_opt& pattern) {
+            return boost::equal(columns, elements, [&] (const column_value& cv, const bytes_opt& pattern) {
                 return like(cv, pattern, data);
             });
         } else {
             throw std::logic_error("RHS for multi-column LIKE is not a tuple");
         }
-    } else if (cvs->size() == 1) {
-        return like(cvs->front(), to_bytes_opt(rhs.bind_and_get(data.options)), data);
+    } else if (columns.size() == 1) {
+        return like(columns[0], to_bytes_opt(rhs.bind_and_get(data.options)), data);
     } else {
         throw exceptions::invalid_request_exception("empty tuple on LHS of LIKE");
     }
@@ -1384,9 +1380,9 @@ bool is_satisfied_by(
                             } else if (*opr.op == operator_type::CONTAINS) {
                                 return contains(opr.rhs->bind_and_get(options), cvs, data);
                             } else if (*opr.op == operator_type::CONTAINS_KEY) {
-                                return contains_key(std::get<0>(opr.lhs), opr.rhs->bind_and_get(options), data);
+                                return contains_key(cvs, opr.rhs->bind_and_get(options), data);
                             } else if (*opr.op == operator_type::LIKE) {
-                                return like(opr.lhs, *opr.rhs, data);
+                                return like(cvs, *opr.rhs, data);
                             } else {
                                 throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
                             }
