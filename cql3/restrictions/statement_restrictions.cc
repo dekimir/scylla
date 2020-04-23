@@ -1043,25 +1043,27 @@ children_t explode_conjunction(const expression& e) {
 
 using cql3::selection::selection;
 
-/// Serialized values for all types of cells.
+/// Serialized values for all types of cells, plus selection (to find a column's index) and options (for
+/// subscript term's value).
 struct row_data {
     const std::vector<bytes>& partition_key;
     const std::vector<bytes>& clustering_key;
     const std::vector<bytes_opt>& other_columns;
+    const selection& sel;
+    const query_options& options;
 };
 
 /// Returns col's value from the fetched data.
-bytes_opt get_value(const column_value& col, const selection& selection, row_data cells,
-                    const query_options& options) {
+bytes_opt get_value(const column_value& col, row_data data) {
     auto cdef = col.col;
     if (col.sub) {
         auto col_type = static_pointer_cast<const collection_type_impl>(cdef->type);
         if (!col_type->is_map()) {
             throw exceptions::invalid_request_exception("subscripting non-map column");
         }
-        const auto deserialized = cdef->type->deserialize(*cells.other_columns[selection.index_of(*cdef)]);
+        const auto deserialized = cdef->type->deserialize(*data.other_columns[data.sel.index_of(*cdef)]);
         const auto& data_map = value_cast<map_type_impl::native_type>(deserialized);
-        const auto key = col.sub->bind_and_get(options);
+        const auto key = col.sub->bind_and_get(data.options);
         auto&& key_type = col_type->name_comparator();
         const auto found = with_linearized(*key, [&] (bytes_view key_bv) {
             return std::find_if(data_map.cbegin(), data_map.cend(), [&] (auto&& element) {
@@ -1072,12 +1074,12 @@ bytes_opt get_value(const column_value& col, const selection& selection, row_dat
     } else {
         switch (cdef->kind) {
         case column_kind::partition_key:
-            return cells.partition_key[cdef->id];
+            return data.partition_key[cdef->id];
         case column_kind::clustering_key:
-            return cells.clustering_key[cdef->id];
+            return data.clustering_key[cdef->id];
         case column_kind::static_column:
         case column_kind::regular_column:
-            return cells.other_columns[selection.index_of(*cdef)];
+            return data.other_columns[data.sel.index_of(*cdef)];
         default:
             throw exceptions::unsupported_operation_exception("Unknown column kind");
         }
@@ -1091,12 +1093,11 @@ data_type comparator(const column_value& cv) {
 }
 
 /// True iff lhs's value equals rhs.
-bool equal(const bytes_opt& rhs, const column_value& lhs,
-           const selection& selection, row_data cells, const query_options& options) {
+bool equal(const bytes_opt& rhs, const column_value& lhs, row_data data) {
     if (!rhs) {
         return false;
     }
-    const auto value = get_value(lhs, selection, cells, options);
+    const auto value = get_value(lhs, data);
     if (!value) {
         return false;
     }
@@ -1104,8 +1105,7 @@ bool equal(const bytes_opt& rhs, const column_value& lhs,
 }
 
 /// True iff columns' values equal t.
-bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const selection& selection,
-           row_data cells, const query_options& options) {
+bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, row_data data) {
     if (columns.size() > 1) {
         auto multi = dynamic_pointer_cast<multi_item_terminal>(t);
         if (!multi) {
@@ -1117,10 +1117,10 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
                     format("tuple equality size mismatch: {} on LHS, {} on RHS", columns.size(), rhs.size()));
         }
         return boost::equal(rhs, columns, [&] (const bytes_opt& rhs, const column_value& lhs) {
-            return equal(rhs, lhs, selection, cells, options);
+            return equal(rhs, lhs, data);
         });
     } else if (columns.size() == 1) {
-        return equal(to_bytes_opt(t->bind_and_get(options)), columns[0], selection, cells, options);
+        return equal(to_bytes_opt(t->bind_and_get(data.options)), columns[0], data);
     } else {
         throw std::logic_error("empty tuple on LHS of =");
     }
@@ -1142,8 +1142,7 @@ bool limits(bytes_view lhs, const operator_type& op, bytes_view rhs, const abstr
 }
 
 /// True iff the value of opr.lhs is limited by opr.rhs in the manner prescribed by opr.op.
-bool limits(const binary_operator& opr, const selection& selection, row_data cells,
-            const query_options& options) {
+bool limits(const binary_operator& opr, row_data data) {
     if (!opr.op->is_slice()) { // For EQ or NEQ, use equals().
         throw std::logic_error("limits() called on non-slice op");
     }
@@ -1161,7 +1160,7 @@ bool limits(const binary_operator& opr, const selection& selection, row_data cel
         for (size_t i = 0; i < rhs.size(); ++i) {
             const auto cmp = comparator(columns[i])->as_tri_comparator()(
                     // CQL dictates that columns[i] is a clustering column and non-null.
-                    *get_value(columns[i], selection, cells, options),
+                    *get_value(columns[i], data),
                     *rhs[i]);
             // If the components aren't equal, then we just learned the LHS/RHS order.
             if (cmp < 0) {
@@ -1186,11 +1185,11 @@ bool limits(const binary_operator& opr, const selection& selection, row_data cel
         // Getting here means LHS == RHS.
         return *opr.op == operator_type::LTE || *opr.op == operator_type::GTE;
     } else if (columns.size() == 1) {
-        auto lhs = get_value(columns[0], selection, cells, options);
+        auto lhs = get_value(columns[0], data);
         if (!lhs) {
             lhs = bytes(); // Compatible with old code, which feeds null to type comparators.
         }
-        auto rhs = to_bytes_opt(opr.rhs->bind_and_get(options));
+        auto rhs = to_bytes_opt(opr.rhs->bind_and_get(data.options));
         if (!rhs) {
             return false;
         }
@@ -1234,15 +1233,14 @@ bool contains(const data_value& collection, const raw_value_view& value) {
 }
 
 /// True iff columns is a single collection containing value.
-bool contains(const raw_value_view& value, const std::vector<column_value>& columns, const selection& selection,
-              row_data cells, const query_options& options) {
+bool contains(const raw_value_view& value, const std::vector<column_value>& columns, row_data data) {
     if (columns.size() != 1) {
         throw exceptions::unsupported_operation_exception("tuple CONTAINS not allowed");
     }
     if (columns[0].sub) {
         throw exceptions::unsupported_operation_exception("CONTAINS lhs is subscripted");
     }
-    const auto collection = get_value(columns[0], selection, cells, options);
+    const auto collection = get_value(columns[0], data);
     if (collection) {
         return contains(columns[0].col->type->deserialize(*collection), value);
     } else {
@@ -1251,8 +1249,7 @@ bool contains(const raw_value_view& value, const std::vector<column_value>& colu
 }
 
 /// True iff \p columns has a single element that's a map containing \p key.
-bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view key,
-                  const selection& selection, row_data cells, const query_options& options) {
+bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view key, row_data data) {
     if (columns.size() != 1) {
         throw exceptions::unsupported_operation_exception("CONTAINS KEY on a tuple");
     }
@@ -1263,7 +1260,7 @@ bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view
         return true; // Compatible with old code, which skips null terms in key comparisons.
     }
     auto cdef = columns[0].col;
-    const auto collection = get_value(columns[0], selection, cells, options);
+    const auto collection = get_value(columns[0], data);
     if (!collection) {
         return false;
     }
@@ -1325,18 +1322,16 @@ std::vector<bytes_opt> get_non_pk_values(const selection& selection, const query
     return vals;
 }
 
-bool like(const column_value& cv, const bytes_opt& pattern, const selection& selection, row_data cells,
-          const query_options& options) {
+bool like(const column_value& cv, const bytes_opt& pattern, row_data data) {
     if (!cv.col->type->is_string()) {
         throw exceptions::invalid_request_exception(
                 format("LIKE is allowed only on string types, which {} is not", cv.col->name_as_text()));
     }
-    auto value = get_value(cv, selection, cells, options);
+    auto value = get_value(cv, data);
     return (pattern && value) ? like_matcher(*pattern)(*value) : false;
 }
 
-bool like(const decltype(binary_operator{}.lhs)& lhs, term& rhs, const selection& selection, row_data cells,
-          const query_options& options) {
+bool like(const decltype(binary_operator{}.lhs)& lhs, term& rhs, row_data data) {
     auto cvs = std::get_if<0>(&lhs);
     if (!cvs) {
         throw exceptions::invalid_request_exception("LIKE is not allowed on tokens");
@@ -1350,13 +1345,13 @@ bool like(const decltype(binary_operator{}.lhs)& lhs, term& rhs, const selection
                         format("LIKE tuple size mismatch: {} on LHS, {} on RHS", cvs->size(), elements.size()));
             }
             return boost::equal(*cvs, elements, [&] (const column_value& cv, const bytes_opt& pattern) {
-                return like(cv, pattern, selection, cells, options);
+                return like(cv, pattern, data);
             });
         } else {
             throw std::logic_error("RHS for multi-column LIKE is not a tuple");
         }
     } else if (cvs->size() == 1) {
-        return like(cvs->front(), to_bytes_opt(rhs.bind_and_get(options)), selection, cells, options);
+        return like(cvs->front(), to_bytes_opt(rhs.bind_and_get(data.options)), data);
     } else {
         throw exceptions::invalid_request_exception("empty tuple on LHS of LIKE");
     }
@@ -1378,24 +1373,20 @@ bool is_satisfied_by(
             [&] (const binary_operator& opr) {
                 return std::visit(overloaded_functor{
                         [&] (const std::vector<column_value>& cvs) {
-                            row_data cells{
-                                partition_key, clustering_key,
-                                get_non_pk_values(selection, static_row, row)
-                            };
+                            const auto regulars = get_non_pk_values(selection, static_row, row);
+                            row_data data{partition_key, clustering_key, regulars, selection, options};
                             if (*opr.op == operator_type::EQ) {
-                                return equal(opr.rhs, cvs, selection, cells, options);
+                                return equal(opr.rhs, cvs, data);
                             } else if (*opr.op == operator_type::NEQ) {
-                                return !equal(opr.rhs, cvs, selection, cells, options);
+                                return !equal(opr.rhs, cvs, data);
                             } else if (opr.op->is_slice()) {
-                                return limits(opr, selection, cells, options);
+                                return limits(opr, data);
                             } else if (*opr.op == operator_type::CONTAINS) {
-                                return contains(opr.rhs->bind_and_get(options), cvs,
-                                                selection, cells, options);
+                                return contains(opr.rhs->bind_and_get(options), cvs, data);
                             } else if (*opr.op == operator_type::CONTAINS_KEY) {
-                                return contains_key(std::get<0>(opr.lhs), opr.rhs->bind_and_get(options),
-                                                    selection, cells, options);
+                                return contains_key(std::get<0>(opr.lhs), opr.rhs->bind_and_get(options), data);
                             } else if (*opr.op == operator_type::LIKE) {
-                                return like(opr.lhs, *opr.rhs, selection, cells, options);
+                                return like(opr.lhs, *opr.rhs, data);
                             } else {
                                 throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
                             }
