@@ -1322,6 +1322,7 @@ std::vector<bytes_opt> get_non_pk_values(const selection& selection, const query
     return vals;
 }
 
+/// True iff cv matches the CQL LIKE pattern.
 bool like(const column_value& cv, const bytes_opt& pattern, row_data data) {
     if (!cv.col->type->is_string()) {
         throw exceptions::invalid_request_exception(
@@ -1331,6 +1332,7 @@ bool like(const column_value& cv, const bytes_opt& pattern, row_data data) {
     return (pattern && value) ? like_matcher(*pattern)(*value) : false;
 }
 
+/// True iff columns' values match rhs pattern(s) as defined by CQL LIKE.
 bool like(const std::vector<column_value>& columns, term& rhs, row_data data) {
     // TODO: reuse matchers.
     if (columns.size() > 1) {
