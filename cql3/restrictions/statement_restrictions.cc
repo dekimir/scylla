@@ -1048,7 +1048,8 @@ bytes_opt get_value(const column_value& col, row_data data) {
         const auto key = col.sub->bind_and_get(data.options);
         auto&& key_type = col_type->name_comparator();
         const auto found = with_linearized(*key, [&] (bytes_view key_bv) {
-            return std::find_if(data_map.cbegin(), data_map.cend(), [&] (auto&& element) {
+            using entry = std::pair<data_value, data_value>;
+            return std::find_if(data_map.cbegin(), data_map.cend(), [&] (const entry& element) {
                 return key_type->compare(element.first.serialize_nonnull(), key_bv) == 0;
             });
         });
