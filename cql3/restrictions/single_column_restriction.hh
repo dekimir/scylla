@@ -340,7 +340,7 @@ public:
         }
 
         _slice.merge(other_slice->_slice);
-        expression = make_conjunction(expression, r->expression);
+        expression = make_conjunction(std::move(expression), r->expression);
     }
 
 #if 0
@@ -473,7 +473,7 @@ public:
         std::copy(other->_keys.begin(), other->_keys.end(), std::back_inserter(_keys));
         std::copy(other->_entry_keys.begin(), other->_entry_keys.end(), std::back_inserter(_entry_keys));
         std::copy(other->_entry_values.begin(), other->_entry_values.end(), std::back_inserter(_entry_values));
-        expression = make_conjunction(expression, other_restriction->expression);
+        expression = make_conjunction(std::move(expression), other_restriction->expression);
     }
 
 #if 0

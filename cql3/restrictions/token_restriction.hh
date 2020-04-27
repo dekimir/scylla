@@ -233,7 +233,7 @@ public:
                         "More than one restriction was found for the end bound on %s");
             }
             _slice.merge(other_slice->_slice);
-            expression = make_conjunction(expression, restriction->expression);
+            expression = make_conjunction(std::move(expression), restriction->expression);
         } catch (exceptions::invalid_request_exception & e) {
             throw exceptions::invalid_request_exception(
                     sprint(e.what(), join(", ", get_column_defs())));

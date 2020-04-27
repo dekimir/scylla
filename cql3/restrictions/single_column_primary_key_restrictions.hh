@@ -187,7 +187,7 @@ public:
                             join(", ", get_column_defs())));
         }
         do_merge_with(::static_pointer_cast<single_column_restriction>(restriction));
-        this->expression = make_conjunction(this->expression, restriction->expression);
+        this->expression = make_conjunction(std::move(this->expression), restriction->expression);
     }
 
     virtual std::vector<ValueType> values_as_keys(const query_options& options) const override {
