@@ -45,6 +45,7 @@
 #include "cql3/cql3_type.hh"
 #include "cql3/lists.hh"
 #include "unimplemented.hh"
+#include "tuples.hh"
 #include "types/map.hh"
 #include "types/list.hh"
 
@@ -86,6 +87,7 @@ single_column_relation::new_EQ_restriction(database& db, schema_ptr schema, vari
 
 ::shared_ptr<restrictions::restriction>
 single_column_relation::new_IN_restriction(database& db, schema_ptr schema, variable_specifications& bound_names) {
+    using namespace restrictions::wip;
     const column_definition& column_def = to_column_definition(*schema, *_entity);
     auto receivers = to_receivers(*schema, column_def);
     assert(_in_values.empty() || !_value);
@@ -97,11 +99,13 @@ single_column_relation::new_IN_restriction(database& db, schema_ptr schema, vari
     // Convert a single-item IN restriction to an EQ restriction
     if (terms.size() == 1) {
         auto restr = ::make_shared<single_column_restriction::EQ>(column_def, terms[0]);
-        using namespace restrictions::wip;
         restr->expression = binary_operator{std::vector{column_value(&column_def)}, &operator_type::EQ, terms[0]};
         return restr;
     }
-    return ::make_shared<single_column_restriction::IN_with_values>(column_def, std::move(terms));
+    auto r = ::make_shared<single_column_restriction::IN_with_values>(column_def, terms);
+    r->expression = binary_operator{std::vector{column_value(&column_def)}, &operator_type::IN,
+        ::make_shared<lists::delayed_value>(std::move(terms))};
+    return r;
 }
 
 ::shared_ptr<restrictions::restriction>

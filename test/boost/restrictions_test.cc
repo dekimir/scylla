@@ -494,3 +494,129 @@ SEASTAR_THREAD_TEST_CASE(like) {
         wip_require_rows(e, "select r from t where r='rb' and ck2 like 'c2_' allow filtering", {{T("rb"), T("c2b")}});
     }).get();
 }
+
+SEASTAR_THREAD_TEST_CASE(scalar_in) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int, c int, r float, s text static, primary key (p, c))");
+        wip_require_rows(e, "select c from t where c in (11,12,13) allow filtering", {});
+        cquery_nofail(e, "insert into t(p,c) values (1,11)");
+        wip_require_rows(e, "select c from t where c in (11,12,13) allow filtering", {{I(11)}});
+        cquery_nofail(e, "insert into t(p,c,r) values (1,11,21)");
+        cquery_nofail(e, "insert into t(p,c,r) values (2,12,22)");
+        cquery_nofail(e, "insert into t(p,c,r) values (3,13,23)");
+        cquery_nofail(e, "insert into t(p,c,r) values (4,14,24)");
+        cquery_nofail(e, "insert into t(p,c,r,s) values (4,15,24,'34')");
+        cquery_nofail(e, "insert into t(p,c,r,s) values (5,15,25,'35')");
+        wip_require_rows(e, "select c from t where c in (11,12,13) allow filtering", {{I(11)}, {I(12)}, {I(13)}});
+        wip_require_rows(e, "select c from t where c in (11) allow filtering", {{I(11)}});
+        wip_require_rows(e, "select c from t where c in (999) allow filtering", {});
+        wip_require_rows(e, "select c from t where c in (11,999) allow filtering", {{I(11)}});
+        wip_require_rows(e, "select c from t where c in (11,12,13) and r in (21,24) allow filtering", {{I(11), F(21)}});
+        wip_require_rows(e, "select c from t where c in (11,12,13) and r in (21,22) allow filtering",
+                         {{I(11), F(21)}, {I(12), F(22)}});
+        wip_require_rows(e, "select r from t where r in (999) allow filtering", {});
+        wip_require_rows(e, "select r from t where r in (1,2,3) allow filtering", {});
+        wip_require_rows(e, "select r from t where r in (22,25) allow filtering", {{F(22)}, {F(25)}});
+        wip_require_rows(e, "select r from t where r in (22,25) and c < 20 allow filtering",
+                         {{F(22), I(12)}, {F(25), I(15)}});
+        wip_require_rows(e, "select r from t where r in (22,25) and s>='25' allow filtering", {{F(25), T("35")}});
+        wip_require_rows(e, "select r from t where r in (25) and s>='25' allow filtering", {{F(25), T("35")}});
+        wip_require_rows(e, "select r from t where r in (25) allow filtering", {{F(25)}});
+        wip_require_rows(e, "select r from t where r in (null,25) allow filtering", {{F(25)}});
+        cquery_nofail(e, "delete from t where p=2");
+        wip_require_rows(e, "select r from t where r in (22,25) allow filtering", {{F(25)}});
+        wip_require_rows(e, "select s from t where s in ('34','35') allow filtering", {{T("34")}, {T("34")}, {T("35")}});
+        wip_require_rows(e, "select s from t where s in ('34','35','999') allow filtering",
+                         {{T("34")}, {T("34")}, {T("35")}});
+        wip_require_rows(e, "select s from t where s in ('34') allow filtering", {{T("34")}, {T("34")}});
+        wip_require_rows(e, "select s from t where s in ('34','35') and r=24 allow filtering",
+                         {{T("34"), F(24)}, {T("34"), F(24)}});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(list_in) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p frozen<list<int>>, c frozen<list<int>>, primary key(p, c))");
+        cquery_nofail(e, "insert into t (p, c) values ([1], [11,12,13])");
+        cquery_nofail(e, "insert into t (p, c) values ([2], [21,22,23])");
+        cquery_nofail(e, "insert into t (p, c) values ([3], [31,32,33])");
+        cquery_nofail(e, "insert into t (p, c) values ([4], [41,42,43])");
+        cquery_nofail(e, "insert into t (p, c) values ([4], [])");
+        cquery_nofail(e, "insert into t (p, c) values ([5], [51,52,53])");
+        wip_require_rows(e, "select c from t where c in ([11,12],[11,13]) allow filtering", {});
+        wip_require_rows(e, "select c from t where c in ([11,12,13],[11,13,12]) allow filtering",
+                         {{LI({11,12,13})}});
+        wip_require_rows(e, "select c from t where c in ([11,12,13],[11,13,12],[41,42,43]) allow filtering",
+                         {{LI({11,12,13})}, {LI({41,42,43})}});
+        wip_require_rows(e, "select c from t where p in ([1],[2],[4]) and c in ([11,12,13], [41,42,43]) allow filtering",
+                         {{LI({11,12,13})}, {LI({41,42,43})}});
+        wip_require_rows(e, "select c from t where c in ([],[11,13,12]) allow filtering", {{LI({})}});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(set_in) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p frozen<set<int>>, c frozen<set<int>>, r text, primary key (p, c))");
+        wip_require_rows(e, "select * from t where c in ({222}) allow filtering", {});
+        cquery_nofail(e, "insert into t (p, c) values ({1,11}, {21,201})");
+        cquery_nofail(e, "insert into t (p, c, r) values ({1,11}, {22,202}, '2')");
+        wip_require_rows(e, "select * from t where c in ({222}, {21}) allow filtering", {});
+        wip_require_rows(e, "select c from t where c in ({222}, {21,201}) allow filtering", {{SI({21, 201})}});
+        wip_require_rows(e, "select c from t where c in ({22,202}, {21,201}) allow filtering",
+                         {{SI({21, 201})}, {SI({22, 202})}});
+        // TODO: enable when fixed.
+        //wip_require_rows(e, "select c from t where c in ({222}, {21,201}) and r='' allow filtering", {});
+        wip_require_rows(e, "select c from t where c in ({222}, {21,201}) and r='x' allow filtering", {});
+        wip_require_rows(e, "select c from t where c in ({22,202}, {21,201}) and r='2' allow filtering",
+                         {{SI({22, 202}), T("2")}});
+        wip_require_rows(e, "select c from t where c in ({22,202}, {21,201}) and p in ({1,11}, {222}) allow filtering",
+                         {{SI({21, 201})}, {SI({22, 202})}});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(map_in) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p frozen<map<int,int>>, c frozen<map<int,int>>, r int, primary key(p, c))");
+        cquery_nofail(e, "insert into t (p, c) values ({1:1}, {10:10})");
+        cquery_nofail(e, "insert into t (p, c, r) values ({1:1}, {10:10,11:11}, 12)");
+        wip_require_rows(e, "select * from t where c in ({10:11},{10:11},{11:11}) allow filtering", {});
+        const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
+        const auto c1a = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{10, 10}})));
+        wip_require_rows(e, "select c from t where c in ({10:11}, {10:10}, {11:11}) allow filtering", {{c1a}});
+        const auto c1b = my_map_type->decompose(
+                make_map_value(my_map_type, map_type_impl::native_type({{10, 10}, {11, 11}})));
+        wip_require_rows(e, "select c from t where c in ({10:11}, {10:10}, {10:10,11:11}) allow filtering",
+                         {{c1a}, {c1b}});
+        wip_require_rows(e, "select c from t where c in ({10:11}, {10:10}, {10:10,11:11}) and r=12 allow filtering",
+                         {{c1b, I(12)}});
+        wip_require_rows(e, "select c from t where c in ({10:11}, {10:10}, {10:10,11:11}) and r in (12,null) "
+                         "allow filtering", {{c1b, I(12)}});
+        wip_require_rows(e, "select c from t where c in ({10:11}, {10:10}, {10:10,11:11}) and p in ({1:1},{2:2}) "
+                         "allow filtering", {{c1a}, {c1b}});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(multi_col_in) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (pk int, ck1 int, ck2 float, r text, primary key (pk, ck1, ck2))");
+        wip_require_rows(e, "select ck1 from t where (ck1,ck2) in ((11,21),(12,22)) allow filtering", {});
+        cquery_nofail(e, "insert into t(pk,ck1,ck2) values (1,11,21)");
+        wip_require_rows(e, "select ck1 from t where (ck1,ck2) in ((11,21),(12,22)) allow filtering", {{I(11), F(21)}});
+        wip_require_rows(e, "select ck1 from t where (ck1,ck2) in ((11,21)) allow filtering", {{I(11), F(21)}});
+        cquery_nofail(e, "insert into t(pk,ck1,ck2) values (2,12,22)");
+        wip_require_rows(e, "select ck1 from t where (ck1,ck2) in ((11,21),(12,22)) allow filtering",
+                         {{I(11), F(21)}, {I(12), F(22)}});
+        cquery_nofail(e, "insert into t(pk,ck1,ck2) values (3,13,23)");
+        wip_require_rows(e, "select ck1 from t where (ck1,ck2) in ((11,21),(12,22)) allow filtering",
+                         {{I(11), F(21)}, {I(12), F(22)}});
+        wip_require_rows(e, "select ck1 from t where (ck1,ck2) in ((13,23)) allow filtering", {{I(13), F(23)}});
+        cquery_nofail(e, "insert into t(pk,ck1,ck2,r) values (4,13,23,'a')");
+        wip_require_rows(e, "select pk from t where (ck1,ck2) in ((13,23)) allow filtering",
+                         {{I(3), I(13), F(23)}, {I(4), I(13), F(23)}});
+        // TODO: uncomment when #6200 is fixed.
+        // wip_require_rows(e, "select pk from t where (ck1,ck2) in ((13,23)) and r='a' allow filtering",
+        //                  {{I(4), I(13), F(23), T("a")}});
+        cquery_nofail(e, "delete from t where pk=4");
+        wip_require_rows(e, "select pk from t where (ck1,ck2) in ((13,23)) allow filtering", {{I(3), I(13), F(23)}});
+    }).get();
+}

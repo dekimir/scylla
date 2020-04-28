@@ -41,6 +41,7 @@
 
 #pragma once
 
+#include "cql3/lists.hh"
 #include "cql3/relation.hh"
 #include "cql3/term.hh"
 #include "cql3/tuples.hh"
@@ -166,16 +167,19 @@ protected:
         } else {
             std::vector<::shared_ptr<term::raw>> raws(_in_values.size());
             std::copy(_in_values.begin(), _in_values.end(), raws.begin());
-            auto ts = to_terms(col_specs, raws, db, schema->ks_name(), bound_names);
+            const auto ts = to_terms(col_specs, raws, db, schema->ks_name(), bound_names);
+            using namespace restrictions::wip;
+            std::vector<column_value> wip_rs(rs.cbegin(), rs.cend());
             // Convert a single-item IN restriction to an EQ restriction
             if (ts.size() == 1) {
                 auto restr = ::make_shared<restrictions::multi_column_restriction::EQ>(schema, rs, ts[0]);
-                using namespace restrictions::wip;
-                std::vector<column_value> wip_rs(rs.cbegin(), rs.cend());
-                restr->expression = binary_operator{wip_rs, &operator_type::EQ, ts[0]};
+                restr->expression = binary_operator{std::move(wip_rs), &operator_type::EQ, ts[0]};
                 return restr;
             }
-            return ::make_shared<restrictions::multi_column_restriction::IN_with_values>(schema, rs, ts);
+            auto r = ::make_shared<restrictions::multi_column_restriction::IN_with_values>(schema, rs, ts);
+            r->expression = binary_operator{std::move(wip_rs), &operator_type::IN,
+                ::make_shared<lists::delayed_value>(std::move(ts))};
+            return r;
         }
     }
 

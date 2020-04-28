@@ -34,6 +34,7 @@
 #include "database.hh"
 
 #include "cql3/constants.hh"
+#include "cql3/lists.hh"
 #include "cql3/selection/selection.hh"
 #include "cql3/single_column_relation.hh"
 #include "cql3/tuples.hh"
@@ -1335,6 +1336,17 @@ bool like(const std::vector<column_value>& columns, term& rhs, row_data data) {
     }
 }
 
+/// True iff the tuple of column values is in the set defined by rhs.
+bool is_one_of(const std::vector<column_value>& cvs, term& rhs, row_data data) {
+    if (auto dv = dynamic_cast<lists::delayed_value*>(&rhs)) {
+        return boost::algorithm::any_of(dv->get_elements(), [&] (const ::shared_ptr<term>& t) {
+                return equal(t, cvs, data);
+            });
+    } else {
+        throw std::logic_error("unexpected term type in is_one_of");
+    }
+}
+
 /// WIP equivalent of restriction::is_satisfied_by.
 bool is_satisfied_by(
         const expression& restr,
@@ -1365,6 +1377,8 @@ bool is_satisfied_by(
                                 return contains_key(cvs, opr.rhs->bind_and_get(options), data);
                             } else if (*opr.op == operator_type::LIKE) {
                                 return like(cvs, *opr.rhs, data);
+                            } else if (*opr.op == operator_type::IN) {
+                                return is_one_of(cvs, *opr.rhs, data);
                             } else {
                                 throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
                             }
