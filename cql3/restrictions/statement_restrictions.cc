@@ -1014,9 +1014,9 @@ namespace {
 
 using children_t = std::vector<expression>; // conjunction's children.
 
-children_t explode_conjunction(const expression& e) {
+children_t explode_conjunction(expression e) {
     return std::visit(overloaded_functor{
-            [] (const conjunction& c) { return c.children; },
+            [] (const conjunction& c) { return std::move(c.children); },
             [&] (const auto&) { return children_t{e}; },
         }, e);
 }
@@ -1554,9 +1554,9 @@ std::vector<bytes_opt> multicolumn_bound(const expression& restr, const query_op
 
 } // anonymous namespace
 
-expression make_conjunction(const expression& a, const expression& b) {
-    auto children = explode_conjunction(a);
-    boost::copy(explode_conjunction(b), back_inserter(children));
+expression make_conjunction(expression a, expression b) {
+    auto children = explode_conjunction(std::move(a));
+    boost::copy(explode_conjunction(std::move(b)), back_inserter(children));
     return conjunction{children};
 }
 

@@ -111,7 +111,7 @@ struct conjunction {
 
 /// Creates a conjunction of a and b.  If either a or b is itself a conjunction, its children are inserted
 /// directly into the resulting conjunction's children, flattening the expression tree.
-extern expression make_conjunction(const expression& a, const expression& b);
+extern expression make_conjunction(expression a, expression b);
 
 /// Checks if restr is satisfied by the given data, then throws if the result is different from
 /// expected.
