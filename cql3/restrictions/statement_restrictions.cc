@@ -1384,9 +1384,16 @@ class bound_t {
     bytes_opt _value; // Invalid when _unbounded is true.
     const abstract_type* _value_type;
 public:
+    /// \p t must outlive *this.
     explicit bound_t(const abstract_type* t) : _unbounded(true), _value_type(t) {}
+
+    /// \p t must outlive *this.
     explicit bound_t(const data_type& t) : bound_t(t.get()) {}
+
+    /// \p t and \p v must outlive *this.
     bound_t(const abstract_type* t, const bytes_opt& v) : _unbounded(false), _value(v), _value_type(t) {}
+
+    /// \p t and \p v must outlive *this.
     bound_t(const data_type& t, const bytes_opt& v) : bound_t(t.get(), v) {}
 
     /// True iff *this is a tighter lower bound than \p that.
