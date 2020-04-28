@@ -1258,8 +1258,7 @@ bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view
     return found != data_map.end();
 }
 
-/// Fetches the next cell value from iter and returns its value as bytes_opt if the cell is atomic;
-/// otherwise, returns nullopt.
+/// Fetches the next cell value from iter and returns its (possibly null) value.
 bytes_opt next_value(query::result_row_view::iterator_type& iter, const column_definition* cdef) {
     if (cdef->type->is_multi_cell()) {
         auto cell = iter.next_collection_cell();
