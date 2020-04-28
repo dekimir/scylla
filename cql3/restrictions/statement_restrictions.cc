@@ -1070,9 +1070,9 @@ bytes_opt get_value(const column_value& col, row_data data) {
 }
 
 /// The comparator type for cv.
-data_type comparator(const column_value& cv) {
-    return cv.sub ?
-            static_pointer_cast<const collection_type_impl>(cv.col->type)->value_comparator() : cv.col->type;
+const abstract_type* comparator(const column_value& cv) {
+    return cv.sub ? static_pointer_cast<const collection_type_impl>(cv.col->type)->value_comparator().get()
+            : cv.col->type.get();
 }
 
 /// True iff lhs's value equals rhs.
@@ -1384,10 +1384,12 @@ bool is_satisfied_by(
 class bound_t {
     bool _unbounded;
     bytes_opt _value; // Invalid when _unbounded is true.
-    const abstract_type& _value_type;
+    const abstract_type* _value_type;
 public:
-    explicit bound_t(const abstract_type& t) : _unbounded(true), _value_type(t) {}
-    bound_t(const abstract_type& t, const bytes_opt& v) : _unbounded(false), _value(v), _value_type(t) {}
+    explicit bound_t(const abstract_type* t) : _unbounded(true), _value_type(t) {}
+    explicit bound_t(const data_type& t) : bound_t(t.get()) {}
+    bound_t(const abstract_type* t, const bytes_opt& v) : _unbounded(false), _value(v), _value_type(t) {}
+    bound_t(const data_type& t, const bytes_opt& v) : bound_t(t.get(), v) {}
 
     /// True iff *this is a tighter lower bound than \p that.
     bool is_tighter_lb_than(const bound_t& that) const {
@@ -1395,7 +1397,7 @@ public:
             return *sc;
         } else {
             // *this is a tighter lower bound if it's larger.
-            return _value_type.compare(*this->_value, *that._value) > 0;
+            return _value_type->compare(*this->_value, *that._value) > 0;
         }
     }
 
@@ -1405,7 +1407,7 @@ public:
             return *sc;
         } else {
             // *this is a tighter upper bound if it's smaller.
-            return _value_type.compare(*this->_value, *that._value) < 0;
+            return _value_type->compare(*this->_value, *that._value) < 0;
         }
     }
 
@@ -1432,6 +1434,36 @@ private:
     }
 };
 
+bound_t tighter_ub(const bound_t& a, const bound_t& b) {
+    return a.is_tighter_ub_than(b) ? a : b;
+}
+
+bound_t tighter_lb(const bound_t& a, const bound_t& b) {
+    return a.is_tighter_lb_than(b) ? a : b;
+}
+
+/// The type of the first child, if it exists.  Otherwise, byte_type.
+const abstract_type* child_type(const children_t& children) {
+    return children.empty() ? byte_type.get() : std::visit(overloaded_functor{
+            [] (bool) { return byte_type.get(); },
+            [] (const conjunction& c) { return child_type(c.children); },
+            [] (const binary_operator& op) {
+                return std::visit(overloaded_functor{
+                        [] (const token&) { return long_type.get(); },
+                        [] (const std::vector<column_value> cvs) {
+                            if (cvs.empty() || cvs.size() > 1) {
+                                throw std::logic_error(
+                                        format("unexpected conjunct with {} columns (should be a single column)",
+                                               cvs.size()));
+                            } else {
+                                return comparator(cvs[0]);
+                            }
+                        },
+                    }, op.lhs);
+            },
+        }, children[0]);
+}
+
 /// True iff op means bnd type of bound.
 bool matches(const operator_type* op, statements::bound bnd) {
     static const std::vector<std::vector<const operator_type*>> operators{
@@ -1446,30 +1478,19 @@ bound_t get_bound(const expression& restr, const query_options& options, stateme
     return std::visit(overloaded_functor{
             [&] (bool v) {
                 if (v) {
-                    return bound_t(*byte_type);
+                    return bound_t(byte_type);
                 } else {
                     throw std::logic_error("empty set has no bounds");
                 }
             },
             [&] (const conjunction& conj) {
-                if (conj.children.empty()) {
-                    throw std::logic_error("Empty conjunction");
-                }
                 auto invoke_get_bound = [&] (const expression& e) { return get_bound(e, options, bnd); };
+                auto pick_tighter = is_start(bnd) ? &tighter_lb : &tighter_ub;
                 // All conjunction elements have the same LHS; this is how
-                // single_column_restrictions::add_restriction constructs it.
-                std::vector<bound_t> children_bounds(
-                        boost::make_transform_iterator(conj.children.cbegin(), invoke_get_bound),
-                        boost::make_transform_iterator(conj.children.cend(), invoke_get_bound));
-                if (is_start(bnd)) {
-                    return *boost::max_element(children_bounds, [&] (const bound_t& a, const bound_t& b) {
-                        return b.is_tighter_lb_than(a);
-                    });
-                } else {
-                    return *boost::min_element(children_bounds, [&] (const bound_t& a, const bound_t& b) {
-                        return a.is_tighter_ub_than(b);
-                    });
-                }
+                // single_column_restrictions::add_restriction constructs it.  We pick the tightest among all
+                // children's bounds.
+                return boost::accumulate(conj.children | boost::adaptors::transformed(invoke_get_bound),
+                                         bound_t(child_type(conj.children)), pick_tighter);
             },
             [&] (const binary_operator& opr) {
                 return std::visit(overloaded_functor{
@@ -1477,15 +1498,15 @@ bound_t get_bound(const expression& restr, const query_options& options, stateme
                             if (cvs.size() != 1) {
                                 throw std::logic_error("get_bound invoked on multi-column restriction");
                             }
-                            const auto cmptype = comparator(cvs[0]);
+                            auto cmptype = comparator(cvs[0]);
                             return matches(opr.op, bnd) ?
-                                    bound_t(*cmptype, to_bytes_opt(opr.rhs->bind_and_get(options)))
-                                    : bound_t(*cmptype);
+                                    bound_t(cmptype, to_bytes_opt(opr.rhs->bind_and_get(options)))
+                                    : bound_t(cmptype);
                         },
                         [&] (const token& tok) {
                             return matches(opr.op, bnd) ?
-                                    bound_t(*long_type, to_bytes_opt(opr.rhs->bind_and_get(options)))
-                                    : bound_t(*long_type);
+                                    bound_t(long_type, to_bytes_opt(opr.rhs->bind_and_get(options)))
+                                    : bound_t(long_type);
                         },
                     }, opr.lhs);
             },
