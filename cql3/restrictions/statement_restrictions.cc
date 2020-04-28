@@ -23,10 +23,8 @@
 #include <algorithm>
 #include <boost/algorithm/cxx11/all_of.hpp>
 #include <boost/algorithm/cxx11/any_of.hpp>
-#include <boost/iterator/transform_iterator.hpp>
 #include <boost/range/adaptors.hpp>
 #include <boost/range/algorithm.hpp>
-#include <boost/range/algorithm/transform.hpp>
 #include <stdexcept>
 
 #include "query-result-reader.hh"
@@ -845,7 +843,7 @@ bool single_column_restriction::contains::is_satisfied_by(bytes_view collection_
                 }
             } else {
                 auto data_map = value_cast<map_type_impl::native_type>(deserialized);
-                if (!exists_in(data_map | boost::adaptors::transformed([] (auto&& p) { return p.second; }))) {
+                if (!exists_in(data_map | transformed([] (auto&& p) { return p.second; }))) {
                     return false;
                 }
             }
@@ -1207,7 +1205,7 @@ bool contains(const data_value& collection, const raw_value_view& value) {
         } else {
             auto data_map = value_cast<map_type_impl::native_type>(collection);
             using entry = std::pair<data_value, data_value>;
-            if (!exists_in(data_map | boost::adaptors::transformed([] (const entry& e) { return e.second; }))) {
+            if (!exists_in(data_map | transformed([] (const entry& e) { return e.second; }))) {
                 return false;
             }
         }
@@ -1489,7 +1487,7 @@ bound_t get_bound(const expression& restr, const query_options& options, stateme
                 // All conjunction elements have the same LHS; this is how
                 // single_column_restrictions::add_restriction constructs it.  We pick the tightest among all
                 // children's bounds.
-                return boost::accumulate(conj.children | boost::adaptors::transformed(invoke_get_bound),
+                return boost::accumulate(conj.children | transformed(invoke_get_bound),
                                          bound_t(child_type(conj.children)), pick_tighter);
             },
             [&] (const binary_operator& opr) {
