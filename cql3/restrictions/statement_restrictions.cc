@@ -1124,7 +1124,7 @@ bool limits(bytes_view lhs, const operator_type& op, bytes_view rhs, const abstr
 
 /// True iff the value of opr.lhs is limited by opr.rhs in the manner prescribed by opr.op.
 bool limits(const binary_operator& opr, row_data data) {
-    if (!opr.op->is_slice()) { // For EQ or NEQ, use equals().
+    if (!opr.op->is_slice()) { // For EQ or NEQ, use equal().
         throw std::logic_error("limits() called on non-slice op");
     }
     const auto& columns = std::get<0>(opr.lhs);
