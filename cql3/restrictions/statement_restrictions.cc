@@ -1074,6 +1074,23 @@ const abstract_type* comparator(const column_value& cv) {
             : cv.col->type.get();
 }
 
+/// Returns a tuple-valued terminal from t, if possible.  Otherwise, returns null.
+::shared_ptr<terminal> get_tuple(const ::shared_ptr<term> t, const query_options& opts) {
+    auto tml = dynamic_pointer_cast<terminal>(t);
+    if (tml) {
+        return tml;
+    }
+    auto marker = dynamic_pointer_cast<tuples::marker>(t);
+    if (marker) {
+        return marker->bind(opts);
+    }
+    auto delayed = dynamic_pointer_cast<tuples::delayed_value>(t);
+    if (delayed) {
+        return delayed->bind(opts);
+    }
+    return nullptr;
+}
+
 /// True iff lhs's value equals rhs.
 bool equal(const bytes_opt& rhs, const column_value& lhs, row_data data) {
     if (!rhs) {
@@ -1089,7 +1106,7 @@ bool equal(const bytes_opt& rhs, const column_value& lhs, row_data data) {
 /// True iff columns' values equal t.
 bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, row_data data) {
     if (columns.size() > 1) {
-        auto multi = dynamic_pointer_cast<multi_item_terminal>(t);
+        auto multi = dynamic_pointer_cast<multi_item_terminal>(get_tuple(t, data.options));
         if (!multi) {
             throw exceptions::invalid_request_exception("RHS for multi-column = is not a tuple");
         }
@@ -1123,14 +1140,15 @@ bool limits(bytes_view lhs, const operator_type& op, bytes_view rhs, const abstr
     }
 }
 
-/// True iff the value of opr.lhs is limited by opr.rhs in the manner prescribed by opr.op.
+/// True iff the value of opr.lhs (which must be column_values) is limited by opr.rhs in the manner prescribed
+/// by opr.op.
 bool limits(const binary_operator& opr, row_data data) {
     if (!opr.op->is_slice()) { // For EQ or NEQ, use equal().
         throw std::logic_error("limits() called on non-slice op");
     }
     const auto& columns = std::get<0>(opr.lhs);
     if (columns.size() > 1) {
-        auto multi = dynamic_pointer_cast<multi_item_terminal>(opr.rhs);
+        auto multi = dynamic_pointer_cast<multi_item_terminal>(get_tuple(opr.rhs, data.options));
         if (!multi) {
             throw exceptions::invalid_request_exception("RHS for multi-column comparison is not a tuple");
         }
@@ -1342,9 +1360,28 @@ bool is_one_of(const std::vector<column_value>& cvs, term& rhs, row_data data) {
         return boost::algorithm::any_of(dv->get_elements(), [&] (const ::shared_ptr<term>& t) {
                 return equal(t, cvs, data);
             });
-    } else {
-        throw std::logic_error("unexpected term type in is_one_of");
+    } else if (auto mkr = dynamic_cast<lists::marker*>(&rhs)) {
+        auto multi = dynamic_pointer_cast<multi_item_terminal>(mkr->bind(data.options));
+        if (multi) {
+            if (cvs.size() != 1) {
+                throw std::logic_error("too many columns for lists::marker in is_one_of");
+            }
+            return boost::algorithm::any_of(multi->get_elements(), [&] (const bytes_opt& b) {
+                return equal(b, cvs[0], data);
+                });
+        }
+    } else if (auto mkr = dynamic_cast<tuples::in_marker*>(&rhs)) {
+        const auto val = dynamic_pointer_cast<tuples::in_value>(mkr->bind(data.options));
+        if (!val) {
+            return false;
+        }
+        return boost::algorithm::any_of(val->get_split_values(), [&] (const std::vector<bytes_opt>& el) {
+                return boost::equal(cvs, el, [&] (const column_value& c, const bytes_opt& b) {
+                    return equal(b, c, data);
+                });
+            });
     }
+    throw std::logic_error("unexpected term type in is_one_of");
 }
 
 /// WIP equivalent of restriction::is_satisfied_by.

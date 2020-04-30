@@ -19,11 +19,13 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <boost/range/adaptors.hpp>
 #include <experimental/source_location>
 #include <fmt/format.h>
 #include <seastar/testing/thread_test_case.hh>
 
 #include "cql3/cql_config.hh"
+#include "cql3/values.hh"
 #include "test/lib/cql_assertions.hh"
 #include "test/lib/cql_test_env.hh"
 #include "types/list.hh"
@@ -41,6 +43,17 @@ std::unique_ptr<cql3::query_options> wip_on() {
             d.get_specific_options(), d.get_cql_serialization_format());
 }
 
+std::unique_ptr<cql3::query_options> wip_on(
+        std::optional<std::vector<sstring_view>> names,
+        std::vector<cql3::raw_value> values) {
+    static cql3::cql_config wip{{ .use_wip=true }};
+    static auto& d = cql3::query_options::DEFAULT;
+    return std::make_unique<cql3::query_options>(
+            wip,
+            d.get_consistency(), d.get_timeout_config(), std::move(names), std::move(values), d.skip_metadata(),
+            d.get_specific_options(), d.get_cql_serialization_format());
+}
+
 using std::experimental::source_location;
 
 /// Asserts that cquery_nofail(e, qstr, wip_on) contains expected rows, in any order.
@@ -54,6 +67,26 @@ void wip_require_rows(cql_test_env& env,
     catch (const std::exception& e) {
         BOOST_FAIL(format("query '{}' failed: {}\n{}:{}: originally from here",
                           qstr, e.what(), loc.file_name(), loc.line()));
+    }
+}
+
+using boost::adaptors::transformed;
+
+/// Asserts that e.execute_prepared(id, values) with wip_on contains expected rows, in any order.
+void wip_require_rows(cql_test_env& e,
+                      cql3::prepared_cache_key_type id,
+                      std::optional<std::vector<sstring_view>> names,
+                      const std::vector<bytes_opt>& values,
+                      const std::vector<std::vector<bytes_opt>>& expected,
+                      const std::experimental::source_location& loc = source_location::current()) {
+    // This helps compiler pick the right overload for make_value:
+    const auto rvals = values | transformed([] (const bytes_opt& v) { return cql3::raw_value::make_value(v); });
+    auto opts = wip_on(std::move(names), std::vector(rvals.begin(), rvals.end()));
+    try {
+        assert_that(e.execute_prepared_with_qo(id, std::move(opts)).get0()).is_rows().with_rows_ignore_order(expected);
+    } catch (const std::exception& e) {
+        BOOST_FAIL(format("execute_prepared failed: {}\n{}:{}: originally from here",
+                          e.what(), loc.file_name(), loc.line()));
     }
 }
 
@@ -74,6 +107,11 @@ auto ST(const set_type_impl::native_type& val) {
 auto LI(const list_type_impl::native_type& val) {
     const auto int_list_type = list_type_impl::get_instance(int32_type, true);
     return int_list_type->decompose(make_list_value(int_list_type, val));
+}
+
+auto LF(const list_type_impl::native_type& val) {
+    const auto float_list_type = list_type_impl::get_instance(float_type, true);
+    return float_list_type->decompose(make_list_value(float_list_type, val));
 }
 
 auto LT(const list_type_impl::native_type& val) {
@@ -105,6 +143,16 @@ SEASTAR_THREAD_TEST_CASE(regular_col_eq) {
         wip_require_rows(e, "select q from t where q=12 allow filtering", {{I(12)}});
         // TODO: enable when supported:
         //wip_require_rows(e, "select p from t where q=null allow filtering", {});
+        auto stmt = e.prepare("select q from t where q=? allow filtering").get0();
+        wip_require_rows(e, stmt, {}, {I(12)}, {{I(12)}});
+        wip_require_rows(e, stmt, {}, {I(99)}, {});
+        stmt = e.prepare("select q from t where q=:q allow filtering").get0();
+        wip_require_rows(e, stmt, {{"q"}}, {I(12)}, {{I(12)}});
+        wip_require_rows(e, stmt, {{"q"}}, {I(99)}, {});
+        stmt = e.prepare("select p from t where q=? and r=? allow filtering").get0();
+        wip_require_rows(e, stmt, {}, {I(12), I(22)}, {{I(2), I(12), I(22)}});
+        wip_require_rows(e, stmt, {}, {I(11), I(21)}, {{I(1), I(11), I(21)}});
+        wip_require_rows(e, stmt, {}, {I(11), I(22)}, {});
     }).get();
 }
 
@@ -193,6 +241,11 @@ SEASTAR_THREAD_TEST_CASE(map_entry_eq) {
         const auto m3new = my_map_type->decompose(
                 make_map_value(my_map_type, map_type_impl::native_type({{1, 111}})));
         wip_require_rows(e, "select p from t where m[1]=111 allow filtering", {{I(3), m3new}});
+        const auto stmt = e.prepare("select p from t where m[1]=:uno and m[3]=:tres allow filtering").get0();
+        const auto m1 = my_map_type->decompose(
+                make_map_value(my_map_type, map_type_impl::native_type({{1, 11}, {2, 12}, {3, 13}})));
+        wip_require_rows(e, stmt, {{"uno", "tres"}}, {I(11), I(13)}, {{I(1), m1}});
+        wip_require_rows(e, stmt, {{"uno", "tres"}}, {I(21), I(99)}, {});
     }).get();
 }
 
@@ -231,6 +284,13 @@ SEASTAR_THREAD_TEST_CASE(regular_col_neq) {
 }
 #endif // 0
 
+/// Creates a tuple value from individual values.
+bytes make_tuple(std::vector<data_type> types, std::vector<data_value> values) {
+    const auto tuple_type = tuple_type_impl::get_instance(std::move(types));
+    return tuple_type->decompose(
+            make_tuple_value(tuple_type, tuple_type_impl::native_type(std::move(values))));
+}
+
 SEASTAR_THREAD_TEST_CASE(multi_col_eq) {
     do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table t (p int, c1 text, c2 float, primary key (p, c1, c2))");
@@ -241,6 +301,13 @@ SEASTAR_THREAD_TEST_CASE(multi_col_eq) {
         wip_require_rows(e, "select p from t where (c1,c2)=('two',12) allow filtering", {{I(2), T("two"), F(12)}});
         wip_require_rows(e, "select c2 from t where (c1,c2)=('one',12) allow filtering", {});
         wip_require_rows(e, "select c2 from t where (c1,c2)=('two',11) allow filtering", {});
+        auto stmt = e.prepare("select p from t where (c1,c2)=:t allow filtering").get0();
+        wip_require_rows(e, stmt, {{"t"}}, {make_tuple({utf8_type, float_type}, {sstring("two"), 12.f})},
+                         {{I(2), T("two"), F(12)}});
+        wip_require_rows(e, stmt, {{"t"}}, {make_tuple({utf8_type, float_type}, {sstring("x"), 12.f})}, {});
+        stmt = e.prepare("select p from t where (c1,c2)=('two',?) allow filtering").get0();
+        wip_require_rows(e, stmt, {}, {F(12)}, {{I(2), T("two"), F(12)}});
+        wip_require_rows(e, stmt, {}, {F(99)}, {});
     }).get();
 }
 
@@ -259,6 +326,12 @@ SEASTAR_THREAD_TEST_CASE(multi_col_slice) {
                      {{T("a"), F(11)}, {T("b"), F(2)}, {T("c"), F(13)}});
         wip_require_rows(e, "select c1 from t where (c1,c2)>=('b',2) and (c1,c2)<=('b',2) allow filtering",
                      {{T("b"), F(2)}});
+        auto stmt = e.prepare("select c1 from t where (c1,c2)<? allow filtering").get0();
+        wip_require_rows(e, stmt, {}, {make_tuple({utf8_type, float_type}, {sstring("a"), 12.f})}, {{T("a"), F(11)}});
+        wip_require_rows(e, stmt, {}, {make_tuple({utf8_type, float_type}, {sstring("a"), 11.f})}, {});
+        stmt = e.prepare("select c1 from t where (c1,c2)<('a',:c2) allow filtering").get0();
+        wip_require_rows(e, stmt, {{"c2"}}, {F(12)}, {{T("a"), F(11)}});
+        wip_require_rows(e, stmt, {{"c2"}}, {F(11)}, {});
     }).get();
 }
 
@@ -271,6 +344,9 @@ SEASTAR_THREAD_TEST_CASE(bounds) {
         wip_require_rows(e, "select p from t where p=1 and c > 10", {{I(1)}});
         wip_require_rows(e, "select c from t where p in (1,2,3) and c > 11 and c < 13", {{I(12)}});
         wip_require_rows(e, "select c from t where p in (1,2,3) and c >= 11 and c < 13", {{I(11)}, {I(12)}});
+        const auto stmt = e.prepare("select c from t where p in (1,2,3) and c >= 11 and c < ?").get0();
+        wip_require_rows(e, stmt, {}, {I(13)}, {{I(11)}, {I(12)}});
+        wip_require_rows(e, stmt, {}, {I(10)}, {});
     }).get();
 }
 
@@ -285,6 +361,9 @@ SEASTAR_THREAD_TEST_CASE(token) {
         wip_require_rows(e, "select p from t where token(p,q) <= token(1,11) and r<102 allow filtering",
                          {{I(1), I(101)}});
         wip_require_rows(e, "select p from t where token(p,q) = token(2,12) and r<102 allow filtering", {});
+        const auto stmt = e.prepare("select p from t where token(p,q) = token(1,?)").get0();
+        wip_require_rows(e, stmt, {}, {I(11)}, {{I(1)}});
+        wip_require_rows(e, stmt, {}, {I(10)}, {});
     }).get();
 }
 
@@ -329,6 +408,10 @@ SEASTAR_THREAD_TEST_CASE(set_contains) {
                      {{SI({4}), SI({105})}, {SI({4}), SI({105})}, {SI({5}), SI({104, 105})}});
         cquery_nofail(e, "delete from t where p={4}");
         wip_require_rows(e, "select p from t where st contains 105 allow filtering", {{SI({5}), SI({104, 105})}});
+        const auto stmt = e.prepare("select p from t where p contains :p allow filtering").get0();
+        wip_require_rows(e, stmt, {{"p"}}, {I(999)}, {});
+        wip_require_rows(e, stmt, {{"p"}}, {I(1)}, {{SI({1})}, {SI({1, 3})}});
+        wip_require_rows(e, stmt, {{"p"}}, {I(2)}, {{SI({2})}});
     }).get();
 }
 
@@ -461,6 +544,9 @@ SEASTAR_THREAD_TEST_CASE(contains_key) {
         const auto s6 = int_text_map_type->decompose(
                 make_map_value(int_text_map_type, map_type_impl::native_type({{55, "bbbb"}, {66, "bbbb"}})));
         wip_require_rows(e, "select p from t where s contains key 55 allow filtering", {{p5, s5}, {p5, s5}, {p6, s6}});
+        const auto stmt = e.prepare("select p from t where s contains key :k allow filtering").get0();
+        wip_require_rows(e, stmt, {{"k"}}, {I(55)}, {{p5, s5}, {p5, s5}, {p6, s6}});
+        wip_require_rows(e, stmt, {{"k"}}, {I(999)}, {});
     }).get();
 }
 
@@ -492,6 +578,9 @@ SEASTAR_THREAD_TEST_CASE(like) {
                          {{T("c2a")}, {T("c2b")}, {T("c2ba")}, {T("c2c")}});
         wip_require_rows(e, "select * from t where ck1 like '' and ck2 like '_2a' allow filtering", {});
         wip_require_rows(e, "select r from t where r='rb' and ck2 like 'c2_' allow filtering", {{T("rb"), T("c2b")}});
+        const auto stmt = e.prepare("select ck1 from t where ck1 like ? allow filtering").get0();
+        wip_require_rows(e, stmt, {}, {T("%c")}, {{T("c1c")}});
+        wip_require_rows(e, stmt, {}, {T("%xyxyz")}, {});
     }).get();
 }
 
@@ -531,6 +620,11 @@ SEASTAR_THREAD_TEST_CASE(scalar_in) {
         wip_require_rows(e, "select s from t where s in ('34') allow filtering", {{T("34")}, {T("34")}});
         wip_require_rows(e, "select s from t where s in ('34','35') and r=24 allow filtering",
                          {{T("34"), F(24)}, {T("34"), F(24)}});
+        const auto stmt = e.prepare("select r from t where r in ? allow filtering").get0();
+        wip_require_rows(e, stmt, {}, {LF({99.f, 88.f, 77.f})}, {});
+        wip_require_rows(e, stmt, {}, {LF({21.f})}, {{F(21)}});
+        wip_require_rows(e, stmt, {}, {LF({21.f, 22.f, 23.f})}, {{F(21)}, {F(23)}});
+        wip_require_rows(e, stmt, {}, {LF({24.f, 25.f})}, {{F(24)}, {F(24)}, {F(25)}});
     }).get();
 }
 
@@ -618,5 +712,38 @@ SEASTAR_THREAD_TEST_CASE(multi_col_in) {
         //                  {{I(4), I(13), F(23), T("a")}});
         cquery_nofail(e, "delete from t where pk=4");
         wip_require_rows(e, "select pk from t where (ck1,ck2) in ((13,23)) allow filtering", {{I(3), I(13), F(23)}});
+        auto stmt = e.prepare("select ck1 from t where (ck1,ck2) in ? allow filtering").get0();
+        auto bound_tuples = [] (std::vector<std::tuple<int32_t, float>> tuples) {
+            const auto tuple_type = tuple_type_impl::get_instance({int32_type, float_type});
+            const auto list_type = list_type_impl::get_instance(tuple_type, true);
+            const auto tvals = tuples | transformed([&] (const std::tuple<int32_t, float>& t) {
+                return make_tuple_value(tuple_type, tuple_type_impl::native_type({std::get<0>(t), std::get<1>(t)}));
+            });
+            return list_type->decompose(
+                    make_list_value(list_type, std::vector<data_value>(tvals.begin(), tvals.end())));
+        };
+        wip_require_rows(e, stmt, {}, {bound_tuples({{11, 21}})}, {{I(11), F(21)}});
+        wip_require_rows(e, stmt, {}, {bound_tuples({{11, 21}, {11, 99}})}, {{I(11), F(21)}});
+        wip_require_rows(e, stmt, {}, {bound_tuples({{12, 22}})}, {{I(12), F(22)}});
+        wip_require_rows(e, stmt, {}, {bound_tuples({{13, 13}, {12, 22}})}, {{I(12), F(22)}});
+        wip_require_rows(e, stmt, {}, {bound_tuples({{12, 21}})}, {});
+        wip_require_rows(e, stmt, {}, {bound_tuples({{12, 21}, {12, 21}, {13, 21}, {14, 21}})}, {});
+        stmt = e.prepare("select ck1 from t where (ck1,ck2) in (?) allow filtering").get0();
+        auto tpl = [] (int32_t e1, float e2) {
+            return make_tuple({int32_type, float_type}, {e1, e2});
+        };
+        wip_require_rows(e, stmt, {}, {tpl(11, 21)}, {{I(11), F(21)}});
+        wip_require_rows(e, stmt, {}, {tpl(12, 22)}, {{I(12), F(22)}});
+        wip_require_rows(e, stmt, {}, {tpl(12, 21)}, {});
+        stmt = e.prepare("select ck1 from t where (ck1,ck2) in (:t1,:t2) allow filtering").get0();
+        wip_require_rows(e, stmt, {{"t1", "t2"}}, {tpl(11, 21), tpl(12, 22)}, {{I(11), F(21)}, {I(12), F(22)}});
+        wip_require_rows(e, stmt, {{"t1", "t2"}}, {tpl(11, 21), tpl(11, 21)}, {{I(11), F(21)}});
+        wip_require_rows(e, stmt, {{"t1", "t2"}}, {tpl(11, 21), tpl(99, 99)}, {{I(11), F(21)}});
+        wip_require_rows(e, stmt, {{"t1", "t2"}}, {tpl(9, 9), tpl(99, 99)}, {});
+        // Parsing error:
+        // stmt = e.prepare("select ck1 from t where (ck1,ck2) in ((13,23),:p1) allow filtering").get0();
+        stmt = e.prepare("select ck1 from t where (ck1,ck2) in ((13,23),(?,?)) allow filtering").get0();
+        wip_require_rows(e, stmt, {}, {I(0), F(0)}, {{I(13), F(23)}});
+        wip_require_rows(e, stmt, {}, {I(11), F(21)}, {{I(11), F(21)}, {I(13), F(23)}});
     }).get();
 }
