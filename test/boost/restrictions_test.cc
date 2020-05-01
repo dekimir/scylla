@@ -297,10 +297,13 @@ SEASTAR_THREAD_TEST_CASE(multi_col_eq) {
         cquery_nofail(e, "insert into t (p, c1, c2) values (1, 'one', 11);");
         cquery_nofail(e, "insert into t (p, c1, c2) values (2, 'two', 12);");
         wip_require_rows(e, "select c2 from t where p=1 and (c1,c2)=('one',11)", {{F(11)}});
+        wip_require_rows(e, "select c1 from t where p=1 and (c1)=('one')", {{T("one")}});
         wip_require_rows(e, "select c2 from t where p=2 and (c1,c2)=('one',11)", {});
         wip_require_rows(e, "select p from t where (c1,c2)=('two',12) allow filtering", {{I(2), T("two"), F(12)}});
         wip_require_rows(e, "select c2 from t where (c1,c2)=('one',12) allow filtering", {});
         wip_require_rows(e, "select c2 from t where (c1,c2)=('two',11) allow filtering", {});
+        wip_require_rows(e, "select c1 from t where (c1)=('one') allow filtering", {{T("one")}});
+        wip_require_rows(e, "select c1 from t where (c1)=('x') allow filtering", {});
         auto stmt = e.prepare("select p from t where (c1,c2)=:t allow filtering").get0();
         wip_require_rows(e, stmt, {{"t"}}, {make_tuple({utf8_type, float_type}, {sstring("two"), 12.f})},
                          {{I(2), T("two"), F(12)}});
@@ -308,6 +311,14 @@ SEASTAR_THREAD_TEST_CASE(multi_col_eq) {
         stmt = e.prepare("select p from t where (c1,c2)=('two',?) allow filtering").get0();
         wip_require_rows(e, stmt, {}, {F(12)}, {{I(2), T("two"), F(12)}});
         wip_require_rows(e, stmt, {}, {F(99)}, {});
+        stmt = e.prepare("select c1 from t where (c1)=? allow filtering").get0();
+        wip_require_rows(e, stmt, {}, {make_tuple({utf8_type}, {sstring("one")})}, {{T("one")}});
+        wip_require_rows(e, stmt, {}, {make_tuple({utf8_type}, {sstring("two")})}, {{T("two")}});
+        wip_require_rows(e, stmt, {}, {make_tuple({utf8_type}, {sstring("three")})}, {});
+        stmt = e.prepare("select c1 from t where (c1)=(:c1) allow filtering").get0();
+        wip_require_rows(e, stmt, {{"c1"}}, {T("one")}, {{T("one")}});
+        wip_require_rows(e, stmt, {{"c1"}}, {T("two")}, {{T("two")}});
+        wip_require_rows(e, stmt, {{"c1"}}, {T("three")}, {});
     }).get();
 }
 
@@ -322,6 +333,7 @@ SEASTAR_THREAD_TEST_CASE(multi_col_slice) {
                      {{I(2), T("b"), F(2)}});
         wip_require_rows(e, "select * from t where (c1,c2)<('a',11) allow filtering", {});
         wip_require_rows(e, "select c1 from t where (c1,c2)<('a',12) allow filtering", {{T("a"), F(11)}});
+        wip_require_rows(e, "select c1 from t where (c1)>=('c') allow filtering", {{T("c")}});
         wip_require_rows(e, "select c1 from t where (c1,c2)<=('c',13) allow filtering",
                      {{T("a"), F(11)}, {T("b"), F(2)}, {T("c"), F(13)}});
         wip_require_rows(e, "select c1 from t where (c1,c2)>=('b',2) and (c1,c2)<=('b',2) allow filtering",
@@ -332,6 +344,12 @@ SEASTAR_THREAD_TEST_CASE(multi_col_slice) {
         stmt = e.prepare("select c1 from t where (c1,c2)<('a',:c2) allow filtering").get0();
         wip_require_rows(e, stmt, {{"c2"}}, {F(12)}, {{T("a"), F(11)}});
         wip_require_rows(e, stmt, {{"c2"}}, {F(11)}, {});
+        stmt = e.prepare("select c1 from t where (c1)>=? allow filtering").get0();
+        wip_require_rows(e, stmt, {}, {make_tuple({utf8_type}, {sstring("c")})}, {{T("c")}});
+        wip_require_rows(e, stmt, {}, {make_tuple({utf8_type}, {sstring("x")})}, {});
+        stmt = e.prepare("select c1 from t where (c1)>=(:c1) allow filtering").get0();
+        wip_require_rows(e, stmt, {{"c1"}}, {T("c")}, {{T("c")}});
+        wip_require_rows(e, stmt, {{"c1"}}, {T("x")}, {});
     }).get();
 }
 
@@ -342,11 +360,17 @@ SEASTAR_THREAD_TEST_CASE(bounds) {
         cquery_nofail(e, "insert into t (p, c) values (2, 12);");
         cquery_nofail(e, "insert into t (p, c) values (3, 13);");
         wip_require_rows(e, "select p from t where p=1 and c > 10", {{I(1)}});
+        wip_require_rows(e, "select p from t where p=1 and c = 11", {{I(1)}});
+        wip_require_rows(e, "select p from t where p=1 and (c) >= (10)", {{I(1)}});
+        wip_require_rows(e, "select p from t where p=1 and (c) = (11)", {{I(1)}});
         wip_require_rows(e, "select c from t where p in (1,2,3) and c > 11 and c < 13", {{I(12)}});
         wip_require_rows(e, "select c from t where p in (1,2,3) and c >= 11 and c < 13", {{I(11)}, {I(12)}});
-        const auto stmt = e.prepare("select c from t where p in (1,2,3) and c >= 11 and c < ?").get0();
+        auto stmt = e.prepare("select c from t where p in (1,2,3) and c >= 11 and c < ?").get0();
         wip_require_rows(e, stmt, {}, {I(13)}, {{I(11)}, {I(12)}});
         wip_require_rows(e, stmt, {}, {I(10)}, {});
+        stmt = e.prepare("select c from t where p in (1,2,3) and (c) < ?").get0();
+        wip_require_rows(e, stmt, {}, {make_tuple({int32_type}, {13})}, {{I(11)}, {I(12)}});
+        wip_require_rows(e, stmt, {}, {make_tuple({int32_type}, {11})}, {});
     }).get();
 }
 
@@ -707,6 +731,8 @@ SEASTAR_THREAD_TEST_CASE(multi_col_in) {
         cquery_nofail(e, "insert into t(pk,ck1,ck2,r) values (4,13,23,'a')");
         wip_require_rows(e, "select pk from t where (ck1,ck2) in ((13,23)) allow filtering",
                          {{I(3), I(13), F(23)}, {I(4), I(13), F(23)}});
+        wip_require_rows(e, "select pk from t where (ck1) in ((13),(33),(44)) allow filtering",
+                         {{I(3), I(13)}, {I(4), I(13)}});
         // TODO: uncomment when #6200 is fixed.
         // wip_require_rows(e, "select pk from t where (ck1,ck2) in ((13,23)) and r='a' allow filtering",
         //                  {{I(4), I(13), F(23), T("a")}});

@@ -1120,6 +1120,14 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, row_d
             return equal(rhs, lhs, data);
         });
     } else if (columns.size() == 1) {
+        auto tup = dynamic_pointer_cast<tuples::value>(get_tuple(t, data.options));
+        if (tup && tup->size() == 1) {
+            // Assume this is an external query WHERE (ck1)=(123), rather than an internal query WHERE
+            // col=(123), because internal queries have no reason to use single-element tuples.
+            //
+            // TODO: make the two cases distinguishable.
+            return equal(tup->get_elements()[0], columns[0], data);
+        }
         return equal(to_bytes_opt(t->bind_and_get(data.options)), columns[0], data);
     } else {
         throw std::logic_error("empty tuple on LHS of =");
@@ -1190,11 +1198,17 @@ bool limits(const binary_operator& opr, row_data data) {
         if (!lhs) {
             lhs = bytes(); // Compatible with old code, which feeds null to type comparators.
         }
-        auto rhs = to_bytes_opt(opr.rhs->bind_and_get(data.options));
+        auto tup = dynamic_pointer_cast<tuples::value>(get_tuple(opr.rhs, data.options));
+        // Assume this is an external query WHERE (ck1)>(123), rather than an internal query WHERE col>(123),
+        // because internal queries have no reason to use single-element tuples.
+        //
+        // TODO: make the two cases distinguishable.
+        auto rhs = (tup && tup->size() == 1) ? tup->get_elements()[0]
+                : to_bytes_opt(opr.rhs->bind_and_get(data.options));
         if (!rhs) {
             return false;
         }
-        return limits(*lhs, *opr.op, *rhs, *columns[0].col->type);
+        return limits(*lhs, *opr.op, *rhs, *comparator(columns[0]));
     } else {
         throw std::logic_error("empty tuple on LHS of an inequality");
     }
@@ -1368,7 +1382,7 @@ bool is_one_of(const std::vector<column_value>& cvs, term& rhs, row_data data) {
                 throw std::logic_error("too many columns for lists::marker in is_one_of");
             }
             return boost::algorithm::any_of(multi->get_elements(), [&] (const bytes_opt& b) {
-                return equal(b, cvs[0], data);
+                    return equal(b, cvs[0], data);
                 });
         }
     } else if (auto mkr = dynamic_cast<tuples::in_marker*>(&rhs)) {
@@ -1588,17 +1602,9 @@ std::vector<bytes_opt> multicolumn_bound(const expression& restr, const query_op
                 if (!matches(opr.op, bnd)) {
                     return empty;
                 }
-                return std::visit(overloaded_functor{
-                        [&] (const std::vector<column_value>& cvs) {
-                            if (cvs.size() > 1) {
-                                auto value = static_pointer_cast<tuples::value>(opr.rhs->bind(options));
-                                return value->get_elements();
-                            } else {
-                                return empty;
-                            }
-                        },
-                        [&] (auto& default_case) { return empty; },
-                    }, opr.lhs);
+                auto cvs = std::get<std::vector<column_value>>(opr.lhs); // Must be multi-column in multicolumn_bound...
+                auto value = static_pointer_cast<tuples::value>(opr.rhs->bind(options));
+                return value->get_elements();
             },
             [&] (auto& others) { return empty; },
         }, restr);
