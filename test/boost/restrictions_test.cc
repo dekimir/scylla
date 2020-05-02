@@ -273,6 +273,17 @@ SEASTAR_THREAD_TEST_CASE(regular_col_slice) {
     }).get();
 }
 
+SEASTAR_THREAD_TEST_CASE(regular_col_slice_reversed) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int, c int, primary key(p, c)) with clustering order by (c desc)");
+        cquery_nofail(e, "insert into t(p,c) values (1,11)");
+        wip_require_rows(e, "select c from t where c>10 allow filtering", {{I(11)}});
+        cquery_nofail(e, "insert into t(p,c) values (1,12)");
+        wip_require_rows(e, "select c from t where c>10 allow filtering", {{I(11)}, {I(12)}});
+        wip_require_rows(e, "select c from t where c<100 allow filtering", {{I(11)}, {I(12)}});
+    }).get();
+}
+
 #if 0 // TODO: enable when supported.
 SEASTAR_THREAD_TEST_CASE(regular_col_neq) {
     do_with_cql_env_thread([](cql_test_env& e) {
@@ -353,6 +364,22 @@ SEASTAR_THREAD_TEST_CASE(multi_col_slice) {
     }).get();
 }
 
+SEASTAR_THREAD_TEST_CASE(multi_col_slice_reversed) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (p int, c1 int, c2 float, primary key (p, c1, c2)) "
+                      "with clustering order by (c1 desc, c2 asc)");
+        cquery_nofail(e, "insert into t(p,c1,c2) values (1,11,21)");
+        cquery_nofail(e, "insert into t(p,c1,c2) values (1,12,22)");
+        cquery_nofail(e, "insert into t(p,c1,c2) values (1,12,23)");
+        wip_require_rows(e, "select c1 from t where (c1,c2)>(10,99) allow filtering",
+                         {{I(11), F(21)}, {I(12), F(22)}, {I(12), F(23)}});
+        wip_require_rows(e, "select c1 from t where (c1,c2)<(12,0) allow filtering", {{I(11), F(21)}});
+        wip_require_rows(e, "select c1 from t where (c1,c2)>(12,22) allow filtering", {{I(12), F(23)}});
+        wip_require_rows(e, "select c1 from t where (c1)>(12) allow filtering", {});
+        wip_require_rows(e, "select c1 from t where (c1)<=(12) allow filtering", {{I(11)}, {I(12)}, {I(12)}});
+    }).get();
+}
+
 SEASTAR_THREAD_TEST_CASE(bounds) {
     do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table t (p int, c int, primary key (p, c))");
@@ -371,6 +398,27 @@ SEASTAR_THREAD_TEST_CASE(bounds) {
         stmt = e.prepare("select c from t where p in (1,2,3) and (c) < ?").get0();
         wip_require_rows(e, stmt, {}, {make_tuple({int32_type}, {13})}, {{I(11)}, {I(12)}});
         wip_require_rows(e, stmt, {}, {make_tuple({int32_type}, {11})}, {});
+    }).get();
+}
+
+SEASTAR_THREAD_TEST_CASE(bounds_reversed) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (pk int, ck1 int, ck2 int, primary key (pk, ck1, ck2)) "
+                      "with clustering order by (ck1 asc, ck2 desc)");
+        cquery_nofail(e, "insert into t (pk,ck1,ck2) values (1,11,21);");
+        cquery_nofail(e, "insert into t (pk,ck1,ck2) values (2,12,22);");
+        wip_require_rows(e, "select pk from t where pk=1 and ck1>10", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and ck1=11", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1)>=(10)", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,30)", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,30) and (ck1)<(20)", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,30) and (ck1,ck2)<(20,0)", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,30) and (ck1,ck2)<=(11,20)", {});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1)=(11)", {{I(1)}});
+        wip_require_rows(e, "select pk from t where pk=1 and (ck1,ck2)=(11,21)", {{I(1)}});
+        cquery_nofail(e, "insert into t (pk,ck1,ck2) values (2,12,23);");
+        wip_require_rows(e, "select ck1 from t where pk in (1,2,3) and ck1=12 and ck2<23", {{I(12)}});
+        wip_require_rows(e, "select ck1 from t where pk in (1,2,3) and ck1=12 and ck2<24", {{I(12)}, {I(12)}});
     }).get();
 }
 

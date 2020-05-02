@@ -1071,8 +1071,11 @@ bytes_opt get_value(const column_value& col, row_data data) {
 
 /// The comparator type for cv.
 const abstract_type* comparator(const column_value& cv) {
-    return cv.sub ? static_pointer_cast<const collection_type_impl>(cv.col->type)->value_comparator().get()
-            : cv.col->type.get();
+    auto col_type = cv.col->type;
+    if (cv.sub) {
+        return static_pointer_cast<const collection_type_impl>(col_type)->value_comparator().get();
+    }
+    return col_type->is_reversed() ? col_type->underlying_type().get() : col_type.get();
 }
 
 /// Returns a tuple-valued terminal from t, if possible.  Otherwise, returns null.
