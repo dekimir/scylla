@@ -629,7 +629,7 @@ SEASTAR_THREAD_TEST_CASE(like) {
         cquery_nofail(e, "insert into t (pk, ck1, ck2) values ('pa', 'c1a', 'c2a');");
         wip_require_rows(e, "select * from t where pk like 'a' allow filtering", {});
         wip_require_rows(e, "select pk from t where pk like '_a' allow filtering", {{T("pa")}});
-        // TODO: enable when fixed.
+        // TODO: enable when #6371 is fixed.
         //wip_require_rows(e, "select pk from t where pk like '_a' and ck1 like '' allow filtering", {});
         wip_require_rows(e, "select pk from t where r like '_a' allow filtering", {});
         wip_require_rows(e, "select pk from t where pk like '_a' and ck2 like '_2%' allow filtering",
@@ -730,7 +730,7 @@ SEASTAR_THREAD_TEST_CASE(set_in) {
         wip_require_rows(e, "select c from t where c in ({222}, {21,201}) allow filtering", {{SI({21, 201})}});
         wip_require_rows(e, "select c from t where c in ({22,202}, {21,201}) allow filtering",
                          {{SI({21, 201})}, {SI({22, 202})}});
-        // TODO: enable when fixed.
+        // TODO: enable when #6372 is fixed.
         //wip_require_rows(e, "select c from t where c in ({222}, {21,201}) and r='' allow filtering", {});
         wip_require_rows(e, "select c from t where c in ({222}, {21,201}) and r='x' allow filtering", {});
         wip_require_rows(e, "select c from t where c in ({22,202}, {21,201}) and r='2' allow filtering",
