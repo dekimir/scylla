@@ -1069,8 +1069,8 @@ bytes_opt get_value(const column_value& col, row_data data) {
     }
 }
 
-/// The comparator type for cv.
-const abstract_type* comparator(const column_value& cv) {
+/// Type for comparing results of get_value().
+const abstract_type* get_value_comparator(const column_value& cv) {
     auto col_type = cv.col->type;
     if (cv.sub) {
         return static_pointer_cast<const collection_type_impl>(col_type)->value_comparator().get();
@@ -1104,7 +1104,7 @@ bool equal(const bytes_opt& rhs, const column_value& lhs, row_data data) {
     if (!value) {
         return false;
     }
-    return comparator(lhs)->equal(*value, *rhs);
+    return get_value_comparator(lhs)->equal(*value, *rhs);
 }
 
 /// True iff columns' values equal t.
@@ -1172,7 +1172,7 @@ bool limits(const binary_operator& opr, row_data data) {
                            columns.size(), rhs.size()));
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
-            const auto cmp = comparator(columns[i])->as_tri_comparator()(
+            const auto cmp = get_value_comparator(columns[i])->as_tri_comparator()(
                     // CQL dictates that columns[i] is a clustering column and non-null.
                     *get_value(columns[i], data),
                     *rhs[i]);
@@ -1213,7 +1213,7 @@ bool limits(const binary_operator& opr, row_data data) {
         if (!rhs) {
             return false;
         }
-        return limits(*lhs, *opr.op, *rhs, *comparator(columns[0]));
+        return limits(*lhs, *opr.op, *rhs, *get_value_comparator(columns[0]));
     } else {
         throw std::logic_error("empty tuple on LHS of an inequality");
     }
@@ -1528,7 +1528,7 @@ const abstract_type* child_type(const children_t& children) {
                                         format("unexpected conjunct with {} columns (should be a single column)",
                                                cvs.size()));
                             } else {
-                                return comparator(cvs[0]);
+                                return get_value_comparator(cvs[0]);
                             }
                         },
                     }, op.lhs);
@@ -1570,7 +1570,7 @@ bound_t get_bound(const expression& restr, const query_options& options, stateme
                             if (cvs.size() != 1) {
                                 throw std::logic_error("get_bound invoked on multi-column restriction");
                             }
-                            auto cmptype = comparator(cvs[0]);
+                            auto cmptype = get_value_comparator(cvs[0]);
                             return matches(opr.op, bnd) ?
                                     bound_t(cmptype, to_bytes_opt(opr.rhs->bind_and_get(options)))
                                     : bound_t(cmptype);
