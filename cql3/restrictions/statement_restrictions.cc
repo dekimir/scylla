@@ -1041,7 +1041,7 @@ bytes_opt get_value(const column_value& col, row_data data) {
     if (col.sub) {
         auto col_type = static_pointer_cast<const collection_type_impl>(cdef->type);
         if (!col_type->is_map()) {
-            throw exceptions::invalid_request_exception("subscripting non-map column");
+            throw exceptions::invalid_request_exception(format("subscripting non-map column {}", cdef->name_as_text()));
         }
         const auto deserialized = cdef->type->deserialize(*data.other_columns[data.sel.index_of(*cdef)]);
         const auto& data_map = value_cast<map_type_impl::native_type>(deserialized);
