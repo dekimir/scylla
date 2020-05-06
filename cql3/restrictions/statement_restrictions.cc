@@ -1079,7 +1079,7 @@ const abstract_type* comparator(const column_value& cv) {
 }
 
 /// Returns a tuple-valued terminal from t, if possible.  Otherwise, returns null.
-::shared_ptr<terminal> get_tuple(const ::shared_ptr<term> t, const query_options& opts) {
+::shared_ptr<terminal> get_tuple(const ::shared_ptr<term>& t, const query_options& opts) {
     auto tml = dynamic_pointer_cast<terminal>(t);
     if (tml) {
         return tml;
