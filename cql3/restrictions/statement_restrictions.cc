@@ -1232,21 +1232,16 @@ bool contains(const data_value& collection, const raw_value_view& value) {
             return found != range.end();
         };
         if (col_type->is_list()) {
-            if (!exists_in(value_cast<list_type_impl::native_type>(collection))) {
-                return false;
-            }
+            return exists_in(value_cast<list_type_impl::native_type>(collection));
         } else if (col_type->is_set()) {
-            if (!exists_in(value_cast<set_type_impl::native_type>(collection))) {
-                return false;
-            }
-        } else {
+            return exists_in(value_cast<set_type_impl::native_type>(collection));
+        } else if (col_type->is_map()) {
             auto data_map = value_cast<map_type_impl::native_type>(collection);
             using entry = std::pair<data_value, data_value>;
-            if (!exists_in(data_map | transformed([] (const entry& e) { return e.second; }))) {
-                return false;
-            }
+            return exists_in(data_map | transformed([] (const entry& e) { return e.second; }));
+        } else {
+            throw std::logic_error("unsupported collection type in a CONTAINS expression");
         }
-        return true;
     });
 }
 
