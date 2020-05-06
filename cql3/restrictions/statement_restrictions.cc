@@ -1587,12 +1587,13 @@ bound_t get_bound(const expression& restr, const query_options& options, stateme
 
 /// Finds the first multi-column binary_operator in restr that represents bnd and returns its RHS value.  If
 /// no such binary_operator exists, returns an empty vector.  The search is depth first.
-std::vector<bytes_opt> multicolumn_bound(const expression& restr, const query_options& options, statements::bound bnd) {
+std::vector<bytes_opt> first_multicolumn_bound(
+        const expression& restr, const query_options& options, statements::bound bnd) {
     std::vector<bytes_opt> empty;
     return std::visit(overloaded_functor{
             [&] (const conjunction& conj) {
                 for (const auto& c : conj.children) {
-                    auto cb = multicolumn_bound(c, options, bnd);
+                    auto cb = first_multicolumn_bound(c, options, bnd);
                     if (!cb.empty()) {
                         return cb;
                     }
@@ -1600,10 +1601,10 @@ std::vector<bytes_opt> multicolumn_bound(const expression& restr, const query_op
                 return empty;
             },
             [&] (const binary_operator& opr) {
-                if (!matches(opr.op, bnd)) {
+                if (!matches(opr.op, bnd) || !std::holds_alternative<std::vector<column_value>>(opr.lhs)) {
                     return empty;
                 }
-                auto cvs = std::get<std::vector<column_value>>(opr.lhs); // Must be multi-column in multicolumn_bound...
+                auto cvs = std::get<std::vector<column_value>>(opr.lhs);
                 auto value = static_pointer_cast<tuples::value>(opr.rhs->bind(options));
                 return value->get_elements();
             },
@@ -1648,7 +1649,9 @@ void check_multicolumn_bound(const expression& restr, const query_options& optio
     if (!options.get_cql_config().restrictions.use_wip) {
         return;
     }
-    if (expected != multicolumn_bound(restr, options, bnd)) {
+    // Upstream validation guarantees there is at most one binary_operator node dictating bnd, so just look for
+    // the first one:
+    if (expected != first_multicolumn_bound(restr, options, bnd)) {
         throw std::logic_error("WIP restrictions mismatch: multicolumn bound");
     }
 }
