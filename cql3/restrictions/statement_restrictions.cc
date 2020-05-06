@@ -1019,7 +1019,7 @@ using children_t = std::vector<expression>; // conjunction's children.
 children_t explode_conjunction(expression e) {
     return std::visit(overloaded_functor{
             [] (const conjunction& c) { return std::move(c.children); },
-            [&] (const auto&) { return children_t{e}; },
+            [&] (const auto&) { return children_t{std::move(e)}; },
         }, e);
 }
 
@@ -1617,7 +1617,7 @@ std::vector<bytes_opt> first_multicolumn_bound(
 expression make_conjunction(expression a, expression b) {
     auto children = explode_conjunction(std::move(a));
     boost::copy(explode_conjunction(std::move(b)), back_inserter(children));
-    return conjunction{children};
+    return conjunction{std::move(children)};
 }
 
 void check_is_satisfied_by(
