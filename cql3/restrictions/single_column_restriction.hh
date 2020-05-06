@@ -172,6 +172,7 @@ public:
                                  gc_clock::time_point now) const override;
     virtual bool is_satisfied_by(bytes_view data, const query_options& options) const override;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
+        // TODO: Initialize .expression member.  Why isn't it triggering any test failures?
         return ::make_shared<EQ>(cdef, _value);
     }
 
@@ -252,6 +253,7 @@ public:
     }
 
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
+        // TODO: Initialize .expression member.  Why isn't it triggering any test failures?
         return ::make_shared<IN_with_values>(cdef, _values);
     }
 };
@@ -281,6 +283,7 @@ public:
     }
 
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
+        // TODO: Initialize .expression member.  Why isn't it triggering any test failures?
         return ::make_shared<IN_with_marker>(cdef, _marker);
     }
 };
@@ -380,6 +383,7 @@ public:
                                  gc_clock::time_point now) const override;
     virtual bool is_satisfied_by(bytes_view data, const query_options& options) const override;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
+        // TODO: Initialize .expression member.  Why isn't it triggering any test failures?
         return ::make_shared<slice>(cdef, _slice);
     }
 };

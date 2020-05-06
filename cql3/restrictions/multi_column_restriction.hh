@@ -728,6 +728,7 @@ private:
         if (!first_neq_component && start_inclusive && end_inclusive) {
             // This is a simple equality case
             shared_ptr<cql3::term> term = ::make_shared<cql3::tuples::value>(start_components);
+            // TODO: Initialize .expression member.  Why isn't it triggering any test failures?
             ret.emplace_back(::make_shared<cql3::restrictions::multi_column_restriction::EQ>(_schema, _column_defs, term));
             return ret;
         } else if (!first_neq_component) {
