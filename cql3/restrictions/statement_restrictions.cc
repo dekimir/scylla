@@ -1112,12 +1112,13 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, row_d
     if (columns.size() > 1) {
         auto multi = dynamic_pointer_cast<multi_item_terminal>(get_tuple(t, data.options));
         if (!multi) {
-            throw exceptions::invalid_request_exception("RHS for multi-column = is not a tuple");
+            throw exceptions::invalid_request_exception("multi-column equality has right-hand side that isn't a tuple");
         }
         const auto& rhs = multi->get_elements();
         if (rhs.size() != columns.size()) {
             throw exceptions::invalid_request_exception(
-                    format("tuple equality size mismatch: {} on LHS, {} on RHS", columns.size(), rhs.size()));
+                    format("tuple equality size mismatch: {} elements on left-hand side, {} on right",
+                           columns.size(), rhs.size()));
         }
         return boost::equal(rhs, columns, [&] (const bytes_opt& rhs, const column_value& lhs) {
             return equal(rhs, lhs, data);
@@ -1162,12 +1163,13 @@ bool limits(const binary_operator& opr, row_data data) {
     if (columns.size() > 1) {
         auto multi = dynamic_pointer_cast<multi_item_terminal>(get_tuple(opr.rhs, data.options));
         if (!multi) {
-            throw exceptions::invalid_request_exception("RHS for multi-column comparison is not a tuple");
+            throw exceptions::invalid_request_exception("multi-column comparison has right-hand side that isn't a tuple");
         }
         const auto& rhs = multi->get_elements();
         if (rhs.size() != columns.size()) {
             throw exceptions::invalid_request_exception(
-                    format("tuple comparison size mismatch: {} on LHS, {} on RHS", columns.size(), rhs.size()));
+                    format("tuple comparison size mismatch: {} elements on left-hand side, {} on right",
+                           columns.size(), rhs.size()));
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
             const auto cmp = comparator(columns[i])->as_tri_comparator()(
@@ -1352,18 +1354,19 @@ bool like(const std::vector<column_value>& columns, term& rhs, row_data data) {
             const auto& elements = multi->get_elements();
             if (elements.size() != columns.size()) {
                 throw exceptions::invalid_request_exception(
-                        format("LIKE tuple size mismatch: {} on LHS, {} on RHS", columns.size(), elements.size()));
+                        format("LIKE tuple size mismatch: {} elements on left-hand side, {} on right",
+                               columns.size(), elements.size()));
             }
             return boost::equal(columns, elements, [&] (const column_value& cv, const bytes_opt& pattern) {
                 return like(cv, pattern, data);
             });
         } else {
-            throw std::logic_error("RHS for multi-column LIKE is not a tuple");
+            throw exceptions::invalid_request_exception("multi-column LIKE has right-hand side that isn't a tuple");
         }
     } else if (columns.size() == 1) {
         return like(columns[0], to_bytes_opt(rhs.bind_and_get(data.options)), data);
     } else {
-        throw exceptions::invalid_request_exception("empty tuple on LHS of LIKE");
+        throw exceptions::invalid_request_exception("empty tuple on left-hand side of LIKE");
     }
 }
 
