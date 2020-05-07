@@ -319,10 +319,6 @@ public:
         return _slice.has_bound(b);
     }
 
-    virtual std::vector<bytes_opt> bounds(statements::bound b, const query_options& options) const override {
-        return {to_bytes_opt(_slice.bound(b)->bind_and_get(options))};
-    }
-
     virtual bool is_inclusive(statements::bound b) const override {
         return _slice.is_inclusive(b);
     }
@@ -537,10 +533,6 @@ public:
     }
 
     virtual bool has_bound(statements::bound b) const override {
-        throw exceptions::unsupported_operation_exception();
-    }
-
-    virtual std::vector<bytes_opt> bounds(statements::bound b, const query_options& options) const override {
         throw exceptions::unsupported_operation_exception();
     }
 

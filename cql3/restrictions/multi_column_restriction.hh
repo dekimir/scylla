@@ -453,13 +453,6 @@ public:
         throw exceptions::unsupported_operation_exception();
     }
 
-    virtual std::vector<bytes_opt> bounds(statements::bound b, const query_options& options) const override {
-        throw std::runtime_error(format("{} not implemented", __PRETTY_FUNCTION__));
-#if 0
-        return Composites.toByteBuffers(boundsAsComposites(b, options));
-#endif
-    }
-
     virtual std::vector<bounds_range_type> bounds_ranges(const query_options& options) const override {
         if (!is_mixed_order()) {
             return bounds_ranges_unified_order(options);

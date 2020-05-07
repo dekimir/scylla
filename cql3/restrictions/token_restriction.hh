@@ -87,10 +87,11 @@ public:
 
     std::vector<bounds_range_type> bounds_ranges(const query_options& options) const override {
         auto get_token_bound = [this, &options](statements::bound b) {
-            if (!has_bound(b)) {
+            const auto bound = wip::get_bound(expression, b, options);
+            if (!bound) {
                 return is_start(b) ? dht::minimum_token() : dht::maximum_token();
             }
-            auto buf = wip::checked_bound(*this, b, options);
+            auto buf = bound.value();
             if (!buf) {
                 throw exceptions::invalid_request_exception("Invalid null token value");
             }
@@ -189,10 +190,6 @@ public:
 
     std::vector<bytes_opt> values(const query_options& options) const override {
         throw exceptions::unsupported_operation_exception();
-    }
-
-    std::vector<bytes_opt> bounds(statements::bound b, const query_options& options) const override {
-        return { to_bytes_opt(_slice.bound(b)->bind_and_get(options)) };
     }
 
     bool uses_function(const sstring& ks_name,

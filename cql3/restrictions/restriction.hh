@@ -122,8 +122,46 @@ extern void check_is_satisfied_by(
         const selection::selection&, const query_options&,
         bool expected);
 
-/// Returns a restriction's bounds, but throws if the result is different from the wip result.
-bytes_opt checked_bound(const restriction&, statements::bound, const query_options&);
+/// A column's bound, from WHERE restrictions.
+class bound_t {
+    bool _unbounded;
+    bytes_opt _value; // Invalid when _unbounded is true.
+    const abstract_type* _value_type;
+public:
+    /// \p t must outlive *this.
+    explicit bound_t(const abstract_type* t) : _unbounded(true), _value_type(t) {}
+
+    /// \p t must outlive *this.
+    explicit bound_t(const data_type& t) : bound_t(t.get()) {}
+
+    /// \p t and \p v must outlive *this.
+    bound_t(const abstract_type* t, const bytes_opt& v) : _unbounded(false), _value(v), _value_type(t) {}
+
+    /// \p t and \p v must outlive *this.
+    bound_t(const data_type& t, const bytes_opt& v) : bound_t(t.get(), v) {}
+
+    /// True iff *this is a tighter lower bound than \p that.
+    bool is_tighter_lb_than(const bound_t& that) const;
+
+    /// True iff *this is a tighter upper bound than \p that.
+    bool is_tighter_ub_than(const bound_t& that) const;
+
+    /// Returns value if *this is bounded; otherwise, throws.
+    bytes_view_opt value() const;
+
+    /// True iff *this has a value.
+    operator bool() const {
+        return !_unbounded;
+    }
+
+private:
+    /// If the comparison *this<=>that can be shortcircuited (due to unbounded or null cases), returns the
+    /// comparison result.  Otherwise, returns nullopt.
+    std::optional<bool> shortcircuit(const bound_t& that) const;
+};
+
+/// Returns a restriction's bound.
+bound_t get_bound(const expression&, statements::bound, const query_options&);
 
 /// Calculates bound of a multicolumn restriction, then throws if the result is different from expected.
 void check_multicolumn_bound(const expression&, const query_options&, statements::bound,
@@ -198,10 +236,6 @@ public:
      */
     virtual bool has_bound(statements::bound b) const {
         return true;
-    }
-
-    virtual std::vector<bytes_opt> bounds(statements::bound b, const query_options& options) const {
-        return values(options);
     }
 
     virtual bool is_inclusive(statements::bound b) const {

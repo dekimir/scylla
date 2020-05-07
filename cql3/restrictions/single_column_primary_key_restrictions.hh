@@ -271,14 +271,15 @@ private:
             if (r->is_slice()) {
                 if (cartesian_product_is_empty(vec_of_values)) {
                     auto read_bound = [r, &options, this] (statements::bound b) -> std::optional<range_bound> {
-                        if (!r->has_bound(b)) {
+                        const auto bound = wip::get_bound(r->expression, b, options);
+                        if (!bound) {
                             return {};
                         }
-                        auto value = wip::checked_bound(*r, b, options);
+                        auto value = bound.value();
                         if (!value) {
                             throw exceptions::invalid_request_exception(sprint(invalid_null_msg, r->to_string()));
                         }
-                        return {range_bound(ValueType::from_single_value(*_schema, *value), r->is_inclusive(b))};
+                        return {range_bound(ValueType::from_single_value(*_schema, bytes(*value)), r->is_inclusive(b))};
                     };
                     ranges.emplace_back(range_type(
                         read_bound(statements::bound::START),
@@ -295,8 +296,8 @@ private:
                 ranges.reserve(size);
                 for (auto&& prefix : make_cartesian_product(vec_of_values)) {
                     auto read_bound = [r, &prefix, &options, this](statements::bound bound) -> range_bound {
-                        if (r->has_bound(bound)) {
-                            auto value = wip::checked_bound(*r, bound, options);
+                        if (const auto bv = wip::get_bound(r->expression, bound, options)) {
+                            auto value = bv.value();
                             if (!value) {
                                 throw exceptions::invalid_request_exception(sprint(invalid_null_msg, r->to_string()));
                             }
@@ -360,11 +361,6 @@ public:
 
     virtual bytes_opt value_for(const column_definition& cdef, const query_options& options) const override {
         return _restrictions->value_for(cdef, options);
-    }
-
-    std::vector<bytes_opt> bounds(statements::bound b, const query_options& options) const override {
-        // TODO: if this proved to be required.
-        fail(unimplemented::cause::LEGACY_COMPOSITE_KEYS); // not 100% correct...
     }
 
     const single_column_restrictions::restrictions_map& restrictions() const {
