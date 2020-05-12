@@ -141,8 +141,7 @@ SEASTAR_THREAD_TEST_CASE(regular_col_eq) {
         wip_require_rows(e, "select r from t where q=12 and p=2 and r=99 allow filtering", {});
         cquery_nofail(e, "insert into t(p) values (100)");
         wip_require_rows(e, "select q from t where q=12 allow filtering", {{I(12)}});
-        // TODO: enable when supported:
-        //wip_require_rows(e, "select p from t where q=null allow filtering", {});
+        wip_require_rows(e, "select p from t where q=null allow filtering", {});
         auto stmt = e.prepare("select q from t where q=? allow filtering").get0();
         wip_require_rows(e, stmt, {}, {I(12)}, {{I(12)}});
         wip_require_rows(e, stmt, {}, {I(99)}, {});
@@ -256,20 +255,15 @@ SEASTAR_THREAD_TEST_CASE(regular_col_slice) {
         wip_require_rows(e, "select q from t where q<12 allow filtering", {{I(10)}, {I(11)}});
         wip_require_rows(e, "select q from t where q>99 allow filtering", {});
         wip_require_rows(e, "select r from t where q<12 and q>=11 allow filtering", {{I(21), I(11)}});
-        // TODO: enable when #5799 is fixed:
-        //wip_require_rows(e, "select * from t where q<11 and q>11 allow filtering", {});
+        wip_require_rows(e, "select * from t where q<11 and q>11 allow filtering", {});
         wip_require_rows(e, "select q from t where q<=12 and r>=21 allow filtering", {{I(11), I(21)}, {I(12), I(22)}});
-        // TODO: enable when supported:
-        //wip_require_rows(e, "select q from t where q < null allow filtering", {{I(10)}, {I(11)}, {I(12)}, {I(13)}});
+        wip_require_rows(e, "select q from t where q < null allow filtering", {});
         cquery_nofail(e, "insert into t(p) values (4)");
         wip_require_rows(e, "select q from t where q<12 allow filtering", {{std::nullopt}, {I(10)}, {I(11)}});
         wip_require_rows(e, "select q from t where q>10 allow filtering", {{I(11)}, {I(12)}, {I(13)}});
         wip_require_rows(e, "select q from t where q<12 and q>10 allow filtering", {{I(11)}});
-        // TODO: enable when supported:
-        // wip_require_rows(e, "select q from t where q < null allow filtering",
-        //              {{std::nullopt}, {I(10)}, {I(11)}, {I(12)}, {I(13)}});
-        // wip_require_rows(e, "select q from t where q > null allow filtering",
-        //              {{std::nullopt}, {I(10)}, {I(11)}, {I(12)}, {I(13)}});
+        wip_require_rows(e, "select q from t where q < null allow filtering", {});
+        wip_require_rows(e, "select q from t where q > null allow filtering", {});
     }).get();
 }
 

@@ -113,14 +113,12 @@ struct conjunction {
 /// directly into the resulting conjunction's children, flattening the expression tree.
 extern expression make_conjunction(expression a, expression b);
 
-/// Checks if restr is satisfied by the given data, then throws if the result is different from
-/// expected.
-extern void check_is_satisfied_by(
+/// WIP equivalent of restriction::is_satisfied_by.
+extern bool is_satisfied_by(
         const expression& restr,
         const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
         const query::result_row_view& static_row, const query::result_row_view* row,
-        const selection::selection&, const query_options&,
-        bool expected);
+        const selection::selection&, const query_options&);
 
 /// A column's bound, from WHERE restrictions.
 class bound_t {

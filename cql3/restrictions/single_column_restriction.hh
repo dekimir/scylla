@@ -100,7 +100,6 @@ public:
 
     virtual bool is_supported_by(const secondary_index::index& index) const = 0;
     using restriction::is_satisfied_by;
-    virtual bool is_satisfied_by(bytes_view data, const query_options& options) const = 0;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) = 0;
 #if 0
     /**
@@ -170,7 +169,6 @@ public:
                                  const row& cells,
                                  const query_options& options,
                                  gc_clock::time_point now) const override;
-    virtual bool is_satisfied_by(bytes_view data, const query_options& options) const override;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         // TODO: Initialize .expression member.  Why isn't it triggering any test failures?
         return ::make_shared<EQ>(cdef, _value);
@@ -205,7 +203,6 @@ public:
                                  const row& cells,
                                  const query_options& options,
                                  gc_clock::time_point now) const override;
-    virtual bool is_satisfied_by(bytes_view data, const query_options& options) const override;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         throw std::logic_error("IN superclass should never be cloned directly");
     }
@@ -377,7 +374,6 @@ public:
                                  const row& cells,
                                  const query_options& options,
                                  gc_clock::time_point now) const override;
-    virtual bool is_satisfied_by(bytes_view data, const query_options& options) const override;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         // TODO: Initialize .expression member.  Why isn't it triggering any test failures?
         return ::make_shared<slice>(cdef, _slice);
@@ -420,8 +416,6 @@ public:
                                  const row& cells,
                                  const query_options& options,
                                  gc_clock::time_point now) const override;
-
-    virtual bool is_satisfied_by(bytes_view data, const query_options& options) const override;
 
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override;
 
@@ -546,7 +540,7 @@ public:
                                  const row& cells,
                                  const query_options& options,
                                  gc_clock::time_point now) const override;
-    virtual bool is_satisfied_by(bytes_view data, const query_options& options) const override;
+    bool is_satisfied_by(bytes_view data, const query_options& options) const;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         throw std::logic_error("Cloning 'contains' restriction is not implemented.");
     }

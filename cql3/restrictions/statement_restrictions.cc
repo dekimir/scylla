@@ -643,14 +643,6 @@ bool single_column_restriction::EQ::is_satisfied_by(const schema& schema,
     return false;
 }
 
-bool single_column_restriction::EQ::is_satisfied_by(bytes_view data, const query_options& options) const {
-    auto operand = value(options);
-    if (!operand) {
-        throw exceptions::invalid_request_exception(format("Invalid null value for {}", _column_def.name_as_text()));
-    }
-    return _column_def.type->compare(*operand, data) == 0;
-}
-
 bool single_column_restriction::IN::is_satisfied_by(const schema& schema,
         const partition_key& key,
         const clustering_key_prefix& ckey,
@@ -667,13 +659,6 @@ bool single_column_restriction::IN::is_satisfied_by(const schema& schema,
         return operand && _column_def.type->compare(*operand, cell_value_bv) == 0;
     });
   });
-}
-
-bool single_column_restriction::IN::is_satisfied_by(bytes_view data, const query_options& options) const {
-    auto operands = values(options);
-    return boost::algorithm::any_of(operands, [this, &data] (const bytes_opt& operand) {
-        return operand && _column_def.type->compare(*operand, data) == 0;
-    });
 }
 
 static query::range<bytes_view> to_range(const term_slice& slice, const query_options& options, const sstring& name) {
@@ -711,11 +696,6 @@ bool single_column_restriction::slice::is_satisfied_by(const schema& schema,
         return to_range(_slice, options, _column_def.name_as_text()).contains(
                 cell_value_bv, _column_def.type->as_tri_comparator());
     });
-}
-
-bool single_column_restriction::slice::is_satisfied_by(bytes_view data, const query_options& options) const {
-    return to_range(_slice, options, _column_def.name_as_text()).contains(
-            data, _column_def.type->underlying_type()->as_tri_comparator());
 }
 
 bool single_column_restriction::contains::is_satisfied_by(const schema& schema,
@@ -974,16 +954,6 @@ bool single_column_restriction::LIKE::is_satisfied_by(const schema& schema,
     return cell_value->with_linearized([&] (bytes_view data) {
         return boost::algorithm::all_of(_matchers, [&] (auto& m) { return m(data); });
     });
-}
-
-bool single_column_restriction::LIKE::is_satisfied_by(bytes_view data, const query_options& options) const {
-    if (!_column_def.type->is_string()) {
-        throw exceptions::invalid_request_exception("LIKE is allowed only on string types");
-    }
-    if (!init_matchers(options)) {
-        return false;
-    }
-    return boost::algorithm::all_of(_matchers, [&] (auto& m) { return m(data); });
 }
 
 sstring single_column_restriction::LIKE::to_string() const {
@@ -1400,51 +1370,6 @@ bool is_one_of(const std::vector<column_value>& cvs, term& rhs, row_data data) {
     throw std::logic_error("unexpected term type in is_one_of");
 }
 
-/// WIP equivalent of restriction::is_satisfied_by.
-bool is_satisfied_by(
-        const expression& restr,
-        const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
-        const query::result_row_view& static_row, const query::result_row_view* row,
-        const selection& selection, const query_options& options) {
-    return std::visit(overloaded_functor{
-            [&] (bool v) { return v; },
-            [&] (const conjunction& conj) {
-                return boost::algorithm::all_of(conj.children, [&] (const expression& c) {
-                    return is_satisfied_by(c, partition_key, clustering_key, static_row, row, selection, options);
-                });
-            },
-            [&] (const binary_operator& opr) {
-                return std::visit(overloaded_functor{
-                        [&] (const std::vector<column_value>& cvs) {
-                            const auto regulars = get_non_pk_values(selection, static_row, row);
-                            row_data data{partition_key, clustering_key, regulars, selection, options};
-                            if (*opr.op == operator_type::EQ) {
-                                return equal(opr.rhs, cvs, data);
-                            } else if (*opr.op == operator_type::NEQ) {
-                                return !equal(opr.rhs, cvs, data);
-                            } else if (opr.op->is_slice()) {
-                                return limits(opr, data);
-                            } else if (*opr.op == operator_type::CONTAINS) {
-                                return contains(opr.rhs->bind_and_get(options), cvs, data);
-                            } else if (*opr.op == operator_type::CONTAINS_KEY) {
-                                return contains_key(cvs, opr.rhs->bind_and_get(options), data);
-                            } else if (*opr.op == operator_type::LIKE) {
-                                return like(cvs, *opr.rhs, data);
-                            } else if (*opr.op == operator_type::IN) {
-                                return is_one_of(cvs, *opr.rhs, data);
-                            } else {
-                                throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
-                            }
-                        },
-                        // TODO: implement.
-                        [] (const token& tok) -> bool {
-                            throw exceptions::unsupported_operation_exception("wip::token");
-                        },
-                    }, opr.lhs);
-            },
-        }, restr);
-}
-
 bound_t tighter_ub(const bound_t& a, const bound_t& b) {
     return a.is_tighter_ub_than(b) ? a : b;
 }
@@ -1520,18 +1445,48 @@ expression make_conjunction(expression a, expression b) {
     return conjunction{std::move(children)};
 }
 
-void check_is_satisfied_by(
+bool is_satisfied_by(
         const expression& restr,
         const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
         const query::result_row_view& static_row, const query::result_row_view* row,
-        const selection& selection, const query_options& options,
-        bool expected) {
-    if (!options.get_cql_config().restrictions.use_wip) {
-        return;
-    }
-    if (expected != is_satisfied_by(restr, partition_key, clustering_key, static_row, row, selection, options)) {
-        throw std::logic_error("WIP restrictions mismatch: is_satisfied_by");
-    }
+        const selection& selection, const query_options& options) {
+    return std::visit(overloaded_functor{
+            [&] (bool v) { return v; },
+            [&] (const conjunction& conj) {
+                return boost::algorithm::all_of(conj.children, [&] (const expression& c) {
+                    return is_satisfied_by(c, partition_key, clustering_key, static_row, row, selection, options);
+                });
+            },
+            [&] (const binary_operator& opr) {
+                return std::visit(overloaded_functor{
+                        [&] (const std::vector<column_value>& cvs) {
+                            const auto regulars = get_non_pk_values(selection, static_row, row);
+                            row_data data{partition_key, clustering_key, regulars, selection, options};
+                            if (*opr.op == operator_type::EQ) {
+                                return equal(opr.rhs, cvs, data);
+                            } else if (*opr.op == operator_type::NEQ) {
+                                return !equal(opr.rhs, cvs, data);
+                            } else if (opr.op->is_slice()) {
+                                return limits(opr, data);
+                            } else if (*opr.op == operator_type::CONTAINS) {
+                                return contains(opr.rhs->bind_and_get(options), cvs, data);
+                            } else if (*opr.op == operator_type::CONTAINS_KEY) {
+                                return contains_key(cvs, opr.rhs->bind_and_get(options), data);
+                            } else if (*opr.op == operator_type::LIKE) {
+                                return like(cvs, *opr.rhs, data);
+                            } else if (*opr.op == operator_type::IN) {
+                                return is_one_of(cvs, *opr.rhs, data);
+                            } else {
+                                throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
+                            }
+                        },
+                        // TODO: implement.
+                        [] (const token& tok) -> bool {
+                            throw exceptions::unsupported_operation_exception("wip::token");
+                        },
+                    }, opr.lhs);
+            },
+        }, restr);
 }
 
 bool bound_t::is_tighter_lb_than(const bound_t& that) const {
