@@ -104,10 +104,12 @@ delete_statement::prepare_internal(database& db, schema_ptr schema, variable_spe
     prepare_conditions(db, *schema, bound_names, *stmt);
     stmt->process_where_clause(db, _where_clause, bound_names);
     if (!db.supports_infinite_bound_range_deletions()) {
+#if 0 // TODO: restore.
         if (!stmt->restrictions().get_clustering_columns_restrictions()->has_bound(bound::START)
                 || !stmt->restrictions().get_clustering_columns_restrictions()->has_bound(bound::END)) {
             throw exceptions::invalid_request_exception("A range deletion operation needs to specify both bounds for clusters without sstable mc format support");
         }
+#endif //0
     }
     if (stmt->restrictions().get_clustering_columns_restrictions()->is_slice()) {
         if (!schema->is_compound()) {

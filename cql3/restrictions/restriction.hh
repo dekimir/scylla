@@ -227,15 +227,6 @@ public:
         return _ops;
     }
 
-    /**
-     * Checks if the specified bound is set or not.
-     * @param b the bound type
-     * @return <code>true</code> if the specified bound is set, <code>false</code> otherwise
-     */
-    virtual bool has_bound(statements::bound b) const {
-        return true;
-    }
-
     virtual bool is_inclusive(statements::bound b) const {
         return true;
     }

@@ -479,10 +479,6 @@ public:
         }
 #endif
 public:
-    virtual bool has_bound(statements::bound b) const override {
-        return _slice.has_bound(b);
-    }
-
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
         return (_slice.has_bound(statements::bound::START) && restriction::term_uses_function(_slice.bound(statements::bound::START), ks_name, function_name))
                 || (_slice.has_bound(statements::bound::END) && restriction::term_uses_function(_slice.bound(statements::bound::END), ks_name, function_name));
@@ -499,10 +495,10 @@ public:
                    get_columns_in_commons(other));
         auto other_slice = static_pointer_cast<slice>(other);
 
-        check_false(has_bound(statements::bound::START) && other_slice->has_bound(statements::bound::START),
+        check_false(_slice.has_bound(statements::bound::START) && other_slice->_slice.has_bound(statements::bound::START),
                     "More than one restriction was found for the start bound on %s",
                     get_columns_in_commons(other));
-        check_false(has_bound(statements::bound::END) && other_slice->has_bound(statements::bound::END),
+        check_false(_slice.has_bound(statements::bound::END) && other_slice->_slice.has_bound(statements::bound::END),
                     "More than one restriction was found for the end bound on %s",
                     get_columns_in_commons(other));
 
@@ -533,7 +529,7 @@ private:
     }
 
     std::vector<bytes_opt> read_bound_components(const query_options& options, statements::bound b) const {
-        if (!has_bound(b)) {
+        if (!_slice.has_bound(b)) {
             return {};
         }
         auto vals = component_bounds(b, options);

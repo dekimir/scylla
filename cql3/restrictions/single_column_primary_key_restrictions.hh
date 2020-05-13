@@ -124,10 +124,6 @@ public:
         return _restrictions->is_all_eq();
     }
 
-    virtual bool has_bound(statements::bound b) const override {
-        return boost::algorithm::all_of(_restrictions->restrictions(), [b] (auto&& r) { return r.second->has_bound(b); });
-    }
-
     virtual bool is_inclusive(statements::bound b) const override {
         return boost::algorithm::all_of(_restrictions->restrictions(), [b] (auto&& r) { return r.second->is_inclusive(b); });
     }

@@ -312,10 +312,6 @@ public:
         throw exceptions::unsupported_operation_exception();
     }
 
-    virtual bool has_bound(statements::bound b) const override {
-        return _slice.has_bound(b);
-    }
-
     virtual bool is_inclusive(statements::bound b) const override {
         return _slice.is_inclusive(b);
     }
@@ -327,11 +323,11 @@ public:
 
         auto other_slice = static_pointer_cast<slice>(r);
 
-        if (has_bound(statements::bound::START) && other_slice->has_bound(statements::bound::START)) {
+        if (_slice.has_bound(statements::bound::START) && other_slice->_slice.has_bound(statements::bound::START)) {
             throw exceptions::invalid_request_exception(format("More than one restriction was found for the start bound on {}", _column_def.name_as_text()));
         }
 
-        if (has_bound(statements::bound::END) && other_slice->has_bound(statements::bound::END)) {
+        if (_slice.has_bound(statements::bound::END) && other_slice->_slice.has_bound(statements::bound::END)) {
             throw exceptions::invalid_request_exception(format("More than one restriction was found for the end bound on {}", _column_def.name_as_text()));
         }
 
@@ -524,10 +520,6 @@ public:
     virtual sstring to_string() const override {
         return format("CONTAINS(values={}, keys={}, entryKeys={}, entryValues={})",
             std::to_string(_values), std::to_string(_keys), std::to_string(_entry_keys), std::to_string(_entry_values));
-    }
-
-    virtual bool has_bound(statements::bound b) const override {
-        throw exceptions::unsupported_operation_exception();
     }
 
     virtual bool is_inclusive(statements::bound b) const override {

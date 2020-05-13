@@ -184,9 +184,6 @@ public:
         : token_restriction(op::SLICE, column_defs)
         , _slice(term_slice::new_instance(bound, inclusive, std::move(term)))
     {}
-    bool has_bound(statements::bound b) const override {
-        return _slice.has_bound(b);
-    }
 
     std::vector<bytes_opt> values(const query_options& options) const override {
         throw exceptions::unsupported_operation_exception();
@@ -219,13 +216,13 @@ public:
 
             auto* other_slice = static_cast<slice *>(restriction.get());
 
-            if (has_bound(statements::bound::START)
-                    && other_slice->has_bound(statements::bound::START)) {
+            if (_slice.has_bound(statements::bound::START)
+                    && other_slice->_slice.has_bound(statements::bound::START)) {
                 throw exceptions::invalid_request_exception(
                         "More than one restriction was found for the start bound on %s");
             }
-            if (has_bound(statements::bound::END)
-                    && other_slice->has_bound(statements::bound::END)) {
+            if (_slice.has_bound(statements::bound::END)
+                    && other_slice->_slice.has_bound(statements::bound::END)) {
                 throw exceptions::invalid_request_exception(
                         "More than one restriction was found for the end bound on %s");
             }
