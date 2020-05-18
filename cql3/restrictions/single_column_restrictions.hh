@@ -104,7 +104,14 @@ public:
 
     virtual bytes_opt value_for(const column_definition& cdef, const query_options& options) const override {
         auto it = _restrictions.find(std::addressof(cdef));
-        return (it != _restrictions.end()) ? it->second->value(options) : bytes_opt{};
+        if (it == _restrictions.end()) {
+            return bytes_opt{};
+        } else {
+            using namespace wip;
+            const auto values = std::get<value_list>(possible_lhs_values(it->second->expression, options));
+            assert(values.size() == 1);
+            return values.front();
+        }
     }
 
     /**

@@ -74,17 +74,6 @@ public:
         return _column_defs;
     }
 
-    virtual std::vector<bytes_opt> values(const query_options& options) const override  {
-        auto src = values_as_keys(options);
-        std::vector<bytes_opt> res;
-        for (const clustering_key_prefix& r : src) {
-            for (const auto& component : r.components()) {
-                res.emplace_back(component);
-            }
-        }
-        return res;
-    }
-
     virtual void merge_with(::shared_ptr<restriction> other) override {
         statements::request_validations::check_true(other->is_multi_column(),
             "Mixing single column relations and multi column relations on clustering columns is not allowed");
@@ -235,10 +224,6 @@ public:
             get_columns_in_commons(other)));
     }
 
-    virtual std::vector<clustering_key_prefix> values_as_keys(const query_options& options) const override {
-        return { composite_value(options) };
-    };
-
     virtual std::vector<bounds_range_type> bounds_ranges(const query_options& options) const override {
         return { bounds_range_type::make_singular(composite_value(options)) };
     }
@@ -294,20 +279,6 @@ public:
             }
         }
         return false;
-    }
-
-    virtual std::vector<clustering_key_prefix> values_as_keys(const query_options& options) const override {
-        auto split_in_values = split_values(options);
-        std::vector<clustering_key_prefix> keys;
-        for (auto&& components : split_in_values) {
-            for (unsigned i = 0; i < components.size(); i++) {
-                statements::request_validations::check_not_null(components[i], "Invalid null value in condition for column %s", _column_defs.at(i)->name_as_text());
-            }
-            keys.emplace_back(clustering_key_prefix::from_optional_exploded(*_schema, components));
-        }
-        std::sort(keys.begin(), keys.end(), clustering_key_prefix::less_compare(*_schema));
-        keys.erase(std::unique(keys.begin(), keys.end(), clustering_key_prefix::equality(*_schema)), keys.end());
-        return keys;
     }
 
     virtual std::vector<bounds_range_type> bounds_ranges(const query_options& options) const override {
@@ -461,10 +432,6 @@ public:
             }
         }
         return false;
-    }
-
-    virtual std::vector<clustering_key_prefix> values_as_keys(const query_options&) const override {
-        throw exceptions::unsupported_operation_exception();
     }
 
     virtual std::vector<bounds_range_type> bounds_ranges(const query_options& options) const override {
@@ -722,7 +689,6 @@ private:
         if (!first_neq_component && start_inclusive && end_inclusive) {
             // This is a simple equality case
             shared_ptr<cql3::term> term = ::make_shared<cql3::tuples::value>(start_components);
-            // TODO: Initialize .expression member.  Why isn't it triggering any test failures?
             ret.emplace_back(::make_shared<cql3::restrictions::multi_column_restriction::EQ>(_schema, _column_defs, term));
             return ret;
         } else if (!first_neq_component) {

@@ -25,6 +25,7 @@
 #include <boost/algorithm/cxx11/any_of.hpp>
 #include <boost/range/adaptors.hpp>
 #include <boost/range/algorithm.hpp>
+#include <optional>
 #include <stdexcept>
 
 #include "query-result-reader.hh"
@@ -78,15 +79,7 @@ public:
     void merge_with(::shared_ptr<restriction> restriction) override {
         throw exceptions::unsupported_operation_exception();
     }
-    std::vector<bytes_opt> values(const query_options& options) const override {
-        // throw? should not reach?
-        return {};
-    }
     bytes_opt value_for(const column_definition& cdef, const query_options& options) const override {
-        return {};
-    }
-    std::vector<T> values_as_keys(const query_options& options) const override {
-        // throw? should not reach?
         return {};
     }
     std::vector<bounds_range_type> bounds_ranges(const query_options&) const override {
@@ -630,7 +623,7 @@ bool single_column_restriction::EQ::is_satisfied_by(const schema& schema,
         const row& cells,
         const query_options& options,
         gc_clock::time_point now) const {
-    auto operand = value(options);
+    auto operand = to_bytes_opt(_value->bind_and_get(options));
     if (operand) {
         auto cell_value = get_value(schema, key, ckey, cells, now);
         if (!cell_value) {
@@ -653,12 +646,13 @@ bool single_column_restriction::IN::is_satisfied_by(const schema& schema,
     if (!cell_value) {
         return false;
     }
-    auto operands = values(options);
-  return cell_value->with_linearized([&] (bytes_view cell_value_bv) {
-    return std::any_of(operands.begin(), operands.end(), [&] (auto&& operand) {
-        return operand && _column_def.type->compare(*operand, cell_value_bv) == 0;
+    auto raw_operands = values_raw(options);
+    auto operands = boost::unique(boost::sort(raw_operands));
+    return cell_value->with_linearized([&] (bytes_view cell_value_bv) {
+        return boost::algorithm::any_of(operands, [&] (const bytes_opt& operand) {
+            return operand && _column_def.type->compare(*operand, cell_value_bv) == 0;
+        });
     });
-  });
 }
 
 static query::range<bytes_view> to_range(const term_slice& slice, const query_options& options, const sstring& name) {
@@ -883,16 +877,12 @@ bool token_restriction::EQ::is_satisfied_by(const schema& schema,
         gc_clock::time_point now) const {
     bool satisfied = false;
     auto cdef = _column_definitions.begin();
-    for (auto&& operand : values(options)) {
-        if (operand) {
-            auto cell_value = do_get_value(schema, **cdef, key, ckey, cells, now);
-            satisfied = cell_value && cell_value->with_linearized([&] (bytes_view cell_value_bv) {
-                return (*cdef)->type->compare(*operand, cell_value_bv) == 0;
-            });
-        }
-        if (!satisfied) {
-            break;
-        }
+    auto operand = to_bytes_opt(_value->bind_and_get(options));
+    if (operand) {
+        auto cell_value = do_get_value(schema, **cdef, key, ckey, cells, now);
+        satisfied = cell_value && cell_value->with_linearized([&] (bytes_view cell_value_bv) {
+            return (*cdef)->type->compare(*operand, cell_value_bv) == 0;
+        });
     }
     return satisfied;
 }

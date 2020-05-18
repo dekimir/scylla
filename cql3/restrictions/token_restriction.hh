@@ -81,10 +81,6 @@ public:
     }
 #endif
 
-    std::vector<partition_key> values_as_keys(const query_options& options) const override {
-        throw exceptions::unsupported_operation_exception();
-    }
-
     std::vector<bounds_range_type> bounds_ranges(const query_options& options) const override {
         auto get_token_bound = [this, &options](statements::bound b) {
             const auto bound = wip::get_bound(expression, b, options);
@@ -162,10 +158,6 @@ public:
                         + " cannot be restricted by more than one relation if it includes an Equal");
     }
 
-    std::vector<bytes_opt> values(const query_options& options) const override {
-        return { to_bytes_opt(_value->bind_and_get(options)) };
-    }
-
     sstring to_string() const override {
         return format("EQ({})", _value->to_string());
     }
@@ -189,10 +181,6 @@ public:
         const auto op = is_start(bound) ? (inclusive ? &operator_type::GTE : &operator_type::GT)
                 : (inclusive ? &operator_type::LTE : &operator_type::LT);
         expression = wip::binary_operator{wip::token{}, op, std::move(term)};
-    }
-
-    std::vector<bytes_opt> values(const query_options& options) const override {
-        throw exceptions::unsupported_operation_exception();
     }
 
     bool uses_function(const sstring& ks_name,

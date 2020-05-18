@@ -148,16 +148,6 @@ public:
         return index.supports_expression(_column_def, cql3::operator_type::EQ);
     }
 
-    virtual std::vector<bytes_opt> values(const query_options& options) const override {
-        std::vector<bytes_opt> v;
-        v.push_back(to_bytes_opt(_value->bind_and_get(options)));
-        return v;
-    }
-
-    virtual bytes_opt value(const query_options& options) const override {
-        return to_bytes_opt(_value->bind_and_get(options));
-    }
-
     virtual sstring to_string() const override {
         return format("EQ({})", _value->to_string());
     }
@@ -211,12 +201,6 @@ public:
 
     virtual std::vector<bytes_opt> values_raw(const query_options& options) const = 0;
 
-    virtual std::vector<bytes_opt> values(const query_options& options) const override {
-        std::vector<bytes_opt> ret = values_raw(options);
-        std::sort(ret.begin(),ret.end());
-        ret.erase(std::unique(ret.begin(),ret.end()),ret.end());
-        return ret;
-    }
 #if 0
     @Override
     protected final boolean isSupportedBy(SecondaryIndex index)
@@ -315,10 +299,6 @@ public:
 
     virtual bool is_supported_by(const secondary_index::index& index) const override {
         return _slice.is_supported_by(_column_def, index);
-    }
-
-    virtual std::vector<bytes_opt> values(const query_options& options) const override {
-        throw exceptions::unsupported_operation_exception();
     }
 
     virtual bool is_inclusive(statements::bound b) const override {
@@ -456,10 +436,6 @@ public:
             std::vector{wip::column_value(&column_def, map_key)}, &operator_type::EQ, map_value};
         _entry_keys.emplace_back(std::move(map_key));
         _entry_values.emplace_back(std::move(map_value));
-    }
-
-    virtual std::vector<bytes_opt> values(const query_options& options) const override {
-        return bind_and_get(_values, options);
     }
 
     virtual void merge_with(::shared_ptr<restriction> other_restriction) override {

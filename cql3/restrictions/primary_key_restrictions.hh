@@ -75,7 +75,6 @@ public:
         return this->shared_from_this();
     }
 
-    virtual std::vector<partition_key> values_as_keys(const query_options& options) const = 0;
     virtual std::vector<bounds_range_type> bounds_ranges(const query_options& options) const = 0;
 
     using restrictions::uses_function;
@@ -128,7 +127,6 @@ public:
         return this->shared_from_this();
     }
 
-    virtual std::vector<clustering_key> values_as_keys(const query_options& options) const = 0;
     virtual std::vector<bounds_range_type> bounds_ranges(const query_options& options) const = 0;
 
     using restrictions::uses_function;

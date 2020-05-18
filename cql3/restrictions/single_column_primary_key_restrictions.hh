@@ -186,24 +186,17 @@ public:
         this->expression = make_conjunction(std::move(this->expression), restriction->expression);
     }
 
-    virtual std::vector<ValueType> values_as_keys(const query_options& options) const override {
+    std::vector<ValueType> values_as_keys(const query_options& options) const {
         std::vector<std::vector<bytes_opt>> value_vector;
         value_vector.reserve(_restrictions->size());
         for (auto&& e : _restrictions->restrictions()) {
-            const column_definition* def = e.first;
             auto&& r = e.second;
             assert(!r->is_slice());
-
-            std::vector<bytes_opt> values = r->values(options);
-            for (auto&& val : values) {
-                if (!val) {
-                    throw exceptions::invalid_request_exception(format("Invalid null value for column {}", def->name_as_text()));
-                }
-            }
+            auto values = std::get<wip::value_list>(wip::possible_lhs_values(r->expression, options));
             if (values.empty()) {
                 return {};
             }
-            value_vector.emplace_back(std::move(values));
+            value_vector.emplace_back((std::vector<bytes_opt>(values.cbegin(), values.cend())));
         }
 
         std::vector<ValueType> result;
@@ -230,11 +223,11 @@ private:
                 auto&& e = *_restrictions->restrictions().begin();
                 const column_definition* def = e.first;
                 auto&& r = e.second;
-                auto&& val = r->value(options);
-                if (!val) {
+                const auto val = wip::get_bound(r->expression, statements::bound::START, options);
+                if (!val.value()) {
                     throw exceptions::invalid_request_exception(sprint(invalid_null_msg, def->name_as_text()));
                 }
-                ranges.emplace_back(range_type::make_singular(ValueType::from_single_value(*_schema, std::move(*val))));
+                ranges.emplace_back(range_type::make_singular(ValueType::from_single_value(*_schema, bytes(*val.value()))));
                 return ranges;
             }
             std::vector<bytes> components;
@@ -243,11 +236,11 @@ private:
                 const column_definition* def = e.first;
                 auto&& r = e.second;
                 assert(components.size() == _schema->position(*def));
-                auto&& val = r->value(options);
-                if (!val) {
+                const auto val = wip::get_bound(r->expression, statements::bound::START, options);
+                if (!val.value()) {
                     throw exceptions::invalid_request_exception(sprint(invalid_null_msg, def->name_as_text()));
                 }
-                components.emplace_back(std::move(*val));
+                components.emplace_back(bytes(*val.value()));
             }
             ranges.emplace_back(range_type::make_singular(ValueType::from_exploded(*_schema, std::move(components))));
             return ranges;
@@ -318,16 +311,11 @@ private:
                 return ranges;
             }
 
-            auto values = r->values(options);
-            for (auto&& val : values) {
-                if (!val) {
-                    throw exceptions::invalid_request_exception(sprint(invalid_null_msg, def->name_as_text()));
-                }
-            }
+            auto values = std::get<wip::value_list>(wip::possible_lhs_values(r->expression, options));
             if (values.empty()) {
                 return {};
             }
-            vec_of_values.emplace_back(std::move(values));
+            vec_of_values.emplace_back(std::vector<bytes_opt>(values.cbegin(), values.cend()));
         }
 
         auto size = cartesian_product_size(vec_of_values);
@@ -344,7 +332,7 @@ private:
 public:
     std::vector<bounds_range_type> bounds_ranges(const query_options& options) const override;
 
-    std::vector<bytes_opt> values(const query_options& options) const override {
+    std::vector<bytes_opt> values(const query_options& options) const {
         auto src = values_as_keys(options);
         std::vector<bytes_opt> res;
         for (const ValueType& r : src) {

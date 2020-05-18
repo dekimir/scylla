@@ -323,14 +323,6 @@ public:
      */
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const = 0;
 
-    virtual std::vector<bytes_opt> values(const query_options& options) const = 0;
-
-    virtual bytes_opt value(const query_options& options) const {
-        auto vec = values(options);
-        assert(vec.size() == 1);
-        return std::move(vec[0]);
-    }
-
     /**
      * Whether the specified row satisfied this restriction.
      * Assumes the row is live, but not all cells. If a cell
