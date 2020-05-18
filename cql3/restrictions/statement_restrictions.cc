@@ -1437,6 +1437,43 @@ std::vector<bytes_opt> first_multicolumn_bound(
         }, restr);
 }
 
+const value_set empty_value_set = value_list{};
+const value_set unbounded_value_set = value_interval{};
+
+struct intersection_visitor {
+    value_set operator()(const value_list& a, const value_list& b) const {
+        value_list common;
+        boost::set_intersection(a, b, back_inserter(common));
+        return std::move(common);
+    }
+
+    value_set operator()(const value_interval& a, const value_list& b) const {
+        const auto common = b | boost::adaptors::filtered([&] (const bytes& el) { return a.includes(el); });
+        return value_list(common.begin(), common.end());
+    }
+
+    value_set operator()(const value_list& a, const value_interval& b) const {
+        return (*this)(b, a);
+    }
+
+    value_set operator()(const value_interval& a, const value_interval& b) const {
+        const auto newlb = std::max(a.lb, b.lb); // nullopt is less than a value, so this works.
+        const auto newub = std::min(
+                a.ub, b.ub, [] (const std::optional<upper_bound>& x, const std::optional<upper_bound>& y) {
+                    if (x == y || !x) {
+                        return false; // Consider nullopt greater than a value, which becomes newub.
+                    } else  {
+                        return !y || y->includes(x->value);
+                    }
+                });
+        return value_interval{newlb, newub};
+    }
+};
+
+value_set intersection(value_set a, value_set b) {
+    return std::visit(intersection_visitor(), a, b);
+}
+
 } // anonymous namespace
 
 expression make_conjunction(expression a, expression b) {
@@ -1575,6 +1612,71 @@ void check_multicolumn_bound(const expression& restr, const query_options& optio
     if (expected != first_multicolumn_bound(restr, options, bnd)) {
         throw std::logic_error("WIP restrictions mismatch: multicolumn bound");
     }
+}
+
+value_set possible_lhs_values(const expression& expr, const query_options& options) {
+    return std::visit(overloaded_functor{
+            [] (bool b) {
+                return b ? unbounded_value_set : empty_value_set;
+            },
+            [&] (const conjunction& conj) {
+                return boost::accumulate(conj.children, unbounded_value_set,
+                        [&] (const value_set& acc, const expression& child) {
+                            return intersection(std::move(acc), possible_lhs_values(child, options));
+                        });
+            },
+            [&] (const binary_operator& oper) -> value_set {
+                if (*oper.op == operator_type::EQ) {
+                    const auto rhs = oper.rhs->bind_and_get(options);
+                    return rhs ? value_list{to_bytes(rhs)} : empty_value_set; // Nothing equals null.
+                } else if (*oper.op == operator_type::IN) {
+                    const auto sorted_uniqued = [] (auto&& range) {
+                        std::vector<bytes> values(range.begin(), range.end()); // Need a random-access range to sort.
+                        const auto sorted = boost::unique(boost::sort(values));
+                        return value_list(sorted.begin(), sorted.end());
+                    };
+                    if (auto mkr = dynamic_cast<lists::marker*>(oper.rhs.get())) {
+                        if (auto multi = dynamic_pointer_cast<multi_item_terminal>(mkr->bind(options))) {
+                            const auto values = multi->get_elements()
+                                    | filtered([] (const bytes_opt& b) { return b.has_value(); })
+                                    | transformed([] (const bytes_opt& b) { return *b; });
+                            return sorted_uniqued(std::move(values));
+                        }
+                    } else if (auto dv = dynamic_cast<lists::delayed_value*>(oper.rhs.get())) {
+                        const auto values = dv->get_elements()
+                                | transformed([&] (const ::shared_ptr<term>& t) { return t->bind_and_get(options); })
+                                | filtered([] (const raw_value_view& v) { return v.is_value(); })
+                                | transformed([] (const raw_value_view& v) { return to_bytes(v); });
+                        return sorted_uniqued(std::move(values));
+                    }
+                    throw std::logic_error("possible_lhs_values: unexpected IN term");
+                } else if (oper.op->is_slice()) {
+                    const auto val = oper.rhs->bind_and_get(options);
+                    if (!val) {
+                        return empty_value_set;
+                    }
+                    auto cmptype = long_type.get();
+                    if (auto cvs = std::get_if<std::vector<column_value>>(&oper.lhs)) {
+                        cmptype = get_value_comparator((*cvs)[0]);
+                    }
+                    static constexpr bool inclusive = true, exclusive = false;
+                    std::optional<lower_bound> lb;
+                    std::optional<upper_bound> ub;
+                    if (*oper.op == operator_type::LT) {
+                        lb = lower_bound{to_bytes(val), exclusive, cmptype};
+                    } else if (*oper.op == operator_type::LTE) {
+                        lb = lower_bound{to_bytes(val), inclusive, cmptype};
+                    } else if (*oper.op == operator_type::GT) {
+                        ub = upper_bound{to_bytes(val), exclusive, cmptype};
+                    } else if (*oper.op == operator_type::GTE) {
+                        ub = upper_bound{to_bytes(val), inclusive, cmptype};
+                    }
+                    return value_interval{lb, ub};
+                } else {
+                    return unbounded_value_set;
+                }
+            },
+        }, expr);
 }
 
 } // namespace wip

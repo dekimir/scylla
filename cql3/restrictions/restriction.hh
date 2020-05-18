@@ -165,6 +165,70 @@ bound_t get_bound(const expression&, statements::bound, const query_options&);
 void check_multicolumn_bound(const expression&, const query_options&, statements::bound,
                              const std::vector<bytes_opt>& expected);
 
+struct upper_bound {
+    bytes value;
+    bool inclusive;
+    const abstract_type* type;
+    bool includes(const bytes& v) const {
+        const auto cmp = type->compare(v, this->value);
+        return cmp < 0 || (cmp == 0 && this->inclusive);
+    }
+    bool operator==(const upper_bound& that) const {
+        return value == that.value && inclusive == that.inclusive && type == that.type;
+    }
+    bool operator!=(const upper_bound& that) const {
+        return !(*this == that);
+    }
+};
+
+struct lower_bound {
+    bytes value;
+    bool inclusive;
+    const abstract_type* type;
+    bool includes(const bytes& v) const {
+        const auto cmp = type->compare(v, this->value);
+        return cmp > 0 || (cmp == 0 && this->inclusive);
+    }
+    bool operator==(const lower_bound& that) const {
+        return value == that.value && inclusive == that.inclusive && type == that.type;
+    }
+    bool operator!=(const lower_bound& that) const {
+        return !(*this == that);
+    }
+    bool operator<(const lower_bound& that) const {
+        return this->includes(that.value) && *this != that;
+    }
+};
+
+/// An interval of values between two bounds.
+struct value_interval {
+    std::optional<lower_bound> lb;
+    std::optional<upper_bound> ub;
+
+    bool includes(const bytes_opt& el) const {
+        if (!el) {
+            return false;
+        }
+        if (lb && !lb->includes(*el)) {
+            return false;
+        }
+        if (ub && !ub->includes(*el)) {
+            return false;
+        }
+        return true;
+    }
+};
+
+/// A set of discrete values.
+using value_list = std::vector<bytes>; // Sorted (bitwise) and deduped.
+
+/// General set of values.
+using value_set = std::variant<value_list, value_interval>;
+
+/// A vector of all LHS values that would satisfy an expression.  Assumes all expression's atoms have the same
+/// LHS, which is either token or a single column_value.
+value_set possible_lhs_values(const expression&, const query_options&);
+
 } // namespace wip
 
 /**
