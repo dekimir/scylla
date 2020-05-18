@@ -47,6 +47,7 @@
 #include "cql3/statements/request_validations.hh"
 #include "cql3/restrictions/single_column_primary_key_restrictions.hh"
 #include "cql3/constants.hh"
+#include "cql3/lists.hh"
 #include <boost/algorithm/cxx11/any_of.hpp>
 
 namespace cql3 {
@@ -207,7 +208,10 @@ public:
     EQ(schema_ptr schema, std::vector<const column_definition*> defs, ::shared_ptr<term> value)
         : multi_column_restriction(op::EQ, schema, std::move(defs))
         , _value(std::move(value))
-    { }
+    {
+        expression = wip::binary_operator{
+            std::vector<wip::column_value>(_column_defs.cbegin(), _column_defs.cend()), &operator_type::EQ, _value};
+    }
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
         return restriction::term_uses_function(_value, ks_name, function_name);
@@ -371,7 +375,12 @@ public:
     IN_with_values(schema_ptr schema, std::vector<const column_definition*> defs, std::vector<::shared_ptr<term>> value)
         : multi_column_restriction::IN(schema, std::move(defs))
         , _values(std::move(value))
-    { }
+    {
+        expression = wip::binary_operator{
+            std::vector<wip::column_value>(_column_defs.cbegin(), _column_defs.cend()),
+            &operator_type::IN,
+            ::make_shared<lists::delayed_value>(_values)};
+    }
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override  {
         return restriction::term_uses_function(_values, ks_name, function_name);
@@ -403,6 +412,10 @@ private:
 public:
     IN_with_marker(schema_ptr schema, std::vector<const column_definition*> defs, shared_ptr<abstract_marker> marker)
         : IN(schema, std::move(defs)), _marker(marker) {
+        expression = wip::binary_operator{
+            std::vector<wip::column_value>(_column_defs.cbegin(), _column_defs.cend()),
+            &operator_type::IN,
+            std::move(marker)};
     }
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
@@ -434,7 +447,12 @@ private:
 public:
     slice(schema_ptr schema, std::vector<const column_definition*> defs, statements::bound bound, bool inclusive, shared_ptr<term> term)
         : slice(schema, defs, term_slice::new_instance(bound, inclusive, term))
-    { }
+    {
+        const auto op = is_start(bound) ? (inclusive ? &operator_type::GTE : &operator_type::GT)
+                : (inclusive ? &operator_type::LTE : &operator_type::LT);
+        expression = wip::binary_operator{
+            std::vector<wip::column_value>(defs.cbegin(), defs.cend()), op, std::move(term)};
+    }
 
     virtual bool is_supported_by(const secondary_index::index& index) const override {
         for (auto* cdef : _column_defs) {
@@ -628,20 +646,11 @@ private:
     ::shared_ptr<restriction> make_single_column_restriction(std::optional<cql3::statements::bound> bound, bool inclusive,
                                                              std::size_t column_pos,const bytes_opt& value) const {
         ::shared_ptr<cql3::term> term = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(value));
-        using namespace cql3::restrictions::wip;
         if (!bound){
-            auto r = ::make_shared<cql3::restrictions::single_column_restriction::EQ>(*_column_defs[column_pos], term);
-            r->expression = binary_operator{
-                std::vector{column_value(_column_defs[column_pos])}, &operator_type::EQ, std::move(term)};
-            return r;
+          return ::make_shared<cql3::restrictions::single_column_restriction::EQ>(*_column_defs[column_pos], term);
         } else {
-            auto r = ::make_shared<cql3::restrictions::single_column_restriction::slice>(
+            return::make_shared<cql3::restrictions::single_column_restriction::slice>(
                     *_column_defs[column_pos], bound.value(), inclusive, term);
-            const auto op = is_start(*bound) ? (inclusive ? &operator_type::GTE : &operator_type::GT)
-                    : (inclusive ? &operator_type::LTE : &operator_type::LT);
-            r->expression = binary_operator{
-                std::vector{column_value(_column_defs[column_pos])}, op, std::move(term)};
-            return r;
         }
     }
 

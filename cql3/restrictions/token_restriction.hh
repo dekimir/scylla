@@ -148,7 +148,9 @@ public:
     EQ(std::vector<const column_definition*> column_defs, ::shared_ptr<term> value)
         : token_restriction(op::EQ, column_defs)
         , _value(std::move(value))
-    {}
+    {
+        expression = wip::binary_operator{wip::token{}, &operator_type::EQ, _value};
+    }
 
     bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
         return restriction::term_uses_function(_value, ks_name, function_name);
@@ -182,8 +184,12 @@ private:
 public:
     slice(std::vector<const column_definition*> column_defs, statements::bound bound, bool inclusive, ::shared_ptr<term> term)
         : token_restriction(op::SLICE, column_defs)
-        , _slice(term_slice::new_instance(bound, inclusive, std::move(term)))
-    {}
+        , _slice(term_slice::new_instance(bound, inclusive, term))
+    {
+        const auto op = is_start(bound) ? (inclusive ? &operator_type::GTE : &operator_type::GT)
+                : (inclusive ? &operator_type::LTE : &operator_type::LT);
+        expression = wip::binary_operator{wip::token{}, op, std::move(term)};
+    }
 
     std::vector<bytes_opt> values(const query_options& options) const override {
         throw exceptions::unsupported_operation_exception();

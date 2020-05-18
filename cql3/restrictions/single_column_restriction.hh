@@ -47,6 +47,7 @@
 #include "cql3/restrictions/term_slice.hh"
 #include "cql3/term.hh"
 #include "cql3/abstract_marker.hh"
+#include "cql3/lists.hh"
 #include <seastar/core/shared_ptr.hh>
 #include "schema_fwd.hh"
 #include "to_string.hh"
@@ -135,7 +136,9 @@ public:
     EQ(const column_definition& column_def, ::shared_ptr<term> value)
         : single_column_restriction(op::EQ, column_def)
         , _value(std::move(value))
-    { }
+    {
+        expression = wip::binary_operator{std::vector{wip::column_value(&column_def)}, &operator_type::EQ, _value};
+    }
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
         return restriction::term_uses_function(_value, ks_name, function_name);
@@ -170,7 +173,6 @@ public:
                                  const query_options& options,
                                  gc_clock::time_point now) const override;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
-        // TODO: Initialize .expression member.  Why isn't it triggering any test failures?
         return ::make_shared<EQ>(cdef, _value);
     }
 
@@ -231,7 +233,10 @@ public:
     IN_with_values(const column_definition& column_def, std::vector<::shared_ptr<term>> values)
         : single_column_restriction::IN(column_def)
         , _values(std::move(values))
-    { }
+    {
+        expression = wip::binary_operator{
+            std::vector{wip::column_value(&column_def)}, &operator_type::IN, ::make_shared<lists::delayed_value>(_values)};
+    }
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
         return restriction::term_uses_function(_values, ks_name, function_name);
@@ -250,7 +255,6 @@ public:
     }
 
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
-        // TODO: Initialize .expression member.  Why isn't it triggering any test failures?
         return ::make_shared<IN_with_values>(cdef, _values);
     }
 };
@@ -261,6 +265,8 @@ public:
 public:
     IN_with_marker(const column_definition& column_def, shared_ptr<abstract_marker> marker)
             : IN(column_def), _marker(std::move(marker)) {
+        expression = wip::binary_operator{
+            std::vector{wip::column_value(&column_def)}, &operator_type::IN, std::move(_marker)};
     }
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
@@ -280,7 +286,6 @@ public:
     }
 
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
-        // TODO: Initialize .expression member.  Why isn't it triggering any test failures?
         return ::make_shared<IN_with_marker>(cdef, _marker);
     }
 };
@@ -291,8 +296,12 @@ private:
 public:
     slice(const column_definition& column_def, statements::bound bound, bool inclusive, ::shared_ptr<term> term)
         : single_column_restriction(op::SLICE, column_def)
-        , _slice(term_slice::new_instance(bound, inclusive, std::move(term)))
-    { }
+        , _slice(term_slice::new_instance(bound, inclusive, term))
+    {
+        const auto op = is_start(bound) ? (inclusive ? &operator_type::GTE : &operator_type::GT)
+                : (inclusive ? &operator_type::LTE : &operator_type::LT);
+        expression = wip::binary_operator{std::vector{wip::column_value(&column_def)}, op, std::move(term)};
+    }
 
     slice(const column_definition& column_def, term_slice slice)
         : single_column_restriction(op::SLICE, column_def)
@@ -371,7 +380,6 @@ public:
                                  const query_options& options,
                                  gc_clock::time_point now) const override;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
-        // TODO: Initialize .expression member.  Why isn't it triggering any test failures?
         return ::make_shared<slice>(cdef, _slice);
     }
 };
@@ -387,11 +395,8 @@ public:
     LIKE(const column_definition& column_def, ::shared_ptr<term> value)
         : single_column_restriction(op::LIKE, column_def)
         , _values{value}
-    { }
-
-    virtual std::vector<bytes_opt> values(const query_options& options) const override {
-        // LIKE cannot provide the matching values without fetching the data first.
-        throw std::logic_error("LIKE::values() invoked");
+    {
+        expression = wip::binary_operator{std::vector{wip::column_value(&column_def)}, &operator_type::LIKE, _values[0]};
     }
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
@@ -433,17 +438,22 @@ private:
     std::vector<::shared_ptr<term>> _entry_values;
 public:
     contains(const column_definition& column_def, ::shared_ptr<term> t, bool is_key)
-            : single_column_restriction(op::CONTAINS, column_def) {
+        : single_column_restriction(op::CONTAINS, column_def) {
         if (is_key) {
-            _keys.emplace_back(std::move(t));
+            _keys.emplace_back(t);
         } else {
-            _values.emplace_back(std::move(t));
+            _values.emplace_back(t);
         }
+        expression = wip::binary_operator{
+            std::vector{wip::column_value(&column_def)},
+            is_key ? &operator_type::CONTAINS_KEY : &operator_type::CONTAINS,
+            std::move(t)};
     }
 
     contains(const column_definition& column_def, ::shared_ptr<term> map_key, ::shared_ptr<term> map_value)
-            : single_column_restriction(op::CONTAINS, column_def)
-        {
+            : single_column_restriction(op::CONTAINS, column_def) {
+        expression = wip::binary_operator{
+            std::vector{wip::column_value(&column_def, map_key)}, &operator_type::EQ, map_value};
         _entry_keys.emplace_back(std::move(map_key));
         _entry_values.emplace_back(std::move(map_value));
     }

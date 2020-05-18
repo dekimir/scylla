@@ -75,21 +75,13 @@ static ::shared_ptr<cql3::restrictions::single_column_restriction::contains> mak
     auto key_value = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(std::move(raw_key)));
     bytes raw_value = serialize_item(value);
     auto entry_value = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(std::move(raw_value)));
-    auto r = make_shared<cql3::restrictions::single_column_restriction::contains>(cdef, key_value, entry_value);
-    using namespace cql3::restrictions::wip;
-    r->expression = binary_operator{
-        std::vector{column_value(&cdef, std::move(key_value))}, &operator_type::EQ, std::move(entry_value)};
-    return r;
+    return make_shared<cql3::restrictions::single_column_restriction::contains>(cdef, key_value, entry_value);
 }
 
 static ::shared_ptr<cql3::restrictions::single_column_restriction::EQ> make_key_eq_restriction(const column_definition& cdef, const rjson::value& value) {
     bytes raw_value = get_key_from_typed_value(value, cdef);
     auto restriction_value = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(std::move(raw_value)));
-    auto r = make_shared<cql3::restrictions::single_column_restriction::EQ>(cdef, restriction_value);
-    using namespace cql3::restrictions::wip;
-    r->expression = binary_operator{
-        std::vector{column_value(&cdef)}, &operator_type::EQ, std::move(restriction_value)};
-    return r;
+    return make_shared<cql3::restrictions::single_column_restriction::EQ>(cdef, restriction_value);
 }
 
 // Convert a QueryFilter or ScanFilter parameter into an equivalent set of
