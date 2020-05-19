@@ -120,47 +120,6 @@ extern bool is_satisfied_by(
         const query::result_row_view& static_row, const query::result_row_view* row,
         const selection::selection&, const query_options&);
 
-/// A column's bound, from WHERE restrictions.
-class bound_t {
-    bool _unbounded;
-    bytes_opt _value; // Invalid when _unbounded is true.
-    const abstract_type* _value_type;
-public:
-    /// \p t must outlive *this.
-    explicit bound_t(const abstract_type* t) : _unbounded(true), _value_type(t) {}
-
-    /// \p t must outlive *this.
-    explicit bound_t(const data_type& t) : bound_t(t.get()) {}
-
-    /// \p t and \p v must outlive *this.
-    bound_t(const abstract_type* t, const bytes_opt& v) : _unbounded(false), _value(v), _value_type(t) {}
-
-    /// \p t and \p v must outlive *this.
-    bound_t(const data_type& t, const bytes_opt& v) : bound_t(t.get(), v) {}
-
-    /// True iff *this is a tighter lower bound than \p that.
-    bool is_tighter_lb_than(const bound_t& that) const;
-
-    /// True iff *this is a tighter upper bound than \p that.
-    bool is_tighter_ub_than(const bound_t& that) const;
-
-    /// Returns value if *this is bounded; otherwise, throws.
-    bytes_view_opt value() const;
-
-    /// True iff *this has a value.
-    operator bool() const {
-        return !_unbounded;
-    }
-
-private:
-    /// If the comparison *this<=>that can be shortcircuited (due to unbounded or null cases), returns the
-    /// comparison result.  Otherwise, returns nullopt.
-    std::optional<bool> shortcircuit(const bound_t& that) const;
-};
-
-/// Returns a restriction's bound.
-bound_t get_bound(const expression&, statements::bound, const query_options&);
-
 /// Calculates bound of a multicolumn restriction, then throws if the result is different from expected.
 void check_multicolumn_bound(const expression&, const query_options&, statements::bound,
                              const std::vector<bytes_opt>& expected);
@@ -228,6 +187,9 @@ using value_set = std::variant<value_list, value_interval>;
 /// A vector of all LHS values that would satisfy an expression.  Assumes all expression's atoms have the same
 /// LHS, which is either token or a single column_value.
 value_set possible_lhs_values(const expression&, const query_options&);
+
+/// Turns s into an interval if possible, otherwise throws.
+value_interval to_interval(value_set s);
 
 } // namespace wip
 

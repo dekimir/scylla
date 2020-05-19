@@ -1360,36 +1360,6 @@ bool is_one_of(const std::vector<column_value>& cvs, term& rhs, row_data data) {
     throw std::logic_error("unexpected term type in is_one_of");
 }
 
-bound_t tighter_ub(const bound_t& a, const bound_t& b) {
-    return a.is_tighter_ub_than(b) ? a : b;
-}
-
-bound_t tighter_lb(const bound_t& a, const bound_t& b) {
-    return a.is_tighter_lb_than(b) ? a : b;
-}
-
-/// The type of the first child, if it exists.  Otherwise, byte_type.
-const abstract_type* child_type(const children_t& children) {
-    return children.empty() ? byte_type.get() : std::visit(overloaded_functor{
-            [] (bool) { return byte_type.get(); },
-            [] (const conjunction& c) { return child_type(c.children); },
-            [] (const binary_operator& op) {
-                return std::visit(overloaded_functor{
-                        [] (const token&) { return long_type.get(); },
-                        [] (const std::vector<column_value> cvs) {
-                            if (cvs.empty() || cvs.size() > 1) {
-                                throw std::logic_error(
-                                        format("unexpected conjunct with {} columns (should be a single column)",
-                                               cvs.size()));
-                            } else {
-                                return get_value_comparator(cvs[0]);
-                            }
-                        },
-                    }, op.lhs);
-            },
-        }, children[0]);
-}
-
 /// True iff op means bnd type of bound.
 bool matches(const operator_type* op, statements::bound bnd) {
     static const std::vector<std::vector<const operator_type*>> operators{
@@ -1516,82 +1486,6 @@ bool is_satisfied_by(
         }, restr);
 }
 
-bool bound_t::is_tighter_lb_than(const bound_t& that) const {
-    if (auto sc = shortcircuit(that)) {
-        return *sc;
-    } else {
-        // *this is a tighter lower bound if it's larger.
-        return _value_type->compare(*this->_value, *that._value) > 0;
-    }
-}
-
-bool bound_t::is_tighter_ub_than(const bound_t& that) const {
-    if (auto sc = shortcircuit(that)) {
-        return *sc;
-    } else {
-        // *this is a tighter upper bound if it's smaller.
-        return _value_type->compare(*this->_value, *that._value) < 0;
-    }
-}
-
-bytes_view_opt bound_t::value() const {
-    if (_unbounded) {
-        throw std::logic_error("bound_t::value() called on unbounded");
-    }
-    return _value;
-}
-
-std::optional<bool> bound_t::shortcircuit(const bound_t& that) const {
-    if (that._unbounded) {
-        return true; // Anything is tighter than no bound.
-    } else if (this->_unbounded || !that._value) { // null always wins: it makes the slice empty.
-        return false;
-    } else if (!this->_value) { // Now that we're sure _value is valid, check it for null.
-        return true;
-    } else {
-        return std::nullopt;
-    }
-}
-
-bound_t get_bound(const expression& restr, statements::bound bnd, const query_options& options) {
-    return std::visit(overloaded_functor{
-            [&] (bool v) {
-                if (v) {
-                    return bound_t(byte_type);
-                } else {
-                    throw std::logic_error("empty set has no bounds");
-                }
-            },
-            [&] (const conjunction& conj) {
-                auto invoke_get_bound = std::bind(&get_bound, std::placeholders::_1, bnd, options);
-                auto pick_tighter = is_start(bnd) ? &tighter_lb : &tighter_ub;
-                // All conjunction elements have the same LHS; this is how
-                // single_column_restrictions::add_restriction constructs it.  We pick the tightest among all
-                // children's bounds.
-                return boost::accumulate(conj.children | transformed(invoke_get_bound),
-                                         bound_t(child_type(conj.children)), pick_tighter);
-            },
-            [&] (const binary_operator& opr) {
-                return std::visit(overloaded_functor{
-                        [&] (const std::vector<column_value>& cvs) {
-                            if (cvs.size() != 1) {
-                                throw std::logic_error("get_bound invoked on multi-column restriction");
-                            }
-                            auto cmptype = get_value_comparator(cvs[0]);
-                            return matches(opr.op, bnd) ?
-                                    bound_t(cmptype, to_bytes_opt(opr.rhs->bind_and_get(options)))
-                                    : bound_t(cmptype);
-                        },
-                        [&] (const token& tok) {
-                            return matches(opr.op, bnd) ?
-                                    bound_t(long_type, to_bytes_opt(opr.rhs->bind_and_get(options)))
-                                    : bound_t(long_type);
-                        },
-                    }, opr.lhs);
-            },
-        }, restr);
-}
-
 void check_multicolumn_bound(const expression& restr, const query_options& options, statements::bound bnd,
                              const std::vector<bytes_opt>& expected) {
     if (!options.get_cql_config().restrictions.use_wip) {
@@ -1667,6 +1561,19 @@ value_set possible_lhs_values(const expression& expr, const query_options& optio
                 }
             },
         }, expr);
+}
+
+value_interval to_interval(value_set s) {
+    return std::visit(overloaded_functor{
+            [] (value_interval& ivl) { return std::move(ivl); },
+            [] (value_list& lst) {
+                if (lst.size() != 1) {
+                    throw std::logic_error(format("to_interval called on list of size {}", lst.size()));
+                }
+                static constexpr bool inclusive = true;
+                return value_interval{lower_bound{lst[0], inclusive}, upper_bound{lst[0], inclusive}};
+            },
+        }, s);
 }
 
 } // namespace wip

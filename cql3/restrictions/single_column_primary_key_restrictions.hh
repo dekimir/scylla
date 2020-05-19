@@ -213,37 +213,32 @@ public:
 private:
     std::vector<range_type> compute_bounds(const query_options& options) const {
         std::vector<range_type> ranges;
+        using namespace wip;
 
         static constexpr auto invalid_null_msg = std::is_same<ValueType, partition_key>::value
             ? "Invalid null value for partition key part %s" : "Invalid null value for clustering key part %s";
 
         if (_restrictions->is_all_eq()) {
-            ranges.reserve(1);
             if (_restrictions->size() == 1) {
                 auto&& e = *_restrictions->restrictions().begin();
-                const column_definition* def = e.first;
-                auto&& r = e.second;
-                const auto val = wip::get_bound(r->expression, statements::bound::START, options);
-                if (!val.value()) {
-                    throw exceptions::invalid_request_exception(sprint(invalid_null_msg, def->name_as_text()));
+                const auto b = to_interval(possible_lhs_values(e.second->expression, options));
+                if (!b.lb) {
+                    throw exceptions::invalid_request_exception(sprint(invalid_null_msg, e.first->name_as_text()));
                 }
-                ranges.emplace_back(range_type::make_singular(ValueType::from_single_value(*_schema, bytes(*val.value()))));
-                return ranges;
+                return {range_type::make_singular(ValueType::from_single_value(*_schema, b.lb->value))};
             }
             std::vector<bytes> components;
             components.reserve(_restrictions->size());
             for (auto&& e : _restrictions->restrictions()) {
                 const column_definition* def = e.first;
-                auto&& r = e.second;
                 assert(components.size() == _schema->position(*def));
-                const auto val = wip::get_bound(r->expression, statements::bound::START, options);
-                if (!val.value()) {
+                const auto b = to_interval(possible_lhs_values(e.second->expression, options));
+                if (!b.lb) {
                     throw exceptions::invalid_request_exception(sprint(invalid_null_msg, def->name_as_text()));
                 }
-                components.emplace_back(bytes(*val.value()));
+                components.emplace_back(b.lb->value);
             }
-            ranges.emplace_back(range_type::make_singular(ValueType::from_exploded(*_schema, std::move(components))));
-            return ranges;
+            return {range_type::make_singular(ValueType::from_exploded(*_schema, std::move(components)))};
         }
 
         std::vector<std::vector<bytes_opt>> vec_of_values;
@@ -258,21 +253,15 @@ private:
             }
 
             if (r->is_slice()) {
+                const auto b = to_interval(possible_lhs_values(r->expression, options));
                 if (cartesian_product_is_empty(vec_of_values)) {
-                    auto read_bound = [r, &options, this] (statements::bound b) -> std::optional<range_bound> {
-                        const auto bound = wip::get_bound(r->expression, b, options);
-                        if (!bound) {
-                            return {};
-                        }
-                        auto value = bound.value();
-                        if (!value) {
-                            throw exceptions::invalid_request_exception(sprint(invalid_null_msg, r->to_string()));
-                        }
-                        return {range_bound(ValueType::from_single_value(*_schema, bytes(*value)), r->is_inclusive(b))};
+                    const auto make_bound = [&] (const auto& upper_or_lower) {
+                        return upper_or_lower ?
+                                std::optional(range_bound(ValueType::from_single_value(*_schema, upper_or_lower->value),
+                                                          upper_or_lower->inclusive)) :
+                                std::nullopt;
                     };
-                    ranges.emplace_back(range_type(
-                        read_bound(statements::bound::START),
-                        read_bound(statements::bound::END)));
+                    ranges.emplace_back(range_type(make_bound(b.lb), make_bound(b.ub)));
                     if (def->type->is_reversed()) {
                         ranges.back().reverse();
                     }
@@ -284,25 +273,17 @@ private:
                         restricted_component_name_v<ValueType>);
                 ranges.reserve(size);
                 for (auto&& prefix : make_cartesian_product(vec_of_values)) {
-                    auto read_bound = [r, &prefix, &options, this](statements::bound bound) -> range_bound {
-                        if (const auto bv = wip::get_bound(r->expression, bound, options)) {
-                            auto value = bv.value();
-                            if (!value) {
-                                throw exceptions::invalid_request_exception(sprint(invalid_null_msg, r->to_string()));
-                            }
-                            prefix.emplace_back(std::move(value));
+                    auto make_bound = [&prefix, this] (const auto& upper_or_lower) {
+                        if (upper_or_lower) {
+                            prefix.emplace_back(upper_or_lower->value);
                             auto val = ValueType::from_optional_exploded(*_schema, prefix);
                             prefix.pop_back();
-                            return range_bound(std::move(val), r->is_inclusive(bound));
+                            return range_bound(std::move(val), upper_or_lower->inclusive);
                         } else {
                             return range_bound(ValueType::from_optional_exploded(*_schema, prefix));
                         }
                     };
-
-                    ranges.emplace_back(range_type(
-                        read_bound(statements::bound::START),
-                        read_bound(statements::bound::END)));
-
+                    ranges.emplace_back(range_type(make_bound(b.lb), make_bound(b.ub)));
                     if (def->type->is_reversed()) {
                         ranges.back().reverse();
                     }
