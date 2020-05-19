@@ -1653,13 +1653,13 @@ value_set possible_lhs_values(const expression& expr, const query_options& optio
                     std::optional<lower_bound> lb;
                     std::optional<upper_bound> ub;
                     if (*oper.op == operator_type::LT) {
-                        lb = lower_bound{to_bytes(val), exclusive, cmptype};
-                    } else if (*oper.op == operator_type::LTE) {
-                        lb = lower_bound{to_bytes(val), inclusive, cmptype};
-                    } else if (*oper.op == operator_type::GT) {
                         ub = upper_bound{to_bytes(val), exclusive, cmptype};
-                    } else if (*oper.op == operator_type::GTE) {
+                    } else if (*oper.op == operator_type::LTE) {
                         ub = upper_bound{to_bytes(val), inclusive, cmptype};
+                    } else if (*oper.op == operator_type::GT) {
+                        lb = lower_bound{to_bytes(val), exclusive, cmptype};
+                    } else if (*oper.op == operator_type::GTE) {
+                        lb = lower_bound{to_bytes(val), inclusive, cmptype};
                     }
                     return value_interval{lb, ub};
                 } else {
