@@ -253,10 +253,6 @@ public:
         return _ops;
     }
 
-    virtual bool is_inclusive(statements::bound b) const {
-        return true;
-    }
-
     /**
      * Merges this restriction with the specified one.
      *

@@ -301,10 +301,6 @@ public:
         return _slice.is_supported_by(_column_def, index);
     }
 
-    virtual bool is_inclusive(statements::bound b) const override {
-        return _slice.is_inclusive(b);
-    }
-
     virtual void merge_with(::shared_ptr<restriction> r) override {
         if (!r->is_slice()) {
             throw exceptions::invalid_request_exception(format("Column \"{}\" cannot be restricted by both an equality and an inequality relation", _column_def.name_as_text()));
@@ -506,10 +502,6 @@ public:
     virtual sstring to_string() const override {
         return format("CONTAINS(values={}, keys={}, entryKeys={}, entryValues={})",
             std::to_string(_values), std::to_string(_keys), std::to_string(_entry_keys), std::to_string(_entry_values));
-    }
-
-    virtual bool is_inclusive(statements::bound b) const override {
-        throw exceptions::unsupported_operation_exception();
     }
 
     virtual bool is_satisfied_by(const schema& schema,

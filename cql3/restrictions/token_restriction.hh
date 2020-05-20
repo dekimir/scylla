@@ -182,9 +182,6 @@ public:
                                 _slice.bound(statements::bound::END),
                                 ks_name, function_name));
     }
-    bool is_inclusive(statements::bound b) const override {
-        return _slice.is_inclusive(b);
-    }
     void merge_with(::shared_ptr<restriction> restriction) override {
         try {
             if (!restriction->is_on_token()) {

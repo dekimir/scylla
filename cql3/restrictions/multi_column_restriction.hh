@@ -469,10 +469,6 @@ public:
                 || (_slice.has_bound(statements::bound::END) && restriction::term_uses_function(_slice.bound(statements::bound::END), ks_name, function_name));
     }
 
-    virtual bool is_inclusive(statements::bound b) const override {
-        return _slice.is_inclusive(b);
-    }
-
     virtual void do_merge_with(::shared_ptr<clustering_key_restrictions> other) override {
         using namespace statements::request_validations;
         check_true(other->is_slice(),
@@ -532,9 +528,9 @@ private:
      */
     std::vector<bounds_range_type> bounds_ranges_unified_order(const query_options& options) const {
         auto start_prefix = clustering_key_prefix::from_optional_exploded(*_schema, read_bound_components(options, statements::bound::START));
-        auto start_bound = bounds_range_type::bound(std::move(start_prefix), is_inclusive(statements::bound::START));
+        auto start_bound = bounds_range_type::bound(std::move(start_prefix), _slice.is_inclusive(statements::bound::START));
         auto end_prefix = clustering_key_prefix::from_optional_exploded(*_schema, read_bound_components(options, statements::bound::END));
-        auto end_bound = bounds_range_type::bound(std::move(end_prefix), is_inclusive(statements::bound::END));
+        auto end_bound = bounds_range_type::bound(std::move(end_prefix), _slice.is_inclusive(statements::bound::END));
         auto make_range = [&] () {
             if (is_asc_order()) {
                 return bounds_range_type::make(start_bound, end_bound);
@@ -669,8 +665,8 @@ private:
         std::vector<restriction_shared_ptr> ret;
         auto start_components = read_bound_components(options, statements::bound::START);
         auto end_components = read_bound_components(options, statements::bound::END);
-        bool start_inclusive = is_inclusive(statements::bound::START);
-        bool end_inclusive = is_inclusive(statements::bound::END);
+        bool start_inclusive = _slice.is_inclusive(statements::bound::START);
+        bool end_inclusive = _slice.is_inclusive(statements::bound::END);
         std::optional<std::size_t> first_neq_component = std::nullopt;
 
         // find the first index of the first component that is not equal between the tuples.
