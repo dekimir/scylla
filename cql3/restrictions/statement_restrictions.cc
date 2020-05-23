@@ -612,21 +612,6 @@ std::optional<atomic_cell_value_view> single_column_restriction::get_value(const
     return do_get_value(schema, _column_def, key, ckey, cells, std::move(now));
 }
 
-bool single_column_restriction::LIKE::init_matchers(const query_options& options) const {
-    for (size_t i = 0; i < _values.size(); ++i) {
-        auto pattern = to_bytes_opt(_values[i]->bind_and_get(options));
-        if (!pattern) {
-            return false;
-        }
-        if (i < _matchers.size()) {
-            _matchers[i].reset(*pattern);
-        } else {
-            _matchers.emplace_back(*pattern);
-        }
-    }
-    return true;
-}
-
 sstring single_column_restriction::LIKE::to_string() const {
     std::vector<sstring> vs(_values.size());
     for (size_t i = 0; i < _values.size(); ++i) {

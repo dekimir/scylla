@@ -345,9 +345,8 @@ class single_column_restriction::LIKE final : public single_column_restriction {
 private:
     /// Represents `col LIKE val1 AND col LIKE val2 AND ... col LIKE valN`.
     std::vector<::shared_ptr<term>> _values;
-    /// Each element matches a cell value against a LIKE pattern.  Mutable because it is initialized on demand
-    /// in is_satisfied_by().
-    mutable std::vector<like_matcher> _matchers;
+    /// Each element matches a cell value against a LIKE pattern.
+    std::vector<like_matcher> _matchers;
 public:
     LIKE(const column_definition& column_def, ::shared_ptr<term> value)
         : single_column_restriction(op::LIKE, column_def)
@@ -369,14 +368,6 @@ public:
     virtual void merge_with(::shared_ptr<restriction> other);
 
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override;
-
-  private:
-    /// If necessary, reinitializes _matchers.
-    ///
-    /// Invoked from is_satisfied_by(), so must be const.
-    ///
-    /// @return true iff _values were successfully translated to LIKE patterns (regardless of initialization)
-    bool init_matchers(const query_options& options) const;
 };
 
 // This holds CONTAINS, CONTAINS_KEY, and map[key] = value restrictions because we might want to have any combination of them.
@@ -478,7 +469,6 @@ public:
             std::to_string(_values), std::to_string(_keys), std::to_string(_entry_keys), std::to_string(_entry_values));
     }
 
-    bool is_satisfied_by(bytes_view data, const query_options& options) const;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         throw std::logic_error("Cloning 'contains' restriction is not implemented.");
     }
