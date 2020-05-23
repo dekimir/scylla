@@ -149,13 +149,6 @@ public:
     sstring to_string() const override {
         return format("EQ({})", _value->to_string());
     }
-
-    virtual bool is_satisfied_by(const schema& schema,
-                                 const partition_key& key,
-                                 const clustering_key_prefix& ckey,
-                                 const row& cells,
-                                 const query_options& options,
-                                 gc_clock::time_point now) const override;
 };
 
 class token_restriction::slice final : public token_restriction {
@@ -215,13 +208,6 @@ public:
     sstring to_string() const override {
         return format("SLICE{}", _slice);
     }
-
-    virtual bool is_satisfied_by(const schema& schema,
-                                 const partition_key& key,
-                                 const clustering_key_prefix& ckey,
-                                 const row& cells,
-                                 const query_options& options,
-                                 gc_clock::time_point now) const override;
 };
 
 }

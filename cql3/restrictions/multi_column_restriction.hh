@@ -83,17 +83,6 @@ public:
         expression = make_conjunction(std::move(expression), other->expression);
     }
 
-    bool is_satisfied_by(const schema& schema,
-                         const partition_key& key,
-                         const clustering_key_prefix& ckey,
-                         const row& cells,
-                         const query_options& options,
-                         gc_clock::time_point now) const override {
-        return boost::algorithm::any_of(bounds_ranges(options), [&ckey, &schema] (const bounds_range_type& range) {
-            return range.contains(query::clustering_range(ckey), clustering_key_prefix::prefix_equal_tri_compare(schema));
-        });
-    }
-
 protected:
     virtual void do_merge_with(::shared_ptr<clustering_key_restrictions> other) = 0;
 

@@ -113,12 +113,18 @@ struct conjunction {
 /// directly into the resulting conjunction's children, flattening the expression tree.
 extern expression make_conjunction(expression a, expression b);
 
-/// WIP equivalent of restriction::is_satisfied_by.
+/// True iff restr is satisfied with respect to the row provided from a partition slice.
 extern bool is_satisfied_by(
         const expression& restr,
         const std::vector<bytes>& partition_key, const std::vector<bytes>& clustering_key,
         const query::result_row_view& static_row, const query::result_row_view* row,
         const selection::selection&, const query_options&);
+
+/// True iff restr is satisfied with respect to the row provided from a mutation.
+extern bool is_satisfied_by(
+        const expression& restr,
+        const schema& schema, const partition_key& key, const clustering_key_prefix& ckey, const row& cells,
+        const query_options& options, gc_clock::time_point now);
 
 /// Calculates bound of a multicolumn restriction, then throws if the result is different from expected.
 void check_multicolumn_bound(const expression&, const query_options&, statements::bound,
@@ -280,26 +286,6 @@ public:
      * @return <code>true</code> if one of the restrictions use the specified function, <code>false</code> otherwise.
      */
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const = 0;
-
-    /**
-     * Whether the specified row satisfied this restriction.
-     * Assumes the row is live, but not all cells. If a cell
-     * isn't live and there's a restriction on its column,
-     * then the function returns false.
-     *
-     * @param schema the schema the row belongs to
-     * @param key the partition key
-     * @param ckey the clustering key
-     * @param cells the remaining row columns
-     * @return the restriction resulting of the merge
-     * @throws InvalidRequestException if the restrictions cannot be merged
-     */
-    virtual bool is_satisfied_by(const schema& schema,
-                                 const partition_key& key,
-                                 const clustering_key_prefix& ckey,
-                                 const row& cells,
-                                 const query_options& options,
-                                 gc_clock::time_point now) const = 0;
 
 protected:
     /**

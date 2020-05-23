@@ -100,7 +100,9 @@ public:
         : _schema(schema)
         , _allow_filtering(allow_filtering)
         , _restrictions(::make_shared<single_column_restrictions>(schema))
-    { }
+    {
+        this->expression = wip::conjunction{};  // This will track _restrictions, which is a conjunction.
+    }
 
     // Convert another primary key restrictions type into this type, possibly using different schema
     template<typename OtherValueType>
@@ -351,17 +353,6 @@ public:
     }
     sstring to_string() const override {
         return format("Restrictions({})", join(", ", get_column_defs()));
-    }
-
-    virtual bool is_satisfied_by(const schema& schema,
-                                 const partition_key& key,
-                                 const clustering_key_prefix& ckey,
-                                 const row& cells,
-                                 const query_options& options,
-                                 gc_clock::time_point now) const override {
-        return boost::algorithm::all_of(
-            _restrictions->restrictions() | boost::adaptors::map_values,
-            [&] (auto&& r) { return r->is_satisfied_by(schema, key, ckey, cells, options, now); });
     }
 
     virtual bool needs_filtering(const schema& schema) const override;

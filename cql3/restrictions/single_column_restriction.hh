@@ -100,7 +100,6 @@ public:
     }
 
     virtual bool is_supported_by(const secondary_index::index& index) const = 0;
-    using restriction::is_satisfied_by;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) = 0;
 #if 0
     /**
@@ -156,12 +155,6 @@ public:
         throw exceptions::invalid_request_exception(format("{} cannot be restricted by more than one relation if it includes an Equal", _column_def.name_as_text()));
     }
 
-    virtual bool is_satisfied_by(const schema& schema,
-                                 const partition_key& key,
-                                 const clustering_key_prefix& ckey,
-                                 const row& cells,
-                                 const query_options& options,
-                                 gc_clock::time_point now) const override;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         return ::make_shared<EQ>(cdef, _value);
     }
@@ -189,12 +182,6 @@ public:
         throw exceptions::invalid_request_exception(format("{} cannot be restricted by more than one relation if it includes a IN", _column_def.name_as_text()));
     }
 
-    virtual bool is_satisfied_by(const schema& schema,
-                                 const partition_key& key,
-                                 const clustering_key_prefix& ckey,
-                                 const row& cells,
-                                 const query_options& options,
-                                 gc_clock::time_point now) const override;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         throw std::logic_error("IN superclass should never be cloned directly");
     }
@@ -349,12 +336,6 @@ public:
         return format("SLICE{}", _slice);
     }
 
-    virtual bool is_satisfied_by(const schema& schema,
-                                 const partition_key& key,
-                                 const clustering_key_prefix& ckey,
-                                 const row& cells,
-                                 const query_options& options,
-                                 gc_clock::time_point now) const override;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         return ::make_shared<slice>(cdef, _slice);
     }
@@ -386,13 +367,6 @@ public:
     virtual sstring to_string() const override;
 
     virtual void merge_with(::shared_ptr<restriction> other);
-
-    virtual bool is_satisfied_by(const schema& schema,
-                                 const partition_key& key,
-                                 const clustering_key_prefix& ckey,
-                                 const row& cells,
-                                 const query_options& options,
-                                 gc_clock::time_point now) const override;
 
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override;
 
@@ -504,12 +478,6 @@ public:
             std::to_string(_values), std::to_string(_keys), std::to_string(_entry_keys), std::to_string(_entry_values));
     }
 
-    virtual bool is_satisfied_by(const schema& schema,
-                                 const partition_key& key,
-                                 const clustering_key_prefix& ckey,
-                                 const row& cells,
-                                 const query_options& options,
-                                 gc_clock::time_point now) const override;
     bool is_satisfied_by(bytes_view data, const query_options& options) const;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         throw std::logic_error("Cloning 'contains' restriction is not implemented.");
