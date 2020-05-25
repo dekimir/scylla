@@ -139,10 +139,6 @@ public:
         expression = wip::binary_operator{std::vector{wip::column_value(&column_def)}, &operator_type::EQ, _value};
     }
 
-    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
-        return restriction::term_uses_function(_value, ks_name, function_name);
-    }
-
     virtual bool is_supported_by(const secondary_index::index& index) const override {
         return index.supports_expression(_column_def, cql3::operator_type::EQ);
     }
@@ -209,10 +205,6 @@ public:
             std::vector{wip::column_value(&column_def)}, &operator_type::IN, ::make_shared<lists::delayed_value>(_values)};
     }
 
-    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
-        return restriction::term_uses_function(_values, ks_name, function_name);
-    }
-
     virtual std::vector<bytes_opt> values_raw(const query_options& options) const override {
         std::vector<bytes_opt> ret;
         for (auto&& v : _values) {
@@ -238,10 +230,6 @@ public:
             : IN(column_def), _marker(std::move(marker)) {
         expression = wip::binary_operator{
             std::vector{wip::column_value(&column_def)}, &operator_type::IN, std::move(_marker)};
-    }
-
-    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
-        return false;
     }
 
     virtual std::vector<bytes_opt> values_raw(const query_options& options) const override {
@@ -278,11 +266,6 @@ public:
         : single_column_restriction(op::SLICE, column_def)
         , _slice(slice)
     { }
-
-    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
-        return (_slice.has_bound(statements::bound::START) && restriction::term_uses_function(_slice.bound(statements::bound::START), ks_name, function_name))
-                || (_slice.has_bound(statements::bound::END) && restriction::term_uses_function(_slice.bound(statements::bound::END), ks_name, function_name));
-    }
 
     virtual bool is_supported_by(const secondary_index::index& index) const override {
         return _slice.is_supported_by(_column_def, index);
@@ -353,10 +336,6 @@ public:
         , _values{value}
     {
         expression = wip::binary_operator{std::vector{wip::column_value(&column_def)}, &operator_type::LIKE, _values[0]};
-    }
-
-    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
-        return false;
     }
 
     virtual bool is_supported_by(const secondary_index::index& index) const {
@@ -455,13 +434,6 @@ public:
 
     uint32_t number_of_entries() const {
         return _entry_keys.size();
-    }
-
-    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
-        return restriction::term_uses_function(_values, ks_name, function_name)
-            || restriction::term_uses_function(_keys, ks_name, function_name)
-            || restriction::term_uses_function(_entry_keys, ks_name, function_name)
-            || restriction::term_uses_function(_entry_values, ks_name, function_name);
     }
 
     virtual sstring to_string() const override {

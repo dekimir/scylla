@@ -197,6 +197,9 @@ value_set possible_lhs_values(const expression&, const query_options&);
 /// Turns s into an interval if possible, otherwise throws.
 value_interval to_interval(value_set s);
 
+/// True iff expr references the function.
+bool uses_function(const expression& expr, const sstring& ks_name, const sstring& function_name);
+
 } // namespace wip
 
 /**
@@ -277,45 +280,6 @@ public:
     virtual bool has_supporting_index(const secondary_index::secondary_index_manager& index_manager, allow_local_index allow_local) const = 0;
 
     virtual sstring to_string() const = 0;
-
-    /**
-     * Returns <code>true</code> if one of the restrictions use the specified function.
-     *
-     * @param ks_name the keyspace name
-     * @param function_name the function name
-     * @return <code>true</code> if one of the restrictions use the specified function, <code>false</code> otherwise.
-     */
-    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const = 0;
-
-protected:
-    /**
-     * Checks if the specified term is using the specified function.
-     *
-     * @param term the term to check
-     * @param ks_name the function keyspace name
-     * @param function_name the function name
-     * @return <code>true</code> if the specified term is using the specified function, <code>false</code> otherwise.
-     */
-    static bool term_uses_function(::shared_ptr<term> term, const sstring& ks_name, const sstring& function_name) {
-        return bool(term) && term->uses_function(ks_name, function_name);
-    }
-
-    /**
-     * Checks if one of the specified term is using the specified function.
-     *
-     * @param terms the terms to check
-     * @param ks_name the function keyspace name
-     * @param function_name the function name
-     * @return <code>true</code> if one of the specified term is using the specified function, <code>false</code> otherwise.
-     */
-    static bool term_uses_function(const std::vector<::shared_ptr<term>>& terms, const sstring& ks_name, const sstring& function_name) {
-        for (auto&& value : terms) {
-            if (term_uses_function(value, ks_name, function_name)) {
-                return true;
-            }
-        }
-        return false;
-    }
 };
 
 }

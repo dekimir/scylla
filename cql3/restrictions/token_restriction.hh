@@ -70,6 +70,10 @@ public:
         return _column_definitions;
     }
 
+    bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
+        return wip::uses_function(expression, ks_name, function_name);
+    }
+
     virtual bool has_supporting_index(const secondary_index::secondary_index_manager& index_manager, allow_local_index allow_local) const override {
         return false;
     }
@@ -136,10 +140,6 @@ public:
         expression = wip::binary_operator{wip::token{}, &operator_type::EQ, _value};
     }
 
-    bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
-        return restriction::term_uses_function(_value, ks_name, function_name);
-    }
-
     void merge_with(::shared_ptr<restriction>) override {
         throw exceptions::invalid_request_exception(
                 join(", ", get_column_defs())
@@ -164,17 +164,6 @@ public:
         expression = wip::binary_operator{wip::token{}, op, std::move(term)};
     }
 
-    bool uses_function(const sstring& ks_name,
-            const sstring& function_name) const override {
-        return (_slice.has_bound(statements::bound::START)
-                && restriction::term_uses_function(
-                        _slice.bound(statements::bound::START), ks_name,
-                        function_name))
-                || (_slice.has_bound(statements::bound::END)
-                        && restriction::term_uses_function(
-                                _slice.bound(statements::bound::END),
-                                ks_name, function_name));
-    }
     void merge_with(::shared_ptr<restriction> restriction) override {
         try {
             if (!restriction->is_on_token()) {

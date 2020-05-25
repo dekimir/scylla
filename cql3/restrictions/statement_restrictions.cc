@@ -1284,6 +1284,26 @@ value_interval to_interval(value_set s) {
         }, s);
 }
 
+bool uses_function(const expression& expr, const sstring& ks_name, const sstring& function_name) {
+    return std::visit(overloaded_functor{
+            [&] (const conjunction& conj) {
+                using std::placeholders::_1;
+                return boost::algorithm::any_of(conj.children, std::bind(uses_function, _1, ks_name, function_name));
+            },
+            [&] (const binary_operator& oper) {
+                if (oper.rhs && oper.rhs->uses_function(ks_name, function_name)) {
+                    return true;
+                } else if (auto columns = std::get_if<std::vector<column_value>>(&oper.lhs)) {
+                    return boost::algorithm::any_of(*columns, [&] (const column_value& cv) {
+                        return cv.sub && cv.sub->uses_function(ks_name, function_name);
+                    });
+                }
+                return false;
+            },
+            [&] (const auto& default_case) { return false; },
+        }, expr);
+}
+
 } // namespace wip
 
 } // namespace restrictions

@@ -130,7 +130,7 @@ public:
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
         for (auto&& e : _restrictions) {
-            if (e.second->uses_function(ks_name, function_name)) {
+            if (wip::uses_function(e.second->expression, ks_name, function_name)) {
                 return true;
             }
         }

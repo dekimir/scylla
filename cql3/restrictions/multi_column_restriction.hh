@@ -83,6 +83,10 @@ public:
         expression = make_conjunction(std::move(expression), other->expression);
     }
 
+    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
+        return wip::uses_function(expression, ks_name, function_name);
+    }
+
 protected:
     virtual void do_merge_with(::shared_ptr<clustering_key_restrictions> other) = 0;
 
@@ -189,10 +193,6 @@ public:
     {
         expression = wip::binary_operator{
             std::vector<wip::column_value>(_column_defs.cbegin(), _column_defs.cend()), &operator_type::EQ, _value};
-    }
-
-    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
-        return restriction::term_uses_function(_value, ks_name, function_name);
     }
 
     virtual bool is_supported_by(const secondary_index::index& index) const override {
@@ -342,10 +342,6 @@ public:
             ::make_shared<lists::delayed_value>(_values)};
     }
 
-    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override  {
-        return restriction::term_uses_function(_values, ks_name, function_name);
-    }
-
     virtual sstring to_string() const override  {
         return format("IN({})", std::to_string(_values));
     }
@@ -453,11 +449,6 @@ public:
         }
 #endif
 public:
-    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
-        return (_slice.has_bound(statements::bound::START) && restriction::term_uses_function(_slice.bound(statements::bound::START), ks_name, function_name))
-                || (_slice.has_bound(statements::bound::END) && restriction::term_uses_function(_slice.bound(statements::bound::END), ks_name, function_name));
-    }
-
     virtual void do_merge_with(::shared_ptr<clustering_key_restrictions> other) override {
         using namespace statements::request_validations;
         check_true(other->is_slice(),
