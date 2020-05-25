@@ -94,7 +94,8 @@ bool is_multi_column(size_t column_count, const term* t) {
             || dynamic_cast<const tuples::delayed_value*>(t);
 }
 
-/// True iff expr represents a clustering key that is bounded from both above and below.
+/// True iff expr bounds clustering key from both above and below OR it has no clustering-key bounds at all.
+/// See #6493.
 bool bounded_ck(const expression& expr) {
     return std::visit(overloaded_functor{
             [] (bool b) { return !b; },
