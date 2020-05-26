@@ -88,6 +88,10 @@ public:
         return wip::uses_function(expression, ks_name, function_name);
     }
 
+    sstring to_string() const override {
+        return wip::to_string(expression);
+    }
+
 protected:
     virtual void do_merge_with(::shared_ptr<clustering_key_restrictions> other) = 0;
 
@@ -203,10 +207,6 @@ public:
             }
         }
         return false;
-    }
-
-    virtual sstring to_string() const override {
-        return format("EQ({})", _value->to_string());
     }
 
     virtual void do_merge_with(::shared_ptr<clustering_key_restrictions> other) override {
@@ -343,10 +343,6 @@ public:
             ::make_shared<lists::delayed_value>(_values)};
     }
 
-    virtual sstring to_string() const override  {
-        return format("IN({})", std::to_string(_values));
-    }
-
 protected:
     virtual std::vector<std::vector<bytes_opt>> split_values(const query_options& options) const override {
         std::vector<std::vector<bytes_opt>> buffers(_values.size());
@@ -377,10 +373,6 @@ public:
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
         return false;
-    }
-
-    virtual sstring to_string() const override {
-        return "IN ?";
     }
 
 protected:
@@ -468,10 +460,6 @@ public:
             _column_defs = other_slice->_column_defs;
         }
         _slice.merge(other_slice->_slice);
-    }
-
-    virtual sstring to_string() const override {
-        return sstring("SLICE") + _slice.to_string();
     }
 
 private:

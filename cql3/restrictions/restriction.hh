@@ -41,6 +41,8 @@
 
 #pragma once
 
+#include <optional>
+#include <ostream>
 #include <variant>
 #include <vector>
 
@@ -205,6 +207,12 @@ bool uses_function(const expression& expr, const sstring& ks_name, const sstring
 bool has_supporting_index(
         const expression&, const secondary_index::secondary_index_manager&, allow_local_index allow_local);
 
+extern sstring to_string(const expression&);
+
+extern std::ostream& operator<<(std::ostream&, const column_value&);
+
+extern std::ostream& operator<<(std::ostream&, const expression&);
+
 } // namespace wip
 
 /**
@@ -266,8 +274,6 @@ public:
     const enum_set<op_enum>& get_ops() const {
         return _ops;
     }
-
-    virtual sstring to_string() const = 0;
 };
 
 }

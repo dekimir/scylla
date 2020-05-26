@@ -132,10 +132,6 @@ public:
         return index.supports_expression(_column_def, cql3::operator_type::EQ);
     }
 
-    virtual sstring to_string() const override {
-        return format("EQ({})", _value->to_string());
-    }
-
     virtual void merge_with(::shared_ptr<restriction> other) {
         throw exceptions::invalid_request_exception(format("{} cannot be restricted by more than one relation if it includes an Equal", _column_def.name_as_text()));
     }
@@ -198,10 +194,6 @@ public:
         return ret;
     }
 
-    virtual sstring to_string() const override {
-        return format("IN({})", std::to_string(_values));
-    }
-
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         return ::make_shared<IN_with_values>(cdef, _values);
     }
@@ -223,10 +215,6 @@ public:
             throw exceptions::invalid_request_exception("Invalid null value for IN restriction");
         }
         return lval->get_elements();
-    }
-
-    virtual sstring to_string() const override {
-        return "IN ?";
     }
 
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
@@ -281,10 +269,6 @@ public:
     }
 #endif
 
-    virtual sstring to_string() const override {
-        return format("SLICE{}", _slice);
-    }
-
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         return ::make_shared<slice>(cdef, _slice);
     }
@@ -307,8 +291,6 @@ public:
     virtual bool is_supported_by(const secondary_index::index& index) const {
         return index.supports_expression(_column_def, cql3::operator_type::LIKE);
     }
-
-    virtual sstring to_string() const override;
 
     virtual void merge_with(::shared_ptr<restriction> other);
 
@@ -386,11 +368,6 @@ public:
 
     uint32_t number_of_entries() const {
         return _entry_keys.size();
-    }
-
-    virtual sstring to_string() const override {
-        return format("CONTAINS(values={}, keys={}, entryKeys={}, entryValues={})",
-            std::to_string(_values), std::to_string(_keys), std::to_string(_entry_keys), std::to_string(_entry_values));
     }
 
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {

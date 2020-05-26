@@ -129,6 +129,10 @@ public:
         return this->shared_from_this();
     }
 
+    sstring to_string() const override {
+        return wip::to_string(expression);
+    }
+
     class EQ;
     class slice;
 };
@@ -144,10 +148,6 @@ public:
     {
         expression = wip::binary_operator{wip::token{}, &operator_type::EQ, _value};
     }
-
-    sstring to_string() const override {
-        return format("EQ({})", _value->to_string());
-    }
 };
 
 class token_restriction::slice final : public token_restriction {
@@ -161,10 +161,6 @@ public:
         const auto op = is_start(bound) ? (inclusive ? &operator_type::GTE : &operator_type::GT)
                 : (inclusive ? &operator_type::LTE : &operator_type::LT);
         expression = wip::binary_operator{wip::token{}, op, std::move(term)};
-    }
-
-    sstring to_string() const override {
-        return format("SLICE{}", _slice);
     }
 };
 

@@ -26,7 +26,6 @@
 #include <boost/range/adaptors.hpp>
 #include <boost/range/algorithm.hpp>
 #include <functional>
-#include <optional>
 #include <stdexcept>
 
 #include "query-result-reader.hh"
@@ -607,14 +606,6 @@ std::optional<atomic_cell_value_view> single_column_restriction::get_value(const
         const row& cells,
         gc_clock::time_point now) const {
     return do_get_value(schema, _column_def, key, ckey, cells, std::move(now));
-}
-
-sstring single_column_restriction::LIKE::to_string() const {
-    std::vector<sstring> vs(_values.size());
-    for (size_t i = 0; i < _values.size(); ++i) {
-        vs[i] = _values[i]->to_string();
-    }
-    return join(" AND ", vs);
 }
 
 void single_column_restriction::LIKE::merge_with(::shared_ptr<restriction> rest) {
@@ -1330,6 +1321,38 @@ bool has_supporting_index(
             : boost::algorithm::any_of(
                     indexes | filtered([] (const secondary_index::index& i) { return !i.metadata().local(); }),
                     support);
+}
+
+std::ostream& operator<<(std::ostream& os, const column_value& cv) {
+    os << *cv.col;
+    if (cv.sub) {
+        os << '[' << *cv.sub << ']';
+    }
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const expression& expr) {
+    std::visit(overloaded_functor{
+            [&] (bool b) { os << (b ? "TRUE" : "FALSE"); },
+            [&] (const conjunction& conj) { fmt::print(os, "({})", fmt::join(conj.children, ") AND (")); },
+            [&] (const binary_operator& opr) {
+                std::visit(overloaded_functor{
+                        [&] (const token& t) { os << "TOKEN"; },
+                        [&] (const std::vector<column_value>& cvs) {
+                            const bool multi = cvs.size() != 1;
+                            os << (multi ? "(" : "");
+                            fmt::print(os, "({})", fmt::join(cvs, ","));
+                            os << (multi ? ")" : "");
+                        },
+                    }, opr.lhs);
+                os << ' ' << *opr.op << ' ' << *opr.rhs;
+            },
+        }, expr);
+    return os;
+}
+
+sstring to_string(const expression& expr) {
+    return fmt::format("{}", expr);
 }
 
 } // namespace wip

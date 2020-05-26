@@ -110,6 +110,8 @@ public:
     size_t prefix_size(const schema&) const {
         return 0;
     }
+
+    virtual sstring to_string() const = 0;
 };
 
 class clustering_key_restrictions : public restriction, public restrictions, public enable_shared_from_this<clustering_key_restrictions> {
@@ -175,6 +177,8 @@ public:
         }
         return count;
     }
+
+    virtual sstring to_string() const = 0;
 };
 
 // FIXME(sarna): transitive hack only, do not judge. Should be dropped after all primary_key_restrictions<T> uses are removed from code.
