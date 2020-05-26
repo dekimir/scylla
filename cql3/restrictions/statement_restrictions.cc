@@ -1102,7 +1102,7 @@ struct intersection_visitor {
     }
 
     value_set operator()(const value_interval& a, const value_list& b) const {
-        const auto common = b | boost::adaptors::filtered([&] (const bytes& el) { return a.includes(el); });
+        const auto common = b | filtered([&] (const bytes& el) { return a.includes(el); });
         return value_list(common.begin(), common.end());
     }
 
