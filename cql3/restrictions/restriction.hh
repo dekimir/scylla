@@ -200,6 +200,11 @@ value_interval to_interval(value_set s);
 /// True iff expr references the function.
 bool uses_function(const expression& expr, const sstring& ks_name, const sstring& function_name);
 
+/// True iff any of the indices from the manager can support the entire expression.  If allow_local, use all
+/// indices; otherwise, use only global indices.
+bool has_supporting_index(
+        const expression&, const secondary_index::secondary_index_manager&, allow_local_index allow_local);
+
 } // namespace wip
 
 /**
@@ -261,14 +266,6 @@ public:
     const enum_set<op_enum>& get_ops() const {
         return _ops;
     }
-
-    /**
-     * Check if the restriction is on indexed columns.
-     *
-     * @param indexManager the index manager
-     * @return <code>true</code> if the restriction is on indexed columns, <code>false</code>
-     */
-    virtual bool has_supporting_index(const secondary_index::secondary_index_manager& index_manager, allow_local_index allow_local) const = 0;
 
     virtual sstring to_string() const = 0;
 };

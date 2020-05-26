@@ -165,7 +165,7 @@ public:
 
     virtual bool has_supporting_index(const secondary_index::secondary_index_manager& index_manager, allow_local_index allow_local) const override {
         for (auto&& e : _restrictions) {
-            if (e.second->has_supporting_index(index_manager, allow_local)) {
+            if (wip::has_supporting_index(e.second->expression, index_manager, allow_local)) {
                 return true;
             }
         }

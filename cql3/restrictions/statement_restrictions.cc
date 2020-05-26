@@ -1166,6 +1166,25 @@ bool is_satisfied_by(const expression& restr, column_value_eval_bag bag) {
         }, restr);
 }
 
+/// True iff the index can support the entire expression.
+bool is_supported_by(const expression& expr, const secondary_index::index& idx) {
+    using std::placeholders::_1;
+    return std::visit(overloaded_functor{
+            [&] (const conjunction& conj) {
+                return boost::algorithm::all_of(conj.children, std::bind(is_supported_by, _1, idx));
+            },
+            [&] (const binary_operator& oper) {
+                if (auto cvs = std::get_if<std::vector<column_value>>(&oper.lhs)) {
+                    return boost::algorithm::any_of(*cvs, [&] (const column_value& c) {
+                        return idx.supports_expression(*c.col, *oper.op);
+                    });
+                }
+                return false;
+            },
+            [] (const auto& default_case) { return false; }
+        }, expr);
+}
+
 } // anonymous namespace
 
 expression make_conjunction(expression a, expression b) {
@@ -1299,6 +1318,18 @@ bool uses_function(const expression& expr, const sstring& ks_name, const sstring
             },
             [&] (const auto& default_case) { return false; },
         }, expr);
+}
+
+bool has_supporting_index(
+        const expression& expr,
+        const secondary_index::secondary_index_manager& index_manager,
+        allow_local_index allow_local) {
+    const auto indexes = index_manager.list_indexes();
+    const auto support = std::bind(is_supported_by, expr, std::placeholders::_1);
+    return allow_local ? boost::algorithm::any_of(indexes, support)
+            : boost::algorithm::any_of(
+                    indexes | filtered([] (const secondary_index::index& i) { return !i.metadata().local(); }),
+                    support);
 }
 
 } // namespace wip

@@ -88,17 +88,6 @@ public:
     }
 #endif
 
-    virtual bool has_supporting_index(const secondary_index::secondary_index_manager& index_manager, allow_local_index allow_local) const override {
-        for (const auto& index : index_manager.list_indexes()) {
-            if (!allow_local && index.metadata().local()) {
-                continue;
-            }
-            if (is_supported_by(index))
-                return true;
-        }
-        return false;
-    }
-
     virtual bool is_supported_by(const secondary_index::index& index) const = 0;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) = 0;
 #if 0
