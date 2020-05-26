@@ -263,15 +263,6 @@ public:
     }
 
     /**
-     * Merges this restriction with the specified one.
-     *
-     * @param otherRestriction the restriction to merge into this one
-     * @return the restriction resulting of the merge
-     * @throws InvalidRequestException if the restrictions cannot be merged
-     */
-    virtual void merge_with(::shared_ptr<restriction> other) = 0;
-
-    /**
      * Check if the restriction is on indexed columns.
      *
      * @param indexManager the index manager

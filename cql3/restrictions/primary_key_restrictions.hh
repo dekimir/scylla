@@ -70,10 +70,7 @@ public:
     partition_key_restrictions() = default;
     partition_key_restrictions(op op, target target) : restriction(op, target) {}
 
-    virtual ::shared_ptr<partition_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) {
-        merge_with(restriction);
-        return this->shared_from_this();
-    }
+    virtual ::shared_ptr<partition_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction>) = 0;
 
     virtual std::vector<bounds_range_type> bounds_ranges(const query_options& options) const = 0;
 
@@ -122,10 +119,7 @@ public:
     clustering_key_restrictions() = default;
     clustering_key_restrictions(op op, target target) : restriction(op, target) {}
 
-    virtual ::shared_ptr<clustering_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) {
-        merge_with(restriction);
-        return this->shared_from_this();
-    }
+    virtual ::shared_ptr<clustering_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) = 0;
 
     virtual std::vector<bounds_range_type> bounds_ranges(const query_options& options) const = 0;
 

@@ -165,12 +165,12 @@ public:
         auto longest_prefix_restrictions = ::make_shared<single_column_primary_key_restrictions<clustering_key>>(_schema, _allow_filtering);
         auto restriction_it = _restrictions->restrictions().begin();
         for (size_t i = 0; i < current_prefix_size; ++i) {
-            longest_prefix_restrictions->merge_with((restriction_it++)->second);
+            longest_prefix_restrictions->merge_to(nullptr, (restriction_it++)->second);
         }
         return longest_prefix_restrictions;
     }
 
-    virtual void merge_with(::shared_ptr<restriction> restriction) override {
+    virtual ::shared_ptr<primary_key_restrictions<ValueType>> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) override {
         if (restriction->is_multi_column()) {
             throw exceptions::invalid_request_exception(
                 "Mixing single column relations and multi column relations on clustering columns is not allowed");
@@ -182,6 +182,7 @@ public:
         }
         do_merge_with(::static_pointer_cast<single_column_restriction>(restriction));
         this->expression = make_conjunction(std::move(this->expression), restriction->expression);
+        return this->shared_from_this();
     }
 
     std::vector<ValueType> values_as_keys(const query_options& options) const {

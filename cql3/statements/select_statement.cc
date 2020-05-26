@@ -1066,7 +1066,7 @@ query::partition_slice indexed_table_select_statement::get_partition_slice_for_g
             auto base_pk = partition_key::from_optional_exploded(*_schema, single_pk_restrictions->values(options));
             bytes token_value = dht::get_token(*_schema, base_pk).data();
             auto token_restriction = ::make_shared<restrictions::single_column_restriction::EQ>(token_cdef, ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(token_value)));
-            clustering_restrictions->merge_with(token_restriction);
+            clustering_restrictions->merge_to(nullptr, token_restriction);
 
             if (_restrictions->get_clustering_columns_restrictions()->prefix_size() > 0) {
                 auto single_ck_restrictions = dynamic_pointer_cast<restrictions::single_column_clustering_key_restrictions>(_restrictions->get_clustering_columns_restrictions());
@@ -1074,7 +1074,7 @@ query::partition_slice indexed_table_select_statement::get_partition_slice_for_g
                     auto prefix_restrictions = single_ck_restrictions->get_longest_prefix_restrictions();
                     auto clustering_restrictions_from_base = ::make_shared<restrictions::single_column_clustering_key_restrictions>(_view_schema, *prefix_restrictions);
                     for (auto restriction_it : clustering_restrictions_from_base->restrictions()) {
-                        clustering_restrictions->merge_with(restriction_it.second);
+                        clustering_restrictions->merge_to(nullptr, restriction_it.second);
                     }
                 }
             }
@@ -1098,7 +1098,7 @@ query::partition_slice indexed_table_select_statement::get_partition_slice_for_l
     if (value) {
         const column_definition* view_cdef = _view_schema->get_column_definition(to_bytes(_index.target_column()));
         auto index_eq_restriction = ::make_shared<restrictions::single_column_restriction::EQ>(*view_cdef, ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(*value)));
-        clustering_restrictions->merge_with(index_eq_restriction);
+        clustering_restrictions->merge_to(nullptr, index_eq_restriction);
     }
 
     if (_restrictions->get_clustering_columns_restrictions()->prefix_size() > 0) {
@@ -1107,7 +1107,7 @@ query::partition_slice indexed_table_select_statement::get_partition_slice_for_l
             auto prefix_restrictions = single_ck_restrictions->get_longest_prefix_restrictions();
             auto clustering_restrictions_from_base = ::make_shared<restrictions::single_column_clustering_key_restrictions>(_view_schema, *prefix_restrictions);
             for (auto restriction_it : clustering_restrictions_from_base->restrictions()) {
-                clustering_restrictions->merge_with(restriction_it.second);
+                clustering_restrictions->merge_to(nullptr, restriction_it.second);
             }
         }
     }

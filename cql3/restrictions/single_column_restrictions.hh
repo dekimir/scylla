@@ -158,7 +158,8 @@ public:
         if (i == _restrictions.end()) {
             _restrictions.emplace_hint(i, &restriction->get_column_def(), std::move(restriction));
         } else {
-            i->second->merge_with(restriction);
+            auto& e = i->second->expression;
+            e = wip::make_conjunction(std::move(e), restriction->expression);
         }
     }
 

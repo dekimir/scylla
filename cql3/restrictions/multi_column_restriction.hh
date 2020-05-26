@@ -74,13 +74,14 @@ public:
         return _column_defs;
     }
 
-    virtual void merge_with(::shared_ptr<restriction> other) override {
+    virtual ::shared_ptr<clustering_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> other) override {
         statements::request_validations::check_true(other->is_multi_column(),
             "Mixing single column relations and multi column relations on clustering columns is not allowed");
         auto as_pkr = static_pointer_cast<clustering_key_restrictions>(other);
         do_merge_with(as_pkr);
         update_asc_desc_existence();
         expression = make_conjunction(std::move(expression), other->expression);
+        return this->shared_from_this();
     }
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
@@ -624,10 +625,10 @@ private:
             ret.emplace_back(::make_shared<cql3::restrictions::single_column_clustering_key_restrictions>(_schema, false));
             std::size_t neq_component_idx = first_neq_component + i;
             for (std::size_t j = 0;j < neq_component_idx; j++) {
-                ret[i]->merge_with(make_single_column_restriction(std::nullopt, false, j, bound_values[j]));
+                ret[i]->merge_to(nullptr, make_single_column_restriction(std::nullopt, false, j, bound_values[j]));
             }
             bool inclusive = (i == (num_of_restrictions-1)) && bound_inclusive;
-            ret[i]->merge_with(make_single_column_restriction(bound, inclusive, neq_component_idx, bound_values[neq_component_idx]));
+            ret[i]->merge_to(nullptr, make_single_column_restriction(bound, inclusive, neq_component_idx, bound_values[neq_component_idx]));
         }
         return ret;
     }
@@ -699,7 +700,7 @@ private:
 
         if (both_components_exists) {
             bool inclusive = end_inclusive && ((end_components.size() - first_neq_component.value()) == 1);
-            ret[0]->merge_with(make_single_column_restriction(statements::bound::END, inclusive, first_neq_component.value(),
+            ret[0]->merge_to(nullptr, make_single_column_restriction(statements::bound::END, inclusive, first_neq_component.value(),
                     end_components[first_neq_component.value()]));
         }
         return ret;

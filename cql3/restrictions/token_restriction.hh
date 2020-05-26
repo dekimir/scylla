@@ -124,6 +124,11 @@ public:
         return { bounds_range_type(std::move(start), std::move(end)) };
     }
 
+    ::shared_ptr<partition_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) {
+        this->expression = make_conjunction(std::move(this->expression), restriction->expression);
+        return this->shared_from_this();
+    }
+
     class EQ;
     class slice;
 };
@@ -138,12 +143,6 @@ public:
         , _value(std::move(value))
     {
         expression = wip::binary_operator{wip::token{}, &operator_type::EQ, _value};
-    }
-
-    void merge_with(::shared_ptr<restriction>) override {
-        throw exceptions::invalid_request_exception(
-                join(", ", get_column_defs())
-                        + " cannot be restricted by more than one relation if it includes an Equal");
     }
 
     sstring to_string() const override {
@@ -164,36 +163,6 @@ public:
         expression = wip::binary_operator{wip::token{}, op, std::move(term)};
     }
 
-    void merge_with(::shared_ptr<restriction> restriction) override {
-        try {
-            if (!restriction->is_on_token()) {
-                throw exceptions::invalid_request_exception(
-                        "Columns \"%s\" cannot be restricted by both a normal relation and a token relation");
-            }
-            if (!restriction->is_slice()) {
-                throw exceptions::invalid_request_exception(
-                        "Columns \"%s\" cannot be restricted by both an equality and an inequality relation");
-            }
-
-            auto* other_slice = static_cast<slice *>(restriction.get());
-
-            if (_slice.has_bound(statements::bound::START)
-                    && other_slice->_slice.has_bound(statements::bound::START)) {
-                throw exceptions::invalid_request_exception(
-                        "More than one restriction was found for the start bound on %s");
-            }
-            if (_slice.has_bound(statements::bound::END)
-                    && other_slice->_slice.has_bound(statements::bound::END)) {
-                throw exceptions::invalid_request_exception(
-                        "More than one restriction was found for the end bound on %s");
-            }
-            _slice.merge(other_slice->_slice);
-            expression = make_conjunction(std::move(expression), restriction->expression);
-        } catch (exceptions::invalid_request_exception & e) {
-            throw exceptions::invalid_request_exception(
-                    sprint(e.what(), join(", ", get_column_defs())));
-        }
-    }
     sstring to_string() const override {
         return format("SLICE{}", _slice);
     }

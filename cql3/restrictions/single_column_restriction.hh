@@ -174,10 +174,6 @@ public:
         return index.supports_expression(_column_def, cql3::operator_type::IN);
     }
 
-    virtual void merge_with(::shared_ptr<restriction> r) override {
-        throw exceptions::invalid_request_exception(format("{} cannot be restricted by more than one relation if it includes a IN", _column_def.name_as_text()));
-    }
-
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         throw std::logic_error("IN superclass should never be cloned directly");
     }
@@ -271,25 +267,6 @@ public:
         return _slice.is_supported_by(_column_def, index);
     }
 
-    virtual void merge_with(::shared_ptr<restriction> r) override {
-        if (!r->is_slice()) {
-            throw exceptions::invalid_request_exception(format("Column \"{}\" cannot be restricted by both an equality and an inequality relation", _column_def.name_as_text()));
-        }
-
-        auto other_slice = static_pointer_cast<slice>(r);
-
-        if (_slice.has_bound(statements::bound::START) && other_slice->_slice.has_bound(statements::bound::START)) {
-            throw exceptions::invalid_request_exception(format("More than one restriction was found for the start bound on {}", _column_def.name_as_text()));
-        }
-
-        if (_slice.has_bound(statements::bound::END) && other_slice->_slice.has_bound(statements::bound::END)) {
-            throw exceptions::invalid_request_exception(format("More than one restriction was found for the end bound on {}", _column_def.name_as_text()));
-        }
-
-        _slice.merge(other_slice->_slice);
-        expression = make_conjunction(std::move(expression), r->expression);
-    }
-
 #if 0
     virtual void addIndexExpressionTo(List<IndexExpression> expressions, override
                                      QueryOptions options) throws InvalidRequestException
@@ -376,20 +353,6 @@ public:
             std::vector{wip::column_value(&column_def, map_key)}, &operator_type::EQ, map_value};
         _entry_keys.emplace_back(std::move(map_key));
         _entry_values.emplace_back(std::move(map_value));
-    }
-
-    virtual void merge_with(::shared_ptr<restriction> other_restriction) override {
-        if (!other_restriction->is_contains()) {
-            throw exceptions::invalid_request_exception(format("Collection column {} can only be restricted by CONTAINS, CONTAINS KEY, or map-entry equality",
-                      get_column_def().name_as_text()));
-        }
-
-        auto other = static_pointer_cast<contains>(other_restriction);
-        std::copy(other->_values.begin(), other->_values.end(), std::back_inserter(_values));
-        std::copy(other->_keys.begin(), other->_keys.end(), std::back_inserter(_keys));
-        std::copy(other->_entry_keys.begin(), other->_entry_keys.end(), std::back_inserter(_entry_keys));
-        std::copy(other->_entry_values.begin(), other->_entry_values.end(), std::back_inserter(_entry_values));
-        expression = make_conjunction(std::move(expression), other_restriction->expression);
     }
 
 #if 0

@@ -79,9 +79,6 @@ public:
         }
         return ::make_shared<single_column_primary_key_restrictions<T>>(schema, _allow_filtering)->merge_to(restriction);
     }
-    void merge_with(::shared_ptr<restriction> restriction) override {
-        throw exceptions::unsupported_operation_exception();
-    }
     bytes_opt value_for(const column_definition& cdef, const query_options& options) const override {
         return {};
     }
