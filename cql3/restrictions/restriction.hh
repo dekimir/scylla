@@ -46,6 +46,7 @@
 #include <variant>
 #include <vector>
 
+#include <fmt/ostream.h>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/sstring.hh>
 #include "cql3/query_options.hh"
@@ -279,3 +280,15 @@ public:
 }
 
 }
+
+// This makes fmt::join() work on expression and column_value using operator<<.
+//
+// See https://github.com/fmtlib/fmt/issues/1283#issuecomment-526114915
+template <typename Char>
+struct fmt::formatter<cql3::restrictions::wip::expression, Char>
+    : fmt::v6::internal::fallback_formatter<cql3::restrictions::wip::expression, Char>
+{};
+template <typename Char>
+struct fmt::formatter<cql3::restrictions::wip::column_value, Char>
+    : fmt::v6::internal::fallback_formatter<cql3::restrictions::wip::column_value, Char>
+{};
