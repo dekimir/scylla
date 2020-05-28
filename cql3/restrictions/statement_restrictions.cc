@@ -467,7 +467,7 @@ void statement_restrictions::process_clustering_columns_restrictions(bool has_qu
         return;
     }
 
-    if (_clustering_columns_restrictions->is_IN() && select_a_collection) {
+    if (clustering_key_restrictions_has_IN() && select_a_collection) {
         throw exceptions::invalid_request_exception(
             "Cannot restrict clustering columns by IN relations when a collection is selected by the query");
     }
