@@ -41,6 +41,7 @@
 
 #pragma once
 
+#include <functional>
 #include <vector>
 #include "schema_fwd.hh"
 #include "cartesian_product.hh"
@@ -245,7 +246,7 @@ private:
             const column_definition* def = e.first;
             auto&& r = e.second;
 
-            if (vec_of_values.size() != _schema->position(*def) || r->is_contains() || r->is_LIKE()) {
+            if (vec_of_values.size() != _schema->position(*def) || wip::needs_filtering(r->expression)) {
                 // The prefixes built so far are the longest we can build,
                 // the rest of the constraints will have to be applied using filtering.
                 break;
@@ -291,7 +292,7 @@ private:
                 return ranges;
             }
 
-            auto values = std::get<wip::value_list>(wip::possible_lhs_values(r->expression, options));
+            auto values = std::get<value_list>(possible_lhs_values(r->expression, options));
             if (values.empty()) {
                 return {};
             }
@@ -428,7 +429,7 @@ inline bool single_column_primary_key_restrictions<clustering_key>::needs_filter
     // 3. a SLICE restriction isn't on a last place
     column_id position = 0;
     for (const auto& restriction : _restrictions->restrictions() | boost::adaptors::map_values) {
-        if (restriction->is_contains() || restriction->is_LIKE() || position != restriction->get_column_def().id) {
+        if (wip::needs_filtering(restriction->expression) || position != restriction->get_column_def().id) {
             return true;
         }
         if (!restriction->is_slice()) {

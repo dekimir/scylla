@@ -90,7 +90,9 @@ public:
 
     virtual bool needs_filtering(const schema& schema) const {
         return !empty() && !is_on_token() &&
-                (has_unrestricted_components(schema) || is_contains() || is_slice() || is_LIKE());
+                (has_unrestricted_components(schema) || find_if(expression, [] (const wip::binary_operator& o) {
+                    return o.op->is_slice() || o.op->needs_filtering();
+                }));
     }
 
     // NOTICE(sarna): This function is useless for partition key restrictions,

@@ -49,6 +49,7 @@
 #include <fmt/ostream.h>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/sstring.hh>
+#include <utils/overloaded_functor.hh>
 #include "cql3/query_options.hh"
 #include "cql3/term.hh"
 #include "cql3/statements/bound.hh"
@@ -214,6 +215,27 @@ extern std::ostream& operator<<(std::ostream&, const column_value&);
 
 extern std::ostream& operator<<(std::ostream&, const expression&);
 
+/// If there is a binary_operator atom b for which f(b) is true, returns it.  Otherwise returns null.
+template<typename Fn>
+const expression* find_if(const expression& e, Fn f) {
+    return std::visit(overloaded_functor{
+            [&] (const binary_operator& op) { return f(op) ? &e : nullptr; },
+            [] (bool) -> const expression* { return nullptr; },
+            [&] (const conjunction& conj) -> const expression* {
+                for (auto& child : conj.children) {
+                    if (auto found = find_if(child, f)) {
+                        return found;
+                    }
+                }
+                return nullptr;
+            },
+        }, e);
+}
+
+inline bool needs_filtering(const expression& e) {
+    return find_if(e, [] (const binary_operator& o) { return o.op->needs_filtering(); });
+}
+
 } // namespace wip
 
 /**
@@ -266,10 +288,6 @@ public:
 
     bool is_contains() const {
         return _ops.contains(op::CONTAINS);
-    }
-
-    bool is_LIKE() const {
-        return _ops.contains(op::LIKE);
     }
 
     const enum_set<op_enum>& get_ops() const {
