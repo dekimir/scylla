@@ -48,7 +48,7 @@
 #include "cql3/restrictions/primary_key_restrictions.hh"
 #include "cql3/restrictions/single_column_restrictions.hh"
 #include "cql3/cql_config.hh"
-#include <boost/algorithm/cxx11/all_of.hpp>
+#include <boost/algorithm/cxx11/any_of.hpp>
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/adaptor/filtered.hpp>
 #include <boost/range/adaptor/map.hpp>
@@ -359,6 +359,13 @@ public:
 
     virtual bool needs_filtering(const schema& schema) const override;
     virtual unsigned int num_prefix_columns_that_need_not_be_filtered() const override;
+
+    bool is_IN() const override {
+        return boost::algorithm::any_of(restrictions() | boost::adaptors::map_values,
+                                        [] (const ::shared_ptr<single_column_restriction>& r) {
+                                            return wip::find_if(r->expression, operator_type::IN);
+                                        });
+    }
 };
 
 template<>

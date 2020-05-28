@@ -232,6 +232,10 @@ const expression* find_if(const expression& e, Fn f) {
         }, e);
 }
 
+inline const expression* find_if(const expression& e, const operator_type& op) {
+    return find_if(e, [&] (const binary_operator& o) { return *o.op == op; });
+}
+
 inline bool needs_filtering(const expression& e) {
     return find_if(e, [] (const binary_operator& o) { return o.op->needs_filtering(); });
 }

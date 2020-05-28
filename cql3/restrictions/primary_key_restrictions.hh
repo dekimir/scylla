@@ -115,8 +115,8 @@ public:
 
     virtual sstring to_string() const = 0;
 
-    bool is_IN() const {
-        return restriction::_ops.contains(op::IN);
+    virtual bool is_IN() const {
+        return false;
     }
 };
 
@@ -186,8 +186,8 @@ public:
 
     virtual sstring to_string() const = 0;
 
-    bool is_IN() const {
-        return restriction::_ops.contains(op::IN);
+    virtual bool is_IN() const {
+        return false;
     }
 };
 
