@@ -282,10 +282,6 @@ public:
         return _ops.contains(op::EQ);
     }
 
-    bool is_IN() const {
-        return _ops.contains(op::IN);
-    }
-
     bool is_contains() const {
         return _ops.contains(op::CONTAINS);
     }

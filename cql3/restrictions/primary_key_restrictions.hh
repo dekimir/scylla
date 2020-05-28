@@ -114,6 +114,10 @@ public:
     }
 
     virtual sstring to_string() const = 0;
+
+    bool is_IN() const {
+        return restriction::_ops.contains(op::IN);
+    }
 };
 
 class clustering_key_restrictions : public restriction, public restrictions, public enable_shared_from_this<clustering_key_restrictions> {
@@ -181,6 +185,10 @@ public:
     }
 
     virtual sstring to_string() const = 0;
+
+    bool is_IN() const {
+        return restriction::_ops.contains(op::IN);
+    }
 };
 
 // FIXME(sarna): transitive hack only, do not judge. Should be dropped after all primary_key_restrictions<T> uses are removed from code.
