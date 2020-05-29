@@ -30,7 +30,7 @@
 
 #include "query-result-reader.hh"
 #include "statement_restrictions.hh"
-#include "single_column_primary_key_restrictions.hh"
+#include "multi_column_restriction.hh"
 #include "token_restriction.hh"
 #include "database.hh"
 
@@ -64,15 +64,9 @@ public:
     using bounds_range_type = typename primary_key_restrictions<T>::bounds_range_type;
 
     ::shared_ptr<primary_key_restrictions<T>> do_merge_to(schema_ptr schema, ::shared_ptr<restriction> restriction) const {
-        if (restriction->is_multi_column()) {
-            throw std::runtime_error(format("{} not implemented", __PRETTY_FUNCTION__));
-        }
         return ::make_shared<single_column_primary_key_restrictions<T>>(schema, _allow_filtering)->merge_to(schema, restriction);
     }
     ::shared_ptr<primary_key_restrictions<T>> merge_to(schema_ptr schema, ::shared_ptr<restriction> restriction) override {
-        if (restriction->is_multi_column()) {
-            throw std::runtime_error(format("{} not implemented", __PRETTY_FUNCTION__));
-        }
         if (has_token(restriction->expression)) {
             return static_pointer_cast<token_restriction>(restriction);
         }
@@ -118,8 +112,8 @@ statement_restrictions::initial_key_restrictions<partition_key>::merge_to(schema
 template<>
 ::shared_ptr<primary_key_restrictions<clustering_key_prefix>>
 statement_restrictions::initial_key_restrictions<clustering_key_prefix>::merge_to(schema_ptr schema, ::shared_ptr<restriction> restriction) {
-    if (restriction->is_multi_column()) {
-        return static_pointer_cast<primary_key_restrictions<clustering_key_prefix>>(restriction);
+    if (auto p = dynamic_pointer_cast<primary_key_restrictions<clustering_key_prefix>>(restriction)) {
+        return p;
     }
     return do_merge_to(std::move(schema), std::move(restriction));
 }
@@ -302,7 +296,7 @@ statement_restrictions::statement_restrictions(database& db,
 }
 
 void statement_restrictions::add_restriction(::shared_ptr<restriction> restriction, bool for_view, bool allow_filtering) {
-    if (restriction->is_multi_column()) {
+    if (dynamic_pointer_cast<multi_column_restriction>(restriction)) {
         _clustering_columns_restrictions = _clustering_columns_restrictions->merge_to(_schema, restriction);
     } else if (has_token(restriction->expression)) {
         _partition_key_restrictions = _partition_key_restrictions->merge_to(_schema, restriction);

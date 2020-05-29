@@ -75,9 +75,9 @@ public:
     }
 
     virtual ::shared_ptr<clustering_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> other) override {
-        statements::request_validations::check_true(other->is_multi_column(),
+        auto as_pkr = dynamic_pointer_cast<clustering_key_restrictions>(other);
+        statements::request_validations::check_true(bool(as_pkr),
             "Mixing single column relations and multi column relations on clustering columns is not allowed");
-        auto as_pkr = static_pointer_cast<clustering_key_restrictions>(other);
         do_merge_with(as_pkr);
         update_asc_desc_existence();
         expression = make_conjunction(std::move(expression), other->expression);

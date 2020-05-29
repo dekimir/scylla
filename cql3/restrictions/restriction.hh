@@ -288,10 +288,6 @@ public:
 
     restriction(op op, target target) : _target(target) {
     }
-
-    bool is_multi_column() const {
-        return _target == target::MULTIPLE_COLUMNS;
-    }
 };
 
 }

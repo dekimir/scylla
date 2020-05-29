@@ -417,8 +417,7 @@ bool result_set_builder::restrictions_filter::do_filter(const selection& selecti
     }
 
     auto clustering_columns_restrictions = _restrictions->get_clustering_columns_restrictions();
-    if (clustering_columns_restrictions->is_multi_column()) {
-        auto multi_column_restriction = dynamic_pointer_cast<cql3::restrictions::multi_column_restriction>(clustering_columns_restrictions);
+    if (dynamic_pointer_cast<cql3::restrictions::multi_column_restriction>(clustering_columns_restrictions)) {
         clustering_key_prefix ckey = clustering_key_prefix::from_exploded(clustering_key);
         return restrictions::wip::is_satisfied_by(
                 clustering_columns_restrictions->expression,

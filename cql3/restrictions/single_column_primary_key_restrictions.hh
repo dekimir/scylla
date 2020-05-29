@@ -171,7 +171,10 @@ public:
     }
 
     virtual ::shared_ptr<primary_key_restrictions<ValueType>> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) override {
-        if (restriction->is_multi_column()) {
+        if (find_if(restriction->expression, [] (const wip::binary_operator& b) {
+                    return std::holds_alternative<std::vector<wip::column_value>>(b.lhs)
+                            && std::get<std::vector<wip::column_value>>(b.lhs).size() > 1;
+                })) {
             throw exceptions::invalid_request_exception(
                 "Mixing single column relations and multi column relations on clustering columns is not allowed");
         }
