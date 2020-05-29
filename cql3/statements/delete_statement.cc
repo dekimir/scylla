@@ -167,7 +167,7 @@ delete_statement::prepare_internal(database& db, schema_ptr schema, variable_spe
         throw exceptions::invalid_request_exception(
                 "A range deletion operation needs to specify both bounds for clusters without sstable mc format support");
     }
-    if (stmt->restrictions().get_clustering_columns_restrictions()->is_slice()) {
+    if (has_slice(stmt->restrictions().get_clustering_columns_restrictions()->expression)) {
         if (!schema->is_compound()) {
             throw exceptions::invalid_request_exception("Range deletions on \"compact storage\" schemas are not supported");
         }

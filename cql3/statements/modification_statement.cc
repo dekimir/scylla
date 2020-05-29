@@ -478,7 +478,7 @@ modification_statement::process_where_clause(database& db, std::vector<relation_
         throw exceptions::invalid_request_exception(format("Invalid where clause contains non PRIMARY KEY columns: {}", column_names));
     }
     auto ck_restrictions = _restrictions->get_clustering_columns_restrictions();
-    if (ck_restrictions->is_slice() && !allow_clustering_key_slices()) {
+    if (has_slice(ck_restrictions->expression) && !allow_clustering_key_slices()) {
         throw exceptions::invalid_request_exception(format("Invalid operator in where clause {}", ck_restrictions->to_string()));
     }
     if (_restrictions->has_unrestricted_clustering_columns() && !applies_only_to_static_columns() && !s->is_dense()) {
@@ -497,7 +497,7 @@ modification_statement::process_where_clause(database& db, std::vector<relation_
         }
         // In general, we can't modify specific columns if not all clustering columns have been specified.
         // However, if we modify only static columns, it's fine since we won't really use the prefix anyway.
-        if (!ck_restrictions->is_slice()) {
+        if (!has_slice(ck_restrictions->expression)) {
             auto& col = s->column_at(column_kind::clustering_key, ck_restrictions->size());
             for (auto&& op : _column_operations) {
                 if (!op->column.is_static()) {

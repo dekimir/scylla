@@ -136,13 +136,13 @@ public:
             auto last_column = *_restrictions->last_column();
             auto new_column = restriction->get_column_def();
 
-            if (this->is_slice() && _schema->position(new_column) > _schema->position(last_column)) {
+            if (has_slice(this->expression) && _schema->position(new_column) > _schema->position(last_column)) {
                 throw exceptions::invalid_request_exception(format("Clustering column \"{}\" cannot be restricted (preceding column \"{}\" is restricted by a non-EQ relation)",
                     new_column.name_as_text(), last_column.name_as_text()));
             }
 
             if (_schema->position(new_column) < _schema->position(last_column)) {
-                if (restriction->is_slice()) {
+                if (has_slice(restriction->expression)) {
                     throw exceptions::invalid_request_exception(format("PRIMARY KEY column \"{}\" cannot be restricted (preceding column \"{}\" is restricted by a non-EQ relation)",
                         last_column.name_as_text(), new_column.name_as_text()));
                 }
@@ -191,7 +191,7 @@ public:
         value_vector.reserve(_restrictions->size());
         for (auto&& e : restrictions()) {
             auto&& r = e.second;
-            assert(!r->is_slice());
+            assert(!has_slice(r->expression));
             auto values = std::get<wip::value_list>(wip::possible_lhs_values(r->expression, options));
             if (values.empty()) {
                 return {};
@@ -252,7 +252,7 @@ private:
                 break;
             }
 
-            if (r->is_slice()) {
+            if (has_slice(r->expression)) {
                 const auto b = to_interval(possible_lhs_values(r->expression, options));
                 if (cartesian_product_is_empty(vec_of_values)) {
                     const auto make_bound = [&] (const auto& upper_or_lower) {
@@ -460,7 +460,7 @@ inline unsigned single_column_primary_key_restrictions<clustering_key>::num_pref
         if (wip::needs_filtering(restriction->expression) || position != restriction->get_column_def().id) {
             return count;
         }
-        if (!restriction->is_slice()) {
+        if (!has_slice(restriction->expression)) {
             position = restriction->get_column_def().id + 1;
         }
         count++;

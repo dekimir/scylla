@@ -252,6 +252,10 @@ inline bool needs_filtering(const expression& e) {
     return find_if(e, [] (const binary_operator& o) { return o.op->needs_filtering(); });
 }
 
+inline bool has_slice(const expression& e) {
+    return find_if(e, [] (const binary_operator& o) { return o.op->is_slice(); });
+}
+
 /// True iff binary_operator involves a collection.
 extern bool is_on_collection(const binary_operator&);
 
@@ -291,10 +295,6 @@ public:
 
     bool is_multi_column() const {
         return _target == target::MULTIPLE_COLUMNS;
-    }
-
-    bool is_slice() const {
-        return _ops.contains(op::SLICE);
     }
 
     const enum_set<op_enum>& get_ops() const {

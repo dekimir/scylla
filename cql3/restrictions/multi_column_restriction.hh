@@ -448,7 +448,7 @@ public:
 public:
     virtual void do_merge_with(::shared_ptr<clustering_key_restrictions> other) override {
         using namespace statements::request_validations;
-        check_true(other->is_slice(),
+        check_true(has_slice(other->expression),
                    "Column \"%s\" cannot be restricted by both an equality and an inequality relation",
                    get_columns_in_commons(other));
         auto other_slice = static_pointer_cast<slice>(other);

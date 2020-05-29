@@ -322,7 +322,7 @@ void statement_restrictions::add_single_column_restriction(::shared_ptr<single_c
         // such a slice is fine - it is used to check whether individual
         // partitions, match, and does not present a performance problem.
         assert(!restriction->is_on_token());
-        if (restriction->is_slice() && !for_view && !allow_filtering) {
+        if (has_slice(restriction->expression) && !for_view && !allow_filtering) {
             throw exceptions::invalid_request_exception(
                     "Only EQ and IN relation are supported on the partition key (unless you use the token() function or allow filtering)");
         }
