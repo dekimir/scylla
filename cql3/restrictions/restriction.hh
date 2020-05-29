@@ -273,8 +273,6 @@ public:
         SINGLE_COLUMN, MULTIPLE_COLUMNS, TOKEN
     };
 protected:
-    using op_enum = super_enum<restriction::op, restriction::op::EQ, restriction::op::SLICE, restriction::op::IN, restriction::op::CONTAINS, restriction::op::LIKE>;
-    enum_set<op_enum> _ops;
     target _target = target::SINGLE_COLUMN;
 public:
     wip::expression expression = false; ///< wip equivalent of *this.
@@ -282,11 +280,9 @@ public:
 
     restriction() = default;
     explicit restriction(op op) : _target(target::SINGLE_COLUMN) {
-        _ops.set(op);
     }
 
     restriction(op op, target target) : _target(target) {
-        _ops.set(op);
     }
 
     bool is_on_token() const {
@@ -295,10 +291,6 @@ public:
 
     bool is_multi_column() const {
         return _target == target::MULTIPLE_COLUMNS;
-    }
-
-    const enum_set<op_enum>& get_ops() const {
-        return _ops;
     }
 };
 
