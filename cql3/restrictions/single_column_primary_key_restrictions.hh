@@ -358,28 +358,6 @@ public:
 
     virtual bool needs_filtering(const schema& schema) const override;
     virtual unsigned int num_prefix_columns_that_need_not_be_filtered() const override;
-
-    bool is_IN() const override {
-        return contains(operator_type::IN);
-    }
-
-    bool is_EQ() const {
-        return contains(operator_type::EQ);
-    }
-
-    bool is_on_collection() const {
-        return boost::algorithm::any_of(restrictions() | boost::adaptors::map_values,
-                                        [&] (const ::shared_ptr<single_column_restriction>& r) {
-                                            return wip::find_if(r->expression, wip::is_on_collection);
-                                        });
-    }
-
-    bool contains(const operator_type& op) const {
-        return boost::algorithm::any_of(restrictions() | boost::adaptors::map_values,
-                                        [&] (const ::shared_ptr<single_column_restriction>& r) {
-                                            return wip::find(r->expression, op);
-                                        });
-    }
 };
 
 template<>
