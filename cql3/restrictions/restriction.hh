@@ -41,6 +41,7 @@
 
 #pragma once
 
+#include <numeric>
 #include <optional>
 #include <ostream>
 #include <variant>
@@ -230,6 +231,19 @@ const expression* find_if(const expression& e, Fn f) {
         }, e);
 }
 
+/// Counts binary_operator atoms b for which f(b) is true.
+template<typename Fn>
+size_t count_if(const expression& e, Fn f) {
+    return std::visit(overloaded_functor{
+            [&] (const binary_operator& op) -> size_t { return f(op) ? 1 : 0; },
+            [&] (const conjunction& conj) {
+                return std::accumulate(conj.children.cbegin(), conj.children.cend(), size_t{0},
+                                       [&] (size_t acc, const expression& c) { return acc + count_if(c, f); });
+            },
+            [] (bool) -> size_t { return 0; },
+        }, e);
+}
+
 inline const expression* find(const expression& e, const operator_type& op) {
     return find_if(e, [&] (const binary_operator& o) { return *o.op == op; });
 }
@@ -237,6 +251,9 @@ inline const expression* find(const expression& e, const operator_type& op) {
 inline bool needs_filtering(const expression& e) {
     return find_if(e, [] (const binary_operator& o) { return o.op->needs_filtering(); });
 }
+
+/// True iff binary_operator involves a collection.
+extern bool is_on_collection(const binary_operator&);
 
 } // namespace wip
 
@@ -278,10 +295,6 @@ public:
 
     bool is_slice() const {
         return _ops.contains(op::SLICE);
-    }
-
-    bool is_contains() const {
-        return _ops.contains(op::CONTAINS);
     }
 
     const enum_set<op_enum>& get_ops() const {

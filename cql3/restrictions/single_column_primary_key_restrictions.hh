@@ -368,6 +368,13 @@ public:
         return contains(operator_type::EQ);
     }
 
+    bool is_on_collection() const {
+        return boost::algorithm::any_of(restrictions() | boost::adaptors::map_values,
+                                        [&] (const ::shared_ptr<single_column_restriction>& r) {
+                                            return wip::find_if(r->expression, wip::is_on_collection);
+                                        });
+    }
+
     bool contains(const operator_type& op) const {
         return boost::algorithm::any_of(restrictions() | boost::adaptors::map_values,
                                         [&] (const ::shared_ptr<single_column_restriction>& r) {

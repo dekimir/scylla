@@ -257,7 +257,7 @@ statement_restrictions::statement_restrictions(database& db,
 
     if (_uses_secondary_indexing || _clustering_columns_restrictions->needs_filtering(*_schema)) {
         _index_restrictions.push_back(_clustering_columns_restrictions);
-    } else if (_clustering_columns_restrictions->is_contains()) {
+    } else if (_clustering_columns_restrictions->is_on_collection()) {
         fail(unimplemented::cause::INDEXES);
 #if 0
         _index_restrictions.push_back(new Forwardingprimary_key_restrictions() {
@@ -471,7 +471,7 @@ void statement_restrictions::process_clustering_columns_restrictions(bool has_qu
         throw exceptions::invalid_request_exception(
             "Cannot restrict clustering columns by IN relations when a collection is selected by the query");
     }
-    if (_clustering_columns_restrictions->is_contains() && !has_queriable_index && !allow_filtering) {
+    if (_clustering_columns_restrictions->is_on_collection() && !has_queriable_index && !allow_filtering) {
         throw exceptions::invalid_request_exception(
             "Cannot restrict clustering columns by a CONTAINS relation without a secondary index or filtering");
     }
@@ -1353,6 +1353,16 @@ std::ostream& operator<<(std::ostream& os, const expression& expr) {
 
 sstring to_string(const expression& expr) {
     return fmt::format("{}", expr);
+}
+
+bool is_on_collection(const binary_operator& b) {
+    if (*b.op == operator_type::CONTAINS || *b.op == operator_type::CONTAINS_KEY) {
+        return true;
+    }
+    if (auto cvs = std::get_if<std::vector<column_value>>(&b.lhs)) {
+        return boost::algorithm::any_of(*cvs, [] (const column_value& v) { return v.sub; });
+    }
+    return false;
 }
 
 } // namespace wip

@@ -231,13 +231,12 @@ public:
      * map[key] = value; <code>false</code> otherwise
      */
     bool has_multiple_contains() const {
+        using namespace wip;
         uint32_t number_of_contains = 0;
         for (auto&& e : _restrictions) {
-            if (e.second->is_contains()) {
-                auto contains_ = static_pointer_cast<single_column_restriction::contains>(e.second);
-                number_of_contains += contains_->number_of_values();
-                number_of_contains += contains_->number_of_keys();
-                number_of_contains += contains_->number_of_entries();
+            number_of_contains += count_if(e.second->expression, is_on_collection);
+            if (number_of_contains > 1) {
+                return true;
             }
         }
         return number_of_contains > 1;
