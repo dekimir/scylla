@@ -468,7 +468,7 @@ inline unsigned single_column_primary_key_restrictions<clustering_key>::num_pref
     column_id position = 0;
     unsigned int count = 0;
     for (const auto& restriction : _restrictions->restrictions() | boost::adaptors::map_values) {
-        if (restriction->is_contains() || position != restriction->get_column_def().id) {
+        if (wip::needs_filtering(restriction->expression) || position != restriction->get_column_def().id) {
             return count;
         }
         if (!restriction->is_slice()) {

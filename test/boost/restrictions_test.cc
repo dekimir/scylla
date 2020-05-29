@@ -564,8 +564,7 @@ SEASTAR_THREAD_TEST_CASE(like) {
         cquery_nofail(e, "insert into t (pk, ck1, ck2) values ('pa', 'c1a', 'c2a');");
         wip_require_rows(e, "select * from t where pk like 'a' allow filtering", {});
         wip_require_rows(e, "select pk from t where pk like '_a' allow filtering", {{T("pa")}});
-        // TODO: enable when #6371 is fixed.
-        //wip_require_rows(e, "select pk from t where pk like '_a' and ck1 like '' allow filtering", {});
+        wip_require_rows(e, "select pk from t where pk like '_a' and ck1 like '' allow filtering", {});
         wip_require_rows(e, "select pk from t where r like '_a' allow filtering", {});
         wip_require_rows(e, "select pk from t where pk like '_a' and ck2 like '_2%' allow filtering",
                          {{T("pa"), T("c2a")}});
