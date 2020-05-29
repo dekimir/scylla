@@ -68,7 +68,6 @@ public:
     using bounds_range_type = dht::partition_range;
 
     partition_key_restrictions() = default;
-    partition_key_restrictions(op op, target target) : restriction(op, target) {}
 
     virtual ::shared_ptr<partition_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction>) = 0;
 
@@ -129,7 +128,6 @@ public:
     using bounds_range_type = query::clustering_range;
 
     clustering_key_restrictions() = default;
-    clustering_key_restrictions(op op, target target) : restriction(op, target) {}
 
     virtual ::shared_ptr<clustering_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) = 0;
 

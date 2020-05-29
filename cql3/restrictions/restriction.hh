@@ -286,8 +286,6 @@ public:
     explicit restriction(op op) : _target(target::SINGLE_COLUMN) {
     }
 
-    restriction(op op, target target) : _target(target) {
-    }
 };
 
 }
