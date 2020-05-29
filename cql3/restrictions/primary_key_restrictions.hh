@@ -118,6 +118,10 @@ public:
     virtual bool is_IN() const {
         return false;
     }
+
+    virtual bool is_EQ() const {
+        return false;
+    }
 };
 
 class clustering_key_restrictions : public restriction, public restrictions, public enable_shared_from_this<clustering_key_restrictions> {

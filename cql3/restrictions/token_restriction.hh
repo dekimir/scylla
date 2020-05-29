@@ -148,6 +148,10 @@ public:
     {
         expression = wip::binary_operator{wip::token{}, &operator_type::EQ, _value};
     }
+
+    bool is_EQ() const override {
+        return true;
+    }
 };
 
 class token_restriction::slice final : public token_restriction {

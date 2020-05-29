@@ -280,10 +280,6 @@ public:
         return _ops.contains(op::SLICE);
     }
 
-    bool is_EQ() const {
-        return _ops.contains(op::EQ);
-    }
-
     bool is_contains() const {
         return _ops.contains(op::CONTAINS);
     }

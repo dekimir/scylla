@@ -361,9 +361,17 @@ public:
     virtual unsigned int num_prefix_columns_that_need_not_be_filtered() const override;
 
     bool is_IN() const override {
+        return contains(operator_type::IN);
+    }
+
+    bool is_EQ() const {
+        return contains(operator_type::EQ);
+    }
+
+    bool contains(const operator_type& op) const {
         return boost::algorithm::any_of(restrictions() | boost::adaptors::map_values,
-                                        [] (const ::shared_ptr<single_column_restriction>& r) {
-                                            return wip::find(r->expression, operator_type::IN);
+                                        [&] (const ::shared_ptr<single_column_restriction>& r) {
+                                            return wip::find(r->expression, op);
                                         });
     }
 };
