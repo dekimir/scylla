@@ -112,7 +112,7 @@ public:
         , _allow_filtering(other._allow_filtering)
         , _restrictions(::make_shared<single_column_restrictions>(schema))
     {
-        for (const auto& entry : other._restrictions->restrictions()) {
+        for (const auto& entry : other.restrictions()) {
             const column_definition* other_cdef = entry.first;
             const column_definition* this_cdef = _schema->get_column_definition(other_cdef->name());
             if (!this_cdef) {
@@ -159,12 +159,12 @@ public:
     ::shared_ptr<single_column_primary_key_restrictions<clustering_key>> get_longest_prefix_restrictions() {
         static_assert(std::is_same_v<ValueType, clustering_key>, "Only clustering key can produce longest prefix restrictions");
         size_t current_prefix_size = prefix_size();
-        if (current_prefix_size == _restrictions->restrictions().size()) {
+        if (current_prefix_size == restrictions().size()) {
             return dynamic_pointer_cast<single_column_primary_key_restrictions<clustering_key>>(this->shared_from_this());
         }
 
         auto longest_prefix_restrictions = ::make_shared<single_column_primary_key_restrictions<clustering_key>>(_schema, _allow_filtering);
-        auto restriction_it = _restrictions->restrictions().begin();
+        auto restriction_it = restrictions().begin();
         for (size_t i = 0; i < current_prefix_size; ++i) {
             longest_prefix_restrictions->merge_to(nullptr, (restriction_it++)->second);
         }
@@ -189,7 +189,7 @@ public:
     std::vector<ValueType> values_as_keys(const query_options& options) const {
         std::vector<std::vector<bytes_opt>> value_vector;
         value_vector.reserve(_restrictions->size());
-        for (auto&& e : _restrictions->restrictions()) {
+        for (auto&& e : restrictions()) {
             auto&& r = e.second;
             assert(!r->is_slice());
             auto values = std::get<wip::value_list>(wip::possible_lhs_values(r->expression, options));
@@ -220,7 +220,7 @@ private:
 
         if (_restrictions->is_all_eq()) {
             if (_restrictions->size() == 1) {
-                auto&& e = *_restrictions->restrictions().begin();
+                auto&& e = *restrictions().begin();
                 const auto b = to_interval(possible_lhs_values(e.second->expression, options));
                 if (!b.lb) {
                     throw exceptions::invalid_request_exception(sprint(invalid_null_msg, e.first->name_as_text()));
@@ -229,7 +229,7 @@ private:
             }
             std::vector<bytes> components;
             components.reserve(_restrictions->size());
-            for (auto&& e : _restrictions->restrictions()) {
+            for (auto&& e : restrictions()) {
                 const column_definition* def = e.first;
                 assert(components.size() == _schema->position(*def));
                 const auto b = to_interval(possible_lhs_values(e.second->expression, options));
@@ -242,7 +242,7 @@ private:
         }
 
         std::vector<std::vector<bytes_opt>> vec_of_values;
-        for (auto&& e : _restrictions->restrictions()) {
+        for (auto&& e : restrictions()) {
             const column_definition* def = e.first;
             auto&& r = e.second;
 
@@ -449,7 +449,7 @@ inline unsigned single_column_primary_key_restrictions<clustering_key>::num_pref
     // 3. a SLICE restriction isn't on a last place
     column_id position = 0;
     unsigned int count = 0;
-    for (const auto& restriction : _restrictions->restrictions() | boost::adaptors::map_values) {
+    for (const auto& restriction : restrictions() | boost::adaptors::map_values) {
         if (wip::needs_filtering(restriction->expression) || position != restriction->get_column_def().id) {
             return count;
         }
