@@ -65,8 +65,6 @@ class selection;
 
 namespace restrictions {
 
-class restriction;
-
 struct allow_local_index_tag {};
 using allow_local_index = bool_class<allow_local_index_tag>;
 
