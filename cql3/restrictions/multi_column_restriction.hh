@@ -93,7 +93,7 @@ public:
     }
 
     bool is_IN() const override {
-        return wip::find_if(expression, operator_type::IN);
+        return wip::find(expression, operator_type::IN);
     }
 
 protected:

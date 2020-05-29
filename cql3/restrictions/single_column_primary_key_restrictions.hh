@@ -363,7 +363,7 @@ public:
     bool is_IN() const override {
         return boost::algorithm::any_of(restrictions() | boost::adaptors::map_values,
                                         [] (const ::shared_ptr<single_column_restriction>& r) {
-                                            return wip::find_if(r->expression, operator_type::IN);
+                                            return wip::find(r->expression, operator_type::IN);
                                         });
     }
 };
