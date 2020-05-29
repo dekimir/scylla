@@ -92,6 +92,10 @@ public:
         return wip::to_string(expression);
     }
 
+    bool is_IN() const override {
+        return wip::find_if(expression, operator_type::IN);
+    }
+
 protected:
     virtual void do_merge_with(::shared_ptr<clustering_key_restrictions> other) = 0;
 
