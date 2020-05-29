@@ -73,7 +73,7 @@ public:
         if (restriction->is_multi_column()) {
             throw std::runtime_error(format("{} not implemented", __PRETTY_FUNCTION__));
         }
-        if (restriction->is_on_token()) {
+        if (has_token(restriction->expression)) {
             return static_pointer_cast<token_restriction>(restriction);
         }
         return ::make_shared<single_column_primary_key_restrictions<T>>(schema, _allow_filtering)->merge_to(restriction);
@@ -109,7 +109,7 @@ public:
 template<>
 ::shared_ptr<primary_key_restrictions<partition_key>>
 statement_restrictions::initial_key_restrictions<partition_key>::merge_to(schema_ptr schema, ::shared_ptr<restriction> restriction) {
-    if (restriction->is_on_token()) {
+    if (has_token(restriction->expression)) {
         return static_pointer_cast<token_restriction>(restriction);
     }
     return do_merge_to(std::move(schema), std::move(restriction));
@@ -304,7 +304,7 @@ statement_restrictions::statement_restrictions(database& db,
 void statement_restrictions::add_restriction(::shared_ptr<restriction> restriction, bool for_view, bool allow_filtering) {
     if (restriction->is_multi_column()) {
         _clustering_columns_restrictions = _clustering_columns_restrictions->merge_to(_schema, restriction);
-    } else if (restriction->is_on_token()) {
+    } else if (has_token(restriction->expression)) {
         _partition_key_restrictions = _partition_key_restrictions->merge_to(_schema, restriction);
     } else {
         add_single_column_restriction(::static_pointer_cast<single_column_restriction>(restriction), for_view, allow_filtering);
@@ -321,7 +321,7 @@ void statement_restrictions::add_single_column_restriction(::shared_ptr<single_c
         // However, in a SELECT statement used to define a materialized view,
         // such a slice is fine - it is used to check whether individual
         // partitions, match, and does not present a performance problem.
-        assert(!restriction->is_on_token());
+        assert(!has_token(restriction->expression));
         if (has_slice(restriction->expression) && !for_view && !allow_filtering) {
             throw exceptions::invalid_request_exception(
                     "Only EQ and IN relation are supported on the partition key (unless you use the token() function or allow filtering)");
@@ -435,7 +435,7 @@ void statement_restrictions::process_partition_key_restrictions(bool has_queriab
     // - Is it queriable without 2ndary index, which is always more efficient
     // If a component of the partition key is restricted by a relation, all preceding
     // components must have a EQ. Only the last partition key component can be in IN relation.
-    if (_partition_key_restrictions->is_on_token()) {
+    if (has_token(_partition_key_restrictions->expression)) {
         _is_key_range = true;
     } else if (_partition_key_restrictions->has_unrestricted_components(*_schema)) {
         _is_key_range = true;

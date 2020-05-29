@@ -256,6 +256,10 @@ inline bool has_slice(const expression& e) {
     return find_if(e, [] (const binary_operator& o) { return o.op->is_slice(); });
 }
 
+inline bool has_token(const expression& e) {
+    return find_if(e, [] (const binary_operator& o) { return std::holds_alternative<token>(o.lhs); });
+}
+
 /// True iff binary_operator involves a collection.
 extern bool is_on_collection(const binary_operator&);
 
@@ -283,10 +287,6 @@ public:
     }
 
     restriction(op op, target target) : _target(target) {
-    }
-
-    bool is_on_token() const {
-        return _target == target::TOKEN;
     }
 
     bool is_multi_column() const {

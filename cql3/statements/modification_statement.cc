@@ -466,7 +466,7 @@ modification_statement::process_where_clause(database& db, std::vector<relation_
             _has_regular_column_conditions = true;
         }
     }
-    if (_restrictions->get_partition_key_restrictions()->is_on_token()) {
+    if (has_token(_restrictions->get_partition_key_restrictions()->expression)) {
         throw exceptions::invalid_request_exception(format("The token function cannot be used in WHERE clauses for UPDATE and DELETE statements: {}",
                 _restrictions->get_partition_key_restrictions()->to_string()));
     }

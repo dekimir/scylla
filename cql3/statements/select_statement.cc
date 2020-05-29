@@ -763,7 +763,7 @@ primary_key_select_statement::primary_key_select_statement(schema_ptr schema, ui
     if (_ks_sel == ks_selector::NONSYSTEM) {
         if (_restrictions->need_filtering() ||
                 _restrictions->get_partition_key_restrictions()->empty() ||
-                (_restrictions->get_partition_key_restrictions()->is_on_token() &&
+                (has_token(_restrictions->get_partition_key_restrictions()->expression) &&
                      !_restrictions->get_partition_key_restrictions()->is_EQ())) {
             _range_scan = true;
             if (!_parameters->bypass_cache())

@@ -175,7 +175,7 @@ public:
             throw exceptions::invalid_request_exception(
                 "Mixing single column relations and multi column relations on clustering columns is not allowed");
         }
-        if (restriction->is_on_token()) {
+        if (has_token(restriction->expression)) {
             throw exceptions::invalid_request_exception(
                     format("Columns \"{}\" cannot be restricted by both a normal relation and a token relation",
                             join(", ", get_column_defs())));
