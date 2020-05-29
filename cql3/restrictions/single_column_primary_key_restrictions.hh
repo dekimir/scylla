@@ -436,35 +436,17 @@ inline bool single_column_primary_key_restrictions<partition_key>::needs_filteri
     return primary_key_restrictions<partition_key>::needs_filtering(schema);
 }
 
-template<>
-inline bool single_column_primary_key_restrictions<clustering_key>::needs_filtering(const schema& schema) const {
-    // Restrictions currently need filtering in three cases:
-    // 1. any of them is a CONTAINS restriction
-    // 2. restrictions do not form a contiguous prefix (i.e. there are gaps in it)
-    // 3. a SLICE restriction isn't on a last place
-    column_id position = 0;
-    for (const auto& restriction : _restrictions->restrictions() | boost::adaptors::map_values) {
-        if (wip::needs_filtering(restriction->expression) || position != restriction->get_column_def().id) {
-            return true;
-        }
-        if (!restriction->is_slice()) {
-            position = restriction->get_column_def().id + 1;
-        }
-    }
-    return false;
-}
-
 // How many of the restrictions (in column order) do not need filtering
 // because they are implemented as a slice (potentially, a contiguous disk
 // read). For example, if we have the filter "c1 < 3 and c2 > 3", c1 does not
 // need filtering but c2 does so num_prefix_columns_that_need_not_be_filtered
 // will be 1.
-// The implementation of num_prefix_columns_that_need_not_be_filtered() is
-// closely tied to that of needs_filtering() above - basically, if only the
-// first num_prefix_columns_that_need_not_be_filtered() restrictions existed,
-// then needs_filtering() would have returned false.
 template<>
 inline unsigned single_column_primary_key_restrictions<clustering_key>::num_prefix_columns_that_need_not_be_filtered() const {
+    // Restrictions currently need filtering in three cases:
+    // 1. any of them is a CONTAINS restriction
+    // 2. restrictions do not form a contiguous prefix (i.e. there are gaps in it)
+    // 3. a SLICE restriction isn't on a last place
     column_id position = 0;
     unsigned int count = 0;
     for (const auto& restriction : _restrictions->restrictions() | boost::adaptors::map_values) {
@@ -477,6 +459,11 @@ inline unsigned single_column_primary_key_restrictions<clustering_key>::num_pref
         count++;
     }
     return count;
+}
+
+template<>
+inline bool single_column_primary_key_restrictions<clustering_key>::needs_filtering(const schema&) const {
+    return num_prefix_columns_that_need_not_be_filtered() < size();
 }
 
 template<>
