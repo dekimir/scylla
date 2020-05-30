@@ -270,22 +270,9 @@ extern bool is_on_collection(const binary_operator&);
  */
 class restriction {
 public:
-    enum class op {
-        EQ, SLICE, IN, CONTAINS, LIKE
-    };
-    enum class target {
-        SINGLE_COLUMN, MULTIPLE_COLUMNS, TOKEN
-    };
-protected:
-    target _target = target::SINGLE_COLUMN;
-public:
     wip::expression expression = false; ///< wip equivalent of *this.
     virtual ~restriction() {}
-
-    restriction() = default;
-    explicit restriction(op op) : _target(target::SINGLE_COLUMN) {
-    }
-
+    enum class op { EQ, SLICE, IN, CONTAINS, LIKE };
 };
 
 }

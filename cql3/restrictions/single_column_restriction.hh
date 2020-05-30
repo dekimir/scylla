@@ -66,10 +66,7 @@ protected:
      */
     const column_definition& _column_def;
 public:
-    single_column_restriction(op op, const column_definition& column_def)
-        : restriction(op)
-        , _column_def(column_def)
-    { }
+    single_column_restriction(op op, const column_definition& column_def) : _column_def(column_def) {}
 
     const column_definition& get_column_def() const {
         return _column_def;
