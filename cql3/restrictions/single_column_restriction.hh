@@ -66,7 +66,7 @@ protected:
      */
     const column_definition& _column_def;
 public:
-    single_column_restriction(op op, const column_definition& column_def) : _column_def(column_def) {}
+    single_column_restriction(const column_definition& column_def) : _column_def(column_def) {}
 
     const column_definition& get_column_def() const {
         return _column_def;
@@ -83,10 +83,7 @@ public:
         ByteBuffer value = validateIndexedValue(columnDef, values.get(0));
         expressions.add(new IndexExpression(columnDef.name.bytes, Operator.EQ, value));
     }
-#endif
 
-    virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) = 0;
-#if 0
     /**
      * Check if this type of restriction is supported by the specified index.
      *
@@ -118,7 +115,7 @@ private:
     ::shared_ptr<term> _value;
 public:
     EQ(const column_definition& column_def, ::shared_ptr<term> value)
-        : single_column_restriction(op::EQ, column_def)
+        : single_column_restriction(column_def)
         , _value(std::move(value))
     {
         expression = wip::binary_operator{std::vector{wip::column_value(&column_def)}, &operator_type::EQ, _value};
@@ -126,10 +123,6 @@ public:
 
     virtual void merge_with(::shared_ptr<restriction> other) {
         throw exceptions::invalid_request_exception(format("{} cannot be restricted by more than one relation if it includes an Equal", _column_def.name_as_text()));
-    }
-
-    virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
-        return ::make_shared<EQ>(cdef, _value);
     }
 
 #if 0
@@ -144,12 +137,8 @@ public:
 class single_column_restriction::IN : public single_column_restriction {
 public:
     IN(const column_definition& column_def)
-        : single_column_restriction(op::IN, column_def)
+        : single_column_restriction(column_def)
     { }
-
-    virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
-        throw std::logic_error("IN superclass should never be cloned directly");
-    }
 
     virtual std::vector<bytes_opt> values_raw(const query_options& options) const = 0;
 
@@ -181,10 +170,6 @@ public:
         }
         return ret;
     }
-
-    virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
-        return ::make_shared<IN_with_values>(cdef, _values);
-    }
 };
 
 class single_column_restriction::IN_with_marker : public IN {
@@ -204,10 +189,6 @@ public:
         }
         return lval->get_elements();
     }
-
-    virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
-        return ::make_shared<IN_with_marker>(cdef, _marker);
-    }
 };
 
 class single_column_restriction::slice : public single_column_restriction {
@@ -215,7 +196,7 @@ private:
     term_slice _slice;
 public:
     slice(const column_definition& column_def, statements::bound bound, bool inclusive, ::shared_ptr<term> term)
-        : single_column_restriction(op::SLICE, column_def)
+        : single_column_restriction(column_def)
         , _slice(term_slice::new_instance(bound, inclusive, term))
     {
         const auto op = is_start(bound) ? (inclusive ? &operator_type::GTE : &operator_type::GT)
@@ -224,7 +205,7 @@ public:
     }
 
     slice(const column_definition& column_def, term_slice slice)
-        : single_column_restriction(op::SLICE, column_def)
+        : single_column_restriction(column_def)
         , _slice(slice)
     { }
 
@@ -252,10 +233,6 @@ public:
         return _slice.isSupportedBy(index);
     }
 #endif
-
-    virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
-        return ::make_shared<slice>(cdef, _slice);
-    }
 };
 
 class single_column_restriction::LIKE final : public single_column_restriction {
@@ -266,15 +243,13 @@ private:
     std::vector<like_matcher> _matchers;
 public:
     LIKE(const column_definition& column_def, ::shared_ptr<term> value)
-        : single_column_restriction(op::LIKE, column_def)
+        : single_column_restriction(column_def)
         , _values{value}
     {
         expression = wip::binary_operator{std::vector{wip::column_value(&column_def)}, &operator_type::LIKE, _values[0]};
     }
 
     virtual void merge_with(::shared_ptr<restriction> other);
-
-    virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override;
 };
 
 // This holds CONTAINS, CONTAINS_KEY, and map[key] = value restrictions because we might want to have any combination of them.
@@ -286,7 +261,7 @@ private:
     std::vector<::shared_ptr<term>> _entry_values;
 public:
     contains(const column_definition& column_def, ::shared_ptr<term> t, bool is_key)
-        : single_column_restriction(op::CONTAINS, column_def) {
+        : single_column_restriction(column_def) {
         if (is_key) {
             _keys.emplace_back(t);
         } else {
@@ -299,7 +274,7 @@ public:
     }
 
     contains(const column_definition& column_def, ::shared_ptr<term> map_key, ::shared_ptr<term> map_value)
-            : single_column_restriction(op::CONTAINS, column_def) {
+            : single_column_restriction(column_def) {
         expression = wip::binary_operator{
             std::vector{wip::column_value(&column_def, map_key)}, &operator_type::EQ, map_value};
         _entry_keys.emplace_back(std::move(map_key));
@@ -334,10 +309,6 @@ public:
 
     uint32_t number_of_entries() const {
         return _entry_keys.size();
-    }
-
-    virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
-        throw std::logic_error("Cloning 'contains' restriction is not implemented.");
     }
 
 #if 0

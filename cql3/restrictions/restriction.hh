@@ -266,6 +266,10 @@ inline bool has_token(const expression& e) {
 /// True iff binary_operator involves a collection.
 extern bool is_on_collection(const binary_operator&);
 
+/// Replaces every column_definition in an expression with this one.  Throws if any LHS is not a single
+/// column_value.
+extern expression replace_column_def(const expression&, const column_definition*);
+
 } // namespace wip
 
 /**

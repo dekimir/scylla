@@ -118,8 +118,9 @@ public:
             if (!this_cdef) {
                 throw exceptions::invalid_request_exception(format("Base column {} not found in view index schema", other_cdef->name_as_text()));
             }
-            ::shared_ptr<single_column_restriction> restriction = entry.second;
-            _restrictions->add_restriction(restriction->apply_to(*this_cdef));
+            auto r = ::make_shared<single_column_restriction>(*this_cdef);
+            r->expression = replace_column_def(entry.second->expression, this_cdef);
+            _restrictions->add_restriction(r);
         }
     }
 

@@ -613,12 +613,6 @@ void single_column_restriction::LIKE::merge_with(::shared_ptr<restriction> rest)
     }
 }
 
-::shared_ptr<single_column_restriction> single_column_restriction::LIKE::apply_to(const column_definition& cdef) {
-    auto r = ::make_shared<LIKE>(cdef, _values[0]);
-    std::copy(_values.cbegin() + 1, _values.cend(), back_inserter(r->_values));
-    return r;
-}
-
 namespace wip {
 
 namespace {
@@ -1357,6 +1351,28 @@ bool is_on_collection(const binary_operator& b) {
         return boost::algorithm::any_of(*cvs, [] (const column_value& v) { return v.sub; });
     }
     return false;
+}
+
+expression replace_column_def(const expression& expr, const column_definition* new_cdef) {
+    return std::visit(overloaded_functor{
+            [] (bool b){ return expression(b); },
+            [&] (const conjunction& conj) {
+                const auto applied = conj.children | transformed(
+                        std::bind(replace_column_def, std::placeholders::_1, new_cdef));
+                return expression(conjunction{std::vector(applied.begin(), applied.end())});
+            },
+            [&] (const binary_operator& oper) {
+                return std::visit(overloaded_functor{
+                        [&] (const std::vector<column_value>& cvs) {
+                            if (cvs.size() != 1) {
+                                throw std::logic_error(format("replace_column_def invalid LHS: {}", to_string(oper)));
+                            }
+                            return expression(binary_operator{std::vector{column_value{new_cdef}}, oper.op, oper.rhs});
+                        },
+                        [&] (const token&) { return expr; },
+                    }, oper.lhs);
+            },
+        }, expr);
 }
 
 } // namespace wip
