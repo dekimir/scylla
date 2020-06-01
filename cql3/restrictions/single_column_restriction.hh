@@ -97,7 +97,6 @@ public:
     class IN;
     class IN_with_values;
     class IN_with_marker;
-    class LIKE;
     class slice;
     class contains;
 
@@ -208,23 +207,6 @@ public:
         return _slice.isSupportedBy(index);
     }
 #endif
-};
-
-class single_column_restriction::LIKE final : public single_column_restriction {
-private:
-    /// Represents `col LIKE val1 AND col LIKE val2 AND ... col LIKE valN`.
-    std::vector<::shared_ptr<term>> _values;
-    /// Each element matches a cell value against a LIKE pattern.
-    std::vector<like_matcher> _matchers;
-public:
-    LIKE(const column_definition& column_def, ::shared_ptr<term> value)
-        : single_column_restriction(column_def)
-        , _values{value}
-    {
-        expression = wip::binary_operator{std::vector{wip::column_value(&column_def)}, &operator_type::LIKE, _values[0]};
-    }
-
-    virtual void merge_with(::shared_ptr<restriction> other);
 };
 
 // This holds CONTAINS, CONTAINS_KEY, and map[key] = value restrictions because we might want to have any combination of them.

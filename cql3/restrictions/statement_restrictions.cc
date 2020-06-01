@@ -603,16 +603,6 @@ std::optional<atomic_cell_value_view> single_column_restriction::get_value(const
     return do_get_value(schema, _column_def, key, ckey, cells, std::move(now));
 }
 
-void single_column_restriction::LIKE::merge_with(::shared_ptr<restriction> rest) {
-    if (auto other = dynamic_pointer_cast<LIKE>(rest)) {
-        boost::copy(other->_values, back_inserter(_values));
-        expression = make_conjunction(std::move(expression), rest->expression);
-    } else {
-        throw exceptions::invalid_request_exception(
-                format("{} cannot be restricted by both LIKE and non-LIKE restrictions", _column_def.name_as_text()));
-    }
-}
-
 namespace wip {
 
 namespace {

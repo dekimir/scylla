@@ -112,7 +112,9 @@ single_column_relation::new_LIKE_restriction(
                 format("LIKE is allowed only on string types, which {} is not", column_def.name_as_text()));
     }
     auto term = to_term(to_receivers(*schema, column_def), *_value, db, schema->ks_name(), bound_names);
-    return ::make_shared<single_column_restriction::LIKE>(column_def, term);
+    auto r = ::make_shared<single_column_restriction>(column_def);
+    r->expression = wip::make_column_op(&column_def, operator_type::LIKE, std::move(term));
+    return r;
 }
 
 std::vector<lw_shared_ptr<column_specification>>
