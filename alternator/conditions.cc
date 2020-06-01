@@ -78,10 +78,12 @@ static ::shared_ptr<cql3::restrictions::single_column_restriction::contains> mak
     return make_shared<cql3::restrictions::single_column_restriction::contains>(cdef, key_value, entry_value);
 }
 
-static ::shared_ptr<cql3::restrictions::single_column_restriction::EQ> make_key_eq_restriction(const column_definition& cdef, const rjson::value& value) {
+static ::shared_ptr<cql3::restrictions::single_column_restriction> make_key_eq_restriction(const column_definition& cdef, const rjson::value& value) {
     bytes raw_value = get_key_from_typed_value(value, cdef);
     auto restriction_value = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(std::move(raw_value)));
-    return make_shared<cql3::restrictions::single_column_restriction::EQ>(cdef, restriction_value);
+    auto r = make_shared<cql3::restrictions::single_column_restriction>(cdef);
+    r->expression = cql3::restrictions::wip::make_column_op(&cdef, operator_type::EQ, std::move(restriction_value));
+    return r;
 }
 
 // Convert a QueryFilter or ScanFilter parameter into an equivalent set of

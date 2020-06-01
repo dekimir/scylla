@@ -1065,7 +1065,10 @@ query::partition_slice indexed_table_select_statement::get_partition_slice_for_g
             const column_definition& token_cdef = *_view_schema->clustering_key_columns().begin();
             auto base_pk = partition_key::from_optional_exploded(*_schema, single_pk_restrictions->values(options));
             bytes token_value = dht::get_token(*_schema, base_pk).data();
-            auto token_restriction = ::make_shared<restrictions::single_column_restriction::EQ>(token_cdef, ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(token_value)));
+            auto token_restriction = ::make_shared<restrictions::single_column_restriction>(token_cdef);
+            token_restriction->expression = restrictions::wip::make_column_op(
+                    &token_cdef, operator_type::EQ,
+                    ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(token_value)));
             clustering_restrictions->merge_to(nullptr, token_restriction);
 
             if (_restrictions->get_clustering_columns_restrictions()->prefix_size() > 0) {
@@ -1097,7 +1100,9 @@ query::partition_slice indexed_table_select_statement::get_partition_slice_for_l
     bytes_opt value = _used_index_restrictions->value_for(*cdef, options);
     if (value) {
         const column_definition* view_cdef = _view_schema->get_column_definition(to_bytes(_index.target_column()));
-        auto index_eq_restriction = ::make_shared<restrictions::single_column_restriction::EQ>(*view_cdef, ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(*value)));
+        auto index_eq_restriction = ::make_shared<restrictions::single_column_restriction>(*view_cdef);
+        index_eq_restriction->expression = restrictions::wip::make_column_op(
+                view_cdef, operator_type::EQ, ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(*value)));
         clustering_restrictions->merge_to(nullptr, index_eq_restriction);
     }
 

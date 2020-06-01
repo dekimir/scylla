@@ -94,7 +94,6 @@ public:
     protected abstract boolean isSupportedBy(SecondaryIndex index);
 #endif
 
-    class EQ;
     class IN;
     class IN_with_values;
     class IN_with_marker;
@@ -108,30 +107,6 @@ protected:
             const clustering_key_prefix& ckey,
             const row& cells,
             gc_clock::time_point now) const;
-};
-
-class single_column_restriction::EQ final : public single_column_restriction {
-private:
-    ::shared_ptr<term> _value;
-public:
-    EQ(const column_definition& column_def, ::shared_ptr<term> value)
-        : single_column_restriction(column_def)
-        , _value(std::move(value))
-    {
-        expression = wip::binary_operator{std::vector{wip::column_value(&column_def)}, &operator_type::EQ, _value};
-    }
-
-    virtual void merge_with(::shared_ptr<restriction> other) {
-        throw exceptions::invalid_request_exception(format("{} cannot be restricted by more than one relation if it includes an Equal", _column_def.name_as_text()));
-    }
-
-#if 0
-        @Override
-        protected boolean isSupportedBy(SecondaryIndex index)
-        {
-            return index.supportsOperator(Operator.EQ);
-        }
-#endif
 };
 
 class single_column_restriction::IN : public single_column_restriction {

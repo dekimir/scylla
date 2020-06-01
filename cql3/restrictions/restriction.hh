@@ -270,6 +270,11 @@ extern bool is_on_collection(const binary_operator&);
 /// column_value.
 extern expression replace_column_def(const expression&, const column_definition*);
 
+/// Makes a binary_operator on a column_definition.
+inline expression make_column_op(const column_definition* cdef, const operator_type& op, ::shared_ptr<term> value) {
+    return wip::binary_operator{std::vector{wip::column_value(cdef)}, &op, std::move(value)};
+}
+
 } // namespace wip
 
 /**

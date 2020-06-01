@@ -578,7 +578,9 @@ private:
                                                              std::size_t column_pos,const bytes_opt& value) const {
         ::shared_ptr<cql3::term> term = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(value));
         if (!bound){
-          return ::make_shared<cql3::restrictions::single_column_restriction::EQ>(*_column_defs[column_pos], term);
+          auto r = ::make_shared<cql3::restrictions::single_column_restriction>(*_column_defs[column_pos]);
+          r->expression = wip::make_column_op(_column_defs[column_pos], operator_type::EQ, std::move(term));
+          return r;
         } else {
             return::make_shared<cql3::restrictions::single_column_restriction::slice>(
                     *_column_defs[column_pos], bound.value(), inclusive, term);

@@ -71,8 +71,10 @@ single_column_relation::new_EQ_restriction(database& db, schema_ptr schema, vari
     using namespace wip;
     const column_definition& column_def = to_column_definition(*schema, *_entity);
     if (!_map_key) {
+        auto r = ::make_shared<single_column_restriction>(column_def);
         auto term = to_term(to_receivers(*schema, column_def), *_value, db, schema->ks_name(), bound_names);
-        return ::make_shared<single_column_restriction::EQ>(column_def, term);
+        r->expression = make_column_op(&column_def, operator_type::EQ, std::move(term));
+        return r;
     }
     auto&& receivers = to_receivers(*schema, column_def);
     auto&& entry_key = to_term({receivers[0]}, *_map_key, db, schema->ks_name(), bound_names);
@@ -94,7 +96,9 @@ single_column_relation::new_IN_restriction(database& db, schema_ptr schema, vari
     auto terms = to_terms(receivers, _in_values, db, schema->ks_name(), bound_names);
     // Convert a single-item IN restriction to an EQ restriction
     if (terms.size() == 1) {
-        return ::make_shared<single_column_restriction::EQ>(column_def, terms[0]);
+        auto r = ::make_shared<single_column_restriction>(column_def);
+        r->expression = wip::make_column_op(&column_def, operator_type::EQ, std::move(terms[0]));
+        return r;
     }
     return ::make_shared<single_column_restriction::IN_with_values>(column_def, terms);
 }
