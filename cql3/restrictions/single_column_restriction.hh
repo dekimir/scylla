@@ -85,7 +85,6 @@ public:
     }
 #endif
 
-    virtual bool is_supported_by(const secondary_index::index& index) const = 0;
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) = 0;
 #if 0
     /**
@@ -125,10 +124,6 @@ public:
         expression = wip::binary_operator{std::vector{wip::column_value(&column_def)}, &operator_type::EQ, _value};
     }
 
-    virtual bool is_supported_by(const secondary_index::index& index) const override {
-        return index.supports_expression(_column_def, cql3::operator_type::EQ);
-    }
-
     virtual void merge_with(::shared_ptr<restriction> other) {
         throw exceptions::invalid_request_exception(format("{} cannot be restricted by more than one relation if it includes an Equal", _column_def.name_as_text()));
     }
@@ -151,10 +146,6 @@ public:
     IN(const column_definition& column_def)
         : single_column_restriction(op::IN, column_def)
     { }
-
-    virtual bool is_supported_by(const secondary_index::index& index) const override {
-        return index.supports_expression(_column_def, cql3::operator_type::IN);
-    }
 
     virtual ::shared_ptr<single_column_restriction> apply_to(const column_definition& cdef) override {
         throw std::logic_error("IN superclass should never be cloned directly");
@@ -237,10 +228,6 @@ public:
         , _slice(slice)
     { }
 
-    virtual bool is_supported_by(const secondary_index::index& index) const override {
-        return _slice.is_supported_by(_column_def, index);
-    }
-
 #if 0
     virtual void addIndexExpressionTo(List<IndexExpression> expressions, override
                                      QueryOptions options) throws InvalidRequestException
@@ -283,10 +270,6 @@ public:
         , _values{value}
     {
         expression = wip::binary_operator{std::vector{wip::column_value(&column_def)}, &operator_type::LIKE, _values[0]};
-    }
-
-    virtual bool is_supported_by(const secondary_index::index& index) const {
-        return index.supports_expression(_column_def, cql3::operator_type::LIKE);
     }
 
     virtual void merge_with(::shared_ptr<restriction> other);
@@ -340,20 +323,6 @@ public:
             }
         }
 #endif
-
-        virtual bool is_supported_by(const secondary_index::index& index) const override {
-            bool supported = false;
-            if (number_of_values() > 0) {
-                supported |= index.supports_expression(_column_def, cql3::operator_type::CONTAINS);
-            }
-            if (number_of_keys() > 0) {
-                supported |= index.supports_expression(_column_def, cql3::operator_type::CONTAINS_KEY);
-            }
-            if (number_of_entries() > 0) {
-                supported |= index.supports_expression(_column_def, cql3::operator_type::EQ);
-            }
-            return supported;
-        }
 
     uint32_t number_of_values() const {
         return _values.size();

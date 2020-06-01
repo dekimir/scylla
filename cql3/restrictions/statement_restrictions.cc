@@ -377,7 +377,7 @@ std::vector<const column_definition*> statement_restrictions::get_column_defs_fo
         auto& sim = db.find_column_family(_schema).get_index_manager();
         auto [opt_idx, _] = find_idx(sim);
         auto column_uses_indexing = [&opt_idx] (const column_definition* cdef, ::shared_ptr<single_column_restriction> restr) {
-            return opt_idx && restr && restr->is_supported_by(*opt_idx);
+            return opt_idx && restr && is_supported_by(restr->expression, *opt_idx);
         };
         auto single_pk_restrs = dynamic_pointer_cast<single_column_partition_key_restrictions>(_partition_key_restrictions);
         if (_partition_key_restrictions->needs_filtering(*_schema)) {
@@ -1152,25 +1152,6 @@ bool is_satisfied_by(const expression& restr, column_value_eval_bag bag) {
         }, restr);
 }
 
-/// True iff the index can support the entire expression.
-bool is_supported_by(const expression& expr, const secondary_index::index& idx) {
-    using std::placeholders::_1;
-    return std::visit(overloaded_functor{
-            [&] (const conjunction& conj) {
-                return boost::algorithm::all_of(conj.children, std::bind(is_supported_by, _1, idx));
-            },
-            [&] (const binary_operator& oper) {
-                if (auto cvs = std::get_if<std::vector<column_value>>(&oper.lhs)) {
-                    return boost::algorithm::any_of(*cvs, [&] (const column_value& c) {
-                        return idx.supports_expression(*c.col, *oper.op);
-                    });
-                }
-                return false;
-            },
-            [] (const auto& default_case) { return false; }
-        }, expr);
-}
-
 } // anonymous namespace
 
 expression make_conjunction(expression a, expression b) {
@@ -1303,6 +1284,24 @@ bool uses_function(const expression& expr, const sstring& ks_name, const sstring
                 return false;
             },
             [&] (const auto& default_case) { return false; },
+        }, expr);
+}
+
+bool is_supported_by(const expression& expr, const secondary_index::index& idx) {
+    using std::placeholders::_1;
+    return std::visit(overloaded_functor{
+            [&] (const conjunction& conj) {
+                return boost::algorithm::all_of(conj.children, std::bind(is_supported_by, _1, idx));
+            },
+            [&] (const binary_operator& oper) {
+                if (auto cvs = std::get_if<std::vector<column_value>>(&oper.lhs)) {
+                    return boost::algorithm::any_of(*cvs, [&] (const column_value& c) {
+                        return idx.supports_expression(*c.col, *oper.op);
+                    });
+                }
+                return false;
+            },
+            [] (const auto& default_case) { return false; }
         }, expr);
 }
 

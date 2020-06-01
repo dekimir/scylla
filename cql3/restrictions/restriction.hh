@@ -203,6 +203,9 @@ value_interval to_interval(value_set s);
 /// True iff expr references the function.
 bool uses_function(const expression& expr, const sstring& ks_name, const sstring& function_name);
 
+/// True iff the index can support the entire expression.
+bool is_supported_by(const expression&, const secondary_index::index&);
+
 /// True iff any of the indices from the manager can support the entire expression.  If allow_local, use all
 /// indices; otherwise, use only global indices.
 bool has_supporting_index(
