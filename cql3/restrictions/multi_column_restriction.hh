@@ -583,12 +583,10 @@ private:
           return r;
         } else {
             auto r = ::make_shared<cql3::restrictions::single_column_restriction>(*_column_defs[column_pos]);
-            static const auto ops = std::vector{
-                &operator_type::GT, &operator_type::GTE, // bound::START
-                &operator_type::LT, &operator_type::LTE, // bound::END
-            };
-            r->expression = wip::make_column_op(_column_defs[column_pos], *ops[2 * get_idx(*bound) + inclusive],
-                                                std::move(term));
+            auto op = is_start(*bound) ?
+                    (inclusive ? &operator_type::GTE : &operator_type::GT) :
+                    (inclusive ? &operator_type::LTE : &operator_type::LT);
+            r->expression = wip::make_column_op(_column_defs[column_pos], *op, std::move(term));
             return r;
         }
     }
