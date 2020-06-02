@@ -95,7 +95,6 @@ public:
 #endif
 
     class IN;
-    class IN_with_values;
     class IN_with_marker;
 
 protected:
@@ -121,27 +120,6 @@ public:
         return index.supportsOperator(Operator.IN);
     }
 #endif
-};
-
-class single_column_restriction::IN_with_values : public single_column_restriction::IN {
-protected:
-    std::vector<::shared_ptr<term>> _values;
-public:
-    IN_with_values(const column_definition& column_def, std::vector<::shared_ptr<term>> values)
-        : single_column_restriction::IN(column_def)
-        , _values(std::move(values))
-    {
-        expression = wip::binary_operator{
-            std::vector{wip::column_value(&column_def)}, &operator_type::IN, ::make_shared<lists::delayed_value>(_values)};
-    }
-
-    virtual std::vector<bytes_opt> values_raw(const query_options& options) const override {
-        std::vector<bytes_opt> ret;
-        for (auto&& v : _values) {
-            ret.emplace_back(to_bytes_opt(v->bind_and_get(options)));
-        }
-        return ret;
-    }
 };
 
 class single_column_restriction::IN_with_marker : public IN {

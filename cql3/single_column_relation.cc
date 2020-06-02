@@ -103,7 +103,9 @@ single_column_relation::new_IN_restriction(database& db, schema_ptr schema, vari
         r->expression = wip::make_column_op(&column_def, operator_type::EQ, std::move(terms[0]));
         return r;
     }
-    return ::make_shared<single_column_restriction::IN_with_values>(column_def, terms);
+    auto r = ::make_shared<single_column_restriction>(column_def);
+    r->expression = wip::make_column_op(&column_def, operator_type::IN, ::make_shared<lists::delayed_value>(terms));
+    return r;
 }
 
 ::shared_ptr<restrictions::restriction>
