@@ -62,7 +62,7 @@ protected:
     schema_ptr _schema;
     std::vector<const column_definition*> _column_defs;
 public:
-    multi_column_restriction(op op, schema_ptr schema, std::vector<const column_definition*>&& defs)
+    multi_column_restriction(schema_ptr schema, std::vector<const column_definition*>&& defs)
         : _schema(schema)
         , _column_defs(std::move(defs))
     {
@@ -192,7 +192,7 @@ private:
     ::shared_ptr<term> _value;
 public:
     EQ(schema_ptr schema, std::vector<const column_definition*> defs, ::shared_ptr<term> value)
-        : multi_column_restriction(op::EQ, schema, std::move(defs))
+        : multi_column_restriction(schema, std::move(defs))
         , _value(std::move(value))
     {
         expression = wip::binary_operator{
@@ -258,7 +258,7 @@ public:
 class multi_column_restriction::IN : public multi_column_restriction {
 public:
     IN(schema_ptr schema, std::vector<const column_definition*> defs)
-        :  multi_column_restriction(op::IN, schema, std::move(defs))
+        :  multi_column_restriction(schema, std::move(defs))
     { }
 
     virtual bool is_supported_by(const secondary_index::index& index) const override {
@@ -389,7 +389,7 @@ private:
     term_slice _slice;
 
     slice(schema_ptr schema, std::vector<const column_definition*> defs, term_slice slice)
-        : multi_column_restriction(op::SLICE, schema, std::move(defs))
+        : multi_column_restriction(schema, std::move(defs))
         , _slice(slice)
     { }
 public:
