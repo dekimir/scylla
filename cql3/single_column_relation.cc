@@ -93,8 +93,9 @@ single_column_relation::new_IN_restriction(database& db, schema_ptr schema, vari
     assert(_in_values.empty() || !_value);
     if (_value) {
         auto term = to_term(receivers, *_value, db, schema->ks_name(), bound_names);
-        return make_shared<single_column_restriction::IN_with_marker>(
-                column_def, dynamic_pointer_cast<lists::marker>(term));
+        auto r = ::make_shared<single_column_restriction>(column_def);
+        r->expression = wip::make_column_op(&column_def, operator_type::IN, std::move(term));
+        return r;
     }
     auto terms = to_terms(receivers, _in_values, db, schema->ks_name(), bound_names);
     // Convert a single-item IN restriction to an EQ restriction

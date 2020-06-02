@@ -595,14 +595,6 @@ static std::optional<atomic_cell_value_view> do_get_value(const schema& schema,
     }
 }
 
-std::optional<atomic_cell_value_view> single_column_restriction::get_value(const schema& schema,
-        const partition_key& key,
-        const clustering_key_prefix& ckey,
-        const row& cells,
-        gc_clock::time_point now) const {
-    return do_get_value(schema, _column_def, key, ckey, cells, std::move(now));
-}
-
 namespace wip {
 
 namespace {

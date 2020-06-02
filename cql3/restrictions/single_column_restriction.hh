@@ -93,52 +93,6 @@ public:
      */
     protected abstract boolean isSupportedBy(SecondaryIndex index);
 #endif
-
-    class IN;
-    class IN_with_marker;
-
-protected:
-    std::optional<atomic_cell_value_view> get_value(const schema& schema,
-            const partition_key& key,
-            const clustering_key_prefix& ckey,
-            const row& cells,
-            gc_clock::time_point now) const;
-};
-
-class single_column_restriction::IN : public single_column_restriction {
-public:
-    IN(const column_definition& column_def)
-        : single_column_restriction(column_def)
-    { }
-
-    virtual std::vector<bytes_opt> values_raw(const query_options& options) const = 0;
-
-#if 0
-    @Override
-    protected final boolean isSupportedBy(SecondaryIndex index)
-    {
-        return index.supportsOperator(Operator.IN);
-    }
-#endif
-};
-
-class single_column_restriction::IN_with_marker : public IN {
-public:
-    shared_ptr<abstract_marker> _marker;
-public:
-    IN_with_marker(const column_definition& column_def, shared_ptr<abstract_marker> marker)
-            : IN(column_def), _marker(std::move(marker)) {
-        expression = wip::binary_operator{
-            std::vector{wip::column_value(&column_def)}, &operator_type::IN, std::move(_marker)};
-    }
-
-    virtual std::vector<bytes_opt> values_raw(const query_options& options) const override {
-        auto&& lval = dynamic_pointer_cast<multi_item_terminal>(_marker->bind(options));
-        if (!lval) {
-            throw exceptions::invalid_request_exception("Invalid null value for IN restriction");
-        }
-        return lval->get_elements();
-    }
 };
 
 }
