@@ -97,7 +97,6 @@ public:
     class IN;
     class IN_with_values;
     class IN_with_marker;
-    class slice;
     class contains;
 
 protected:
@@ -163,50 +162,6 @@ public:
         }
         return lval->get_elements();
     }
-};
-
-class single_column_restriction::slice : public single_column_restriction {
-private:
-    term_slice _slice;
-public:
-    slice(const column_definition& column_def, statements::bound bound, bool inclusive, ::shared_ptr<term> term)
-        : single_column_restriction(column_def)
-        , _slice(term_slice::new_instance(bound, inclusive, term))
-    {
-        const auto op = is_start(bound) ? (inclusive ? &operator_type::GTE : &operator_type::GT)
-                : (inclusive ? &operator_type::LTE : &operator_type::LT);
-        expression = wip::binary_operator{std::vector{wip::column_value(&column_def)}, op, std::move(term)};
-    }
-
-    slice(const column_definition& column_def, term_slice slice)
-        : single_column_restriction(column_def)
-        , _slice(slice)
-    { }
-
-#if 0
-    virtual void addIndexExpressionTo(List<IndexExpression> expressions, override
-                                     QueryOptions options) throws InvalidRequestException
-    {
-        for (statements::bound b : {statements::bound::START, statements::bound::END})
-        {
-            if (has_bound(b))
-            {
-                ByteBuffer value = validateIndexedValue(columnDef, _slice.bound(b).bindAndGet(options));
-                Operator op = _slice.getIndexOperator(b);
-                // If the underlying comparator for name is reversed, we need to reverse the IndexOperator: user operation
-                // always refer to the "forward" sorting even if the clustering order is reversed, but the 2ndary code does
-                // use the underlying comparator as is.
-                op = columnDef.isReversedType() ? op.reverse() : op;
-                expressions.add(new IndexExpression(columnDef.name.bytes, op, value));
-            }
-        }
-    }
-
-    virtual bool isSupportedBy(SecondaryIndex index) override
-    {
-        return _slice.isSupportedBy(index);
-    }
-#endif
 };
 
 // This holds CONTAINS, CONTAINS_KEY, and map[key] = value restrictions because we might want to have any combination of them.

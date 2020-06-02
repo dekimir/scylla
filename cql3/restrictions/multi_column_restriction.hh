@@ -582,8 +582,14 @@ private:
           r->expression = wip::make_column_op(_column_defs[column_pos], operator_type::EQ, std::move(term));
           return r;
         } else {
-            return::make_shared<cql3::restrictions::single_column_restriction::slice>(
-                    *_column_defs[column_pos], bound.value(), inclusive, term);
+            auto r = ::make_shared<cql3::restrictions::single_column_restriction>(*_column_defs[column_pos]);
+            static const auto ops = std::vector{
+                &operator_type::GT, &operator_type::GTE, // bound::START
+                &operator_type::LT, &operator_type::LTE, // bound::END
+            };
+            r->expression = wip::make_column_op(_column_defs[column_pos], *ops[2 * get_idx(*bound) + inclusive],
+                                                std::move(term));
+            return r;
         }
     }
 
