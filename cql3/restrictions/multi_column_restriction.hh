@@ -462,26 +462,11 @@ public:
     }
 
 private:
-    /**
-     * Similar to bounds(), but returns one ByteBuffer per-component in the bound instead of a single
-     * ByteBuffer to represent the entire bound.
-     * @param b the bound type
-     * @param options the query options
-     * @return one ByteBuffer per-component in the bound
-     * @throws InvalidRequestException if the components cannot be retrieved
-     */
-    std::vector<bytes_opt> component_bounds(statements::bound b, const query_options& options) const {
-        auto value = static_pointer_cast<tuples::value>(_slice.bound(b)->bind(options));
-        const auto elems = value->get_elements();
-        check_multicolumn_bound(expression, options, b, elems);
-        return elems;
-    }
-
     std::vector<bytes_opt> read_bound_components(const query_options& options, statements::bound b) const {
         if (!_slice.has_bound(b)) {
             return {};
         }
-        auto vals = component_bounds(b, options);
+        auto vals = first_multicolumn_bound(expression, options, b);
         for (unsigned i = 0; i < vals.size(); i++) {
             statements::request_validations::check_not_null(vals[i], "Invalid null value in condition for column %s", _column_defs.at(i)->name_as_text());
         }

@@ -129,9 +129,9 @@ extern bool is_satisfied_by(
         const schema& schema, const partition_key& key, const clustering_key_prefix& ckey, const row& cells,
         const query_options& options, gc_clock::time_point now);
 
-/// Calculates bound of a multicolumn restriction, then throws if the result is different from expected.
-void check_multicolumn_bound(const expression&, const query_options&, statements::bound,
-                             const std::vector<bytes_opt>& expected);
+/// Finds the first binary_operator in restr that represents a bound and returns its RHS as a tuple.  If no
+/// such binary_operator exists, returns an empty vector.  The search is depth first.
+std::vector<bytes_opt> first_multicolumn_bound(const expression&, const query_options&, statements::bound);
 
 struct upper_bound {
     bytes value;

@@ -1026,33 +1026,6 @@ bool matches(const operator_type* op, statements::bound bnd) {
     return boost::algorithm::any_of_equal(operators[zero_if_lower_one_if_upper], op);
 }
 
-/// Finds the first multi-column binary_operator in restr that represents bnd and returns its RHS value.  If
-/// no such binary_operator exists, returns an empty vector.  The search is depth first.
-std::vector<bytes_opt> first_multicolumn_bound(
-        const expression& restr, const query_options& options, statements::bound bnd) {
-    std::vector<bytes_opt> empty;
-    return std::visit(overloaded_functor{
-            [&] (const conjunction& conj) {
-                for (const auto& c : conj.children) {
-                    auto cb = first_multicolumn_bound(c, options, bnd);
-                    if (!cb.empty()) {
-                        return cb;
-                    }
-                }
-                return empty;
-            },
-            [&] (const binary_operator& opr) {
-                if (!matches(opr.op, bnd) || !std::holds_alternative<std::vector<column_value>>(opr.lhs)) {
-                    return empty;
-                }
-                auto cvs = std::get<std::vector<column_value>>(opr.lhs);
-                auto value = static_pointer_cast<tuples::value>(opr.rhs->bind(options));
-                return value->get_elements();
-            },
-            [&] (auto& others) { return empty; },
-        }, restr);
-}
-
 const value_set empty_value_set = value_list{};
 const value_set unbounded_value_set = value_interval{};
 
@@ -1153,16 +1126,29 @@ bool is_satisfied_by(
     return is_satisfied_by(restr, {options, row_data_from_mutation{key, ckey, cells, schema, now}});
 }
 
-void check_multicolumn_bound(const expression& restr, const query_options& options, statements::bound bnd,
-                             const std::vector<bytes_opt>& expected) {
-    if (!options.get_cql_config().restrictions.use_wip) {
-        return;
-    }
-    // Upstream validation guarantees there is at most one binary_operator node dictating bnd, so just look for
-    // the first one:
-    if (expected != first_multicolumn_bound(restr, options, bnd)) {
-        throw std::logic_error("WIP restrictions mismatch: multicolumn bound");
-    }
+std::vector<bytes_opt> first_multicolumn_bound(
+        const expression& restr, const query_options& options, statements::bound bnd) {
+    std::vector<bytes_opt> empty;
+    return std::visit(overloaded_functor{
+            [&] (const conjunction& conj) {
+                for (const auto& c : conj.children) {
+                    auto cb = first_multicolumn_bound(c, options, bnd);
+                    if (!cb.empty()) {
+                        return cb;
+                    }
+                }
+                return empty;
+            },
+            [&] (const binary_operator& opr) {
+                if (!matches(opr.op, bnd) || !std::holds_alternative<std::vector<column_value>>(opr.lhs)) {
+                    return empty;
+                }
+                auto cvs = std::get<std::vector<column_value>>(opr.lhs);
+                auto value = static_pointer_cast<tuples::value>(opr.rhs->bind(options));
+                return value->get_elements();
+            },
+            [&] (auto& others) { return empty; },
+        }, restr);
 }
 
 value_set possible_lhs_values(const expression& expr, const query_options& options) {
