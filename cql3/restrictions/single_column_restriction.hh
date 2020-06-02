@@ -97,7 +97,6 @@ public:
     class IN;
     class IN_with_values;
     class IN_with_marker;
-    class contains;
 
 protected:
     std::optional<atomic_cell_value_view> get_value(const schema& schema,
@@ -163,105 +162,6 @@ public:
         return lval->get_elements();
     }
 };
-
-// This holds CONTAINS, CONTAINS_KEY, and map[key] = value restrictions because we might want to have any combination of them.
-class single_column_restriction::contains final : public single_column_restriction {
-private:
-    std::vector<::shared_ptr<term>> _values;
-    std::vector<::shared_ptr<term>> _keys;
-    std::vector<::shared_ptr<term>> _entry_keys;
-    std::vector<::shared_ptr<term>> _entry_values;
-public:
-    contains(const column_definition& column_def, ::shared_ptr<term> t, bool is_key)
-        : single_column_restriction(column_def) {
-        if (is_key) {
-            _keys.emplace_back(t);
-        } else {
-            _values.emplace_back(t);
-        }
-        expression = wip::binary_operator{
-            std::vector{wip::column_value(&column_def)},
-            is_key ? &operator_type::CONTAINS_KEY : &operator_type::CONTAINS,
-            std::move(t)};
-    }
-
-    contains(const column_definition& column_def, ::shared_ptr<term> map_key, ::shared_ptr<term> map_value)
-            : single_column_restriction(column_def) {
-        expression = wip::binary_operator{
-            std::vector{wip::column_value(&column_def, map_key)}, &operator_type::EQ, map_value};
-        _entry_keys.emplace_back(std::move(map_key));
-        _entry_values.emplace_back(std::move(map_value));
-    }
-
-#if 0
-        virtual void add_index_expression_to(std::vector<::shared_ptr<index_expression>>& expressions,
-                const query_options& options) override {
-            add_expressions_for(expressions, values(options), operator_type::CONTAINS);
-            add_expressions_for(expressions, keys(options), operator_type::CONTAINS_KEY);
-            add_expressions_for(expressions, entries(options), operator_type::EQ);
-        }
-
-        private void add_expressions_for(std::vector<::shared_ptr<index_expression>>& target, std::vector<bytes_opt> values,
-                                       const operator_type& op) {
-            for (ByteBuffer value : values)
-            {
-                validateIndexedValue(columnDef, value);
-                target.add(new IndexExpression(columnDef.name.bytes, op, value));
-            }
-        }
-#endif
-
-    uint32_t number_of_values() const {
-        return _values.size();
-    }
-
-    uint32_t number_of_keys() const {
-        return _keys.size();
-    }
-
-    uint32_t number_of_entries() const {
-        return _entry_keys.size();
-    }
-
-#if 0
-        private List<ByteBuffer> keys(const query_options& options) {
-            return bindAndGet(keys, options);
-        }
-
-        private List<ByteBuffer> entries(QueryOptions options) throws InvalidRequestException
-        {
-            List<ByteBuffer> entryBuffers = new ArrayList<>(_entry_keys.size());
-            List<ByteBuffer> keyBuffers = bindAndGet(_entry_keys, options);
-            List<ByteBuffer> valueBuffers = bindAndGet(_entry_values, options);
-            for (int i = 0; i < _entry_keys.size(); i++)
-            {
-                if (valueBuffers.get(i) == null)
-                    throw new InvalidRequestException("Unsupported null value for map-entry equality");
-                entryBuffers.add(CompositeType.build(keyBuffers.get(i), valueBuffers.get(i)));
-            }
-            return entryBuffers;
-        }
-#endif
-
-private:
-    /**
-     * Binds the query options to the specified terms and returns the resulting values.
-     *
-     * @param terms the terms
-     * @param options the query options
-     * @return the value resulting from binding the query options to the specified terms
-     * @throws invalid_request_exception if a problem occurs while binding the query options
-     */
-    static std::vector<bytes_opt> bind_and_get(std::vector<::shared_ptr<term>> terms, const query_options& options) {
-        std::vector<bytes_opt> values;
-        values.reserve(terms.size());
-        for (auto&& term : terms) {
-            values.emplace_back(to_bytes_opt(term->bind_and_get(options)));
-        }
-        return values;
-    }
-};
-
 
 }
 

@@ -70,12 +70,16 @@ comparison_operator_type get_comparison_operator(const rjson::value& comparison_
 
 using cql3::operator_type;
 
-static ::shared_ptr<cql3::restrictions::single_column_restriction::contains> make_map_element_restriction(const column_definition& cdef, std::string_view key, const rjson::value& value) {
+static ::shared_ptr<cql3::restrictions::single_column_restriction> make_map_element_restriction(
+        const column_definition& cdef, std::string_view key, const rjson::value& value) {
     bytes raw_key = utf8_type->from_string(sstring_view(key.data(), key.size()));
     auto key_value = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(std::move(raw_key)));
     bytes raw_value = serialize_item(value);
     auto entry_value = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(std::move(raw_value)));
-    return make_shared<cql3::restrictions::single_column_restriction::contains>(cdef, key_value, entry_value);
+    auto r = make_shared<cql3::restrictions::single_column_restriction>(cdef);
+    using namespace cql3::restrictions::wip;
+    r->expression = binary_operator{std::vector{column_value(&cdef, key_value)}, &operator_type::EQ, entry_value};
+    return r;
 }
 
 static ::shared_ptr<cql3::restrictions::single_column_restriction> make_key_eq_restriction(const column_definition& cdef, const rjson::value& value) {

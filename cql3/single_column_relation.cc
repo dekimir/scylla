@@ -79,7 +79,10 @@ single_column_relation::new_EQ_restriction(database& db, schema_ptr schema, vari
     auto&& receivers = to_receivers(*schema, column_def);
     auto&& entry_key = to_term({receivers[0]}, *_map_key, db, schema->ks_name(), bound_names);
     auto&& entry_value = to_term({receivers[1]}, *_value, db, schema->ks_name(), bound_names);
-    return make_shared<single_column_restriction::contains>(column_def, entry_key, entry_value);
+        auto r = make_shared<single_column_restriction>(column_def);
+        r->expression = wip::binary_operator{
+            std::vector{wip::column_value(&column_def, entry_key)}, &operator_type::EQ, entry_value};
+        return r;
 }
 
 ::shared_ptr<restrictions::restriction>
