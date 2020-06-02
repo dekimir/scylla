@@ -396,10 +396,10 @@ public:
     slice(schema_ptr schema, std::vector<const column_definition*> defs, statements::bound bound, bool inclusive, shared_ptr<term> term)
         : slice(schema, defs, term_slice::new_instance(bound, inclusive, term))
     {
-        const auto op = is_start(bound) ? (inclusive ? &operator_type::GTE : &operator_type::GT)
-                : (inclusive ? &operator_type::LTE : &operator_type::LT);
         expression = wip::binary_operator{
-            std::vector<wip::column_value>(defs.cbegin(), defs.cend()), op, std::move(term)};
+            std::vector<wip::column_value>(defs.cbegin(), defs.cend()),
+            wip::pick_operator(bound, inclusive),
+            std::move(term)};
     }
 
     virtual bool is_supported_by(const secondary_index::index& index) const override {
@@ -583,10 +583,8 @@ private:
           return r;
         } else {
             auto r = ::make_shared<cql3::restrictions::single_column_restriction>(*_column_defs[column_pos]);
-            auto op = is_start(*bound) ?
-                    (inclusive ? &operator_type::GTE : &operator_type::GT) :
-                    (inclusive ? &operator_type::LTE : &operator_type::LT);
-            r->expression = wip::make_column_op(_column_defs[column_pos], *op, std::move(term));
+            r->expression = wip::make_column_op(
+                    _column_defs[column_pos], *wip::pick_operator(*bound, inclusive), std::move(term));
             return r;
         }
     }

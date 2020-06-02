@@ -62,7 +62,7 @@ private:
      */
     std::vector<const column_definition *> _column_definitions;
 public:
-    token_restriction(op op, std::vector<const column_definition *> c)
+    token_restriction(std::vector<const column_definition *> c)
             : _column_definitions(std::move(c)) {
     }
 
@@ -131,36 +131,6 @@ public:
 
     sstring to_string() const override {
         return wip::to_string(expression);
-    }
-
-    class EQ;
-    class slice;
-};
-
-
-class token_restriction::EQ final : public token_restriction {
-private:
-    ::shared_ptr<term> _value;
-public:
-    EQ(std::vector<const column_definition*> column_defs, ::shared_ptr<term> value)
-        : token_restriction(op::EQ, column_defs)
-        , _value(std::move(value))
-    {
-        expression = wip::binary_operator{wip::token{}, &operator_type::EQ, _value};
-    }
-};
-
-class token_restriction::slice final : public token_restriction {
-private:
-    term_slice _slice;
-public:
-    slice(std::vector<const column_definition*> column_defs, statements::bound bound, bool inclusive, ::shared_ptr<term> term)
-        : token_restriction(op::SLICE, column_defs)
-        , _slice(term_slice::new_instance(bound, inclusive, term))
-    {
-        const auto op = is_start(bound) ? (inclusive ? &operator_type::GTE : &operator_type::GT)
-                : (inclusive ? &operator_type::LTE : &operator_type::LT);
-        expression = wip::binary_operator{wip::token{}, op, std::move(term)};
     }
 };
 

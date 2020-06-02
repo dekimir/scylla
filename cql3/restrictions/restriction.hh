@@ -275,6 +275,12 @@ inline expression make_column_op(const column_definition* cdef, const operator_t
     return wip::binary_operator{std::vector{wip::column_value(cdef)}, &op, std::move(value)};
 }
 
+inline const operator_type* pick_operator(statements::bound b, bool inclusive) {
+    return is_start(b) ?
+            (inclusive ? &operator_type::GTE : &operator_type::GT) :
+            (inclusive ? &operator_type::LTE : &operator_type::LT);
+}
+
 } // namespace wip
 
 /**
