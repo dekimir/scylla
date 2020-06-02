@@ -1128,27 +1128,15 @@ bool is_satisfied_by(
 
 std::vector<bytes_opt> first_multicolumn_bound(
         const expression& restr, const query_options& options, statements::bound bnd) {
-    std::vector<bytes_opt> empty;
-    return std::visit(overloaded_functor{
-            [&] (const conjunction& conj) {
-                for (const auto& c : conj.children) {
-                    auto cb = first_multicolumn_bound(c, options, bnd);
-                    if (!cb.empty()) {
-                        return cb;
-                    }
-                }
-                return empty;
-            },
-            [&] (const binary_operator& opr) {
-                if (!matches(opr.op, bnd) || !std::holds_alternative<std::vector<column_value>>(opr.lhs)) {
-                    return empty;
-                }
-                auto cvs = std::get<std::vector<column_value>>(opr.lhs);
-                auto value = static_pointer_cast<tuples::value>(opr.rhs->bind(options));
-                return value->get_elements();
-            },
-            [&] (auto& others) { return empty; },
-        }, restr);
+    auto found = find_if(restr, [bnd] (const binary_operator& oper) {
+        return matches(oper.op, bnd) && std::holds_alternative<std::vector<column_value>>(oper.lhs);
+    });
+    if (found) {
+        auto oper = std::get<binary_operator>(*found);
+        return static_pointer_cast<tuples::value>(oper.rhs->bind(options))->get_elements();
+    } else {
+        return std::vector<bytes_opt>{};
+    }
 }
 
 value_set possible_lhs_values(const expression& expr, const query_options& options) {
