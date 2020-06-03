@@ -127,10 +127,6 @@ public:
         this->expression = make_conjunction(std::move(this->expression), restriction->expression);
         return this->shared_from_this();
     }
-
-    sstring to_string() const override {
-        return cql3::restrictions::to_string(expression);
-    }
 };
 
 }

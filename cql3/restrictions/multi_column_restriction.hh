@@ -87,10 +87,6 @@ public:
         return cql3::restrictions::uses_function(expression, ks_name, function_name);
     }
 
-    sstring to_string() const override {
-        return cql3::restrictions::to_string(expression);
-    }
-
 protected:
     virtual void do_merge_with(::shared_ptr<clustering_key_restrictions> other) = 0;
 

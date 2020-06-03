@@ -112,8 +112,6 @@ public:
         return 0;
     }
 
-    virtual sstring to_string() const = 0;
-
     virtual bool is_IN() const {
         return false;
     }
@@ -181,8 +179,6 @@ public:
         }
         return count;
     }
-
-    virtual sstring to_string() const = 0;
 };
 
 // FIXME(sarna): transitive hack only, do not judge. Should be dropped after all primary_key_restrictions<T> uses are removed from code.

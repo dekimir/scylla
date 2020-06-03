@@ -355,9 +355,6 @@ public:
     virtual uint32_t size() const override {
         return _restrictions->size();
     }
-    sstring to_string() const override {
-        return format("Restrictions({})", join(", ", get_column_defs()));
-    }
 
     virtual bool needs_filtering(const schema& schema) const override;
     virtual unsigned int num_prefix_columns_that_need_not_be_filtered() const override;

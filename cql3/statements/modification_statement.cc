@@ -468,7 +468,7 @@ modification_statement::process_where_clause(database& db, std::vector<relation_
     }
     if (has_token(_restrictions->get_partition_key_restrictions()->expression)) {
         throw exceptions::invalid_request_exception(format("The token function cannot be used in WHERE clauses for UPDATE and DELETE statements: {}",
-                _restrictions->get_partition_key_restrictions()->to_string()));
+                to_string(_restrictions->get_partition_key_restrictions()->expression)));
     }
     if (!_restrictions->get_non_pk_restriction().empty()) {
         auto column_names = ::join(", ", _restrictions->get_non_pk_restriction()
@@ -479,7 +479,8 @@ modification_statement::process_where_clause(database& db, std::vector<relation_
     }
     auto ck_restrictions = _restrictions->get_clustering_columns_restrictions();
     if (has_slice(ck_restrictions->expression) && !allow_clustering_key_slices()) {
-        throw exceptions::invalid_request_exception(format("Invalid operator in where clause {}", ck_restrictions->to_string()));
+        throw exceptions::invalid_request_exception(
+                format("Invalid operator in where clause {}", to_string(ck_restrictions->expression)));
     }
     if (_restrictions->has_unrestricted_clustering_columns() && !applies_only_to_static_columns() && !s->is_dense()) {
         // Tomek: Origin had "&& s->comparator->is_composite()" in the condition below.
