@@ -62,8 +62,8 @@ private:
      */
     std::vector<const column_definition *> _column_definitions;
 public:
-    token_restriction(op op, std::vector<const column_definition *> c)
-            : partition_key_restrictions(op, target::TOKEN), _column_definitions(std::move(c)) {
+    token_restriction(std::vector<const column_definition *> c)
+            : _column_definitions(std::move(c)) {
     }
 
     std::vector<const column_definition*> get_column_defs() const override {
@@ -84,10 +84,6 @@ public:
         throw exceptions::unsupported_operation_exception();
     }
 #endif
-
-    std::vector<partition_key> values_as_keys(const query_options& options) const override {
-        throw exceptions::unsupported_operation_exception();
-    }
 
     std::vector<bounds_range_type> bounds_ranges(const query_options& options) const override {
         const auto bounds = to_interval(possible_lhs_values(expression, options));
@@ -131,105 +127,6 @@ public:
         this->expression = make_conjunction(std::move(this->expression), restriction->expression);
         return this->shared_from_this();
     }
-
-    class EQ;
-    class slice;
-};
-
-
-class token_restriction::EQ final : public token_restriction {
-private:
-    ::shared_ptr<term> _value;
-public:
-    EQ(std::vector<const column_definition*> column_defs, ::shared_ptr<term> value)
-        : token_restriction(op::EQ, column_defs)
-        , _value(std::move(value))
-    {}
-
-    void merge_with(::shared_ptr<restriction>) override {
-        throw exceptions::invalid_request_exception(
-                join(", ", get_column_defs())
-                        + " cannot be restricted by more than one relation if it includes an Equal");
-    }
-
-    std::vector<bytes_opt> values(const query_options& options) const override {
-        return { to_bytes_opt(_value->bind_and_get(options)) };
-    }
-
-    sstring to_string() const override {
-        return format("EQ({})", _value->to_string());
-    }
-
-    virtual bool is_satisfied_by(const schema& schema,
-                                 const partition_key& key,
-                                 const clustering_key_prefix& ckey,
-                                 const row& cells,
-                                 const query_options& options,
-                                 gc_clock::time_point now) const override;
-};
-
-class token_restriction::slice final : public token_restriction {
-private:
-    term_slice _slice;
-public:
-    slice(std::vector<const column_definition*> column_defs, statements::bound bound, bool inclusive, ::shared_ptr<term> term)
-        : token_restriction(op::SLICE, column_defs)
-        , _slice(term_slice::new_instance(bound, inclusive, std::move(term)))
-    {}
-    bool has_bound(statements::bound b) const override {
-        return _slice.has_bound(b);
-    }
-
-    std::vector<bytes_opt> values(const query_options& options) const override {
-        throw exceptions::unsupported_operation_exception();
-    }
-
-    std::vector<bytes_opt> bounds(statements::bound b, const query_options& options) const override {
-        return { to_bytes_opt(_slice.bound(b)->bind_and_get(options)) };
-    }
-
-    bool is_inclusive(statements::bound b) const override {
-        return _slice.is_inclusive(b);
-    }
-    void merge_with(::shared_ptr<restriction> restriction) override {
-        try {
-            if (!restriction->is_on_token()) {
-                throw exceptions::invalid_request_exception(
-                        "Columns \"%s\" cannot be restricted by both a normal relation and a token relation");
-            }
-            if (!restriction->is_slice()) {
-                throw exceptions::invalid_request_exception(
-                        "Columns \"%s\" cannot be restricted by both an equality and an inequality relation");
-            }
-
-            auto* other_slice = static_cast<slice *>(restriction.get());
-
-            if (has_bound(statements::bound::START)
-                    && other_slice->has_bound(statements::bound::START)) {
-                throw exceptions::invalid_request_exception(
-                        "More than one restriction was found for the start bound on %s");
-            }
-            if (has_bound(statements::bound::END)
-                    && other_slice->has_bound(statements::bound::END)) {
-                throw exceptions::invalid_request_exception(
-                        "More than one restriction was found for the end bound on %s");
-            }
-            _slice.merge(other_slice->_slice);
-        } catch (exceptions::invalid_request_exception & e) {
-            throw exceptions::invalid_request_exception(
-                    sprint(e.what(), join(", ", get_column_defs())));
-        }
-    }
-    sstring to_string() const override {
-        return format("SLICE{}", _slice);
-    }
-
-    virtual bool is_satisfied_by(const schema& schema,
-                                 const partition_key& key,
-                                 const clustering_key_prefix& ckey,
-                                 const row& cells,
-                                 const query_options& options,
-                                 gc_clock::time_point now) const override;
 };
 
 }
