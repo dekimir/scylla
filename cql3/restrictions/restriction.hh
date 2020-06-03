@@ -50,7 +50,7 @@
 #include <fmt/ostream.h>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/sstring.hh>
-#include <utils/overloaded_functor.hh>
+#include "utils/overloaded_functor.hh"
 #include "cql3/query_options.hh"
 #include "cql3/term.hh"
 #include "cql3/statements/bound.hh"
@@ -100,6 +100,10 @@ struct binary_operator {
 struct conjunction {
     std::vector<expression> children;
 };
+
+/// Creates a conjunction of a and b.  If either a or b is itself a conjunction, its children are inserted
+/// directly into the resulting conjunction's children, flattening the expression tree.
+extern expression make_conjunction(expression a, expression b);
 
 /// True iff restr is satisfied with respect to the row provided from a partition slice.
 extern bool is_satisfied_by(
@@ -257,6 +261,17 @@ extern bool is_on_collection(const binary_operator&);
 /// column_value.
 extern expression replace_column_def(const expression&, const column_definition*);
 
+/// Makes a binary_operator on a column_definition.
+inline expression make_column_op(const column_definition* cdef, const operator_type& op, ::shared_ptr<term> value) {
+    return binary_operator{std::vector{column_value(cdef)}, &op, std::move(value)};
+}
+
+inline const operator_type* pick_operator(statements::bound b, bool inclusive) {
+    return is_start(b) ?
+            (inclusive ? &operator_type::GTE : &operator_type::GT) :
+            (inclusive ? &operator_type::LTE : &operator_type::LT);
+}
+
 /**
  * Base class for <code>Restriction</code>s
  */
@@ -273,6 +288,8 @@ protected:
     enum_set<op_enum> _ops;
     target _target = target::SINGLE_COLUMN;
 public:
+    // Init to false for now, to easily detect errors.  This whole class is going away.
+    cql3::restrictions::expression expression = false;
     virtual ~restriction() {}
 
     restriction() = default;

@@ -70,10 +70,7 @@ public:
     partition_key_restrictions() = default;
     partition_key_restrictions(op op, target target) : restriction(op, target) {}
 
-    virtual ::shared_ptr<partition_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) {
-        merge_with(restriction);
-        return this->shared_from_this();
-    }
+    virtual ::shared_ptr<partition_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction>) = 0;
 
     virtual std::vector<partition_key> values_as_keys(const query_options& options) const = 0;
     virtual std::vector<bounds_range_type> bounds_ranges(const query_options& options) const = 0;
@@ -93,8 +90,10 @@ public:
     }
 
     virtual bool needs_filtering(const schema& schema) const {
-        return !empty() && !is_on_token() &&
-                (has_unrestricted_components(schema) || is_contains() || is_slice() || is_LIKE());
+        return !empty() && !has_token(expression) &&
+                (has_unrestricted_components(schema) || find_if(expression, [] (const binary_operator& o) {
+                    return o.op->is_slice() || o.op->needs_filtering();
+                }));
     }
 
     // NOTICE(sarna): This function is useless for partition key restrictions,
@@ -123,10 +122,7 @@ public:
     clustering_key_restrictions() = default;
     clustering_key_restrictions(op op, target target) : restriction(op, target) {}
 
-    virtual ::shared_ptr<clustering_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) {
-        merge_with(restriction);
-        return this->shared_from_this();
-    }
+    virtual ::shared_ptr<clustering_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) = 0;
 
     virtual std::vector<clustering_key> values_as_keys(const query_options& options) const = 0;
     virtual std::vector<bounds_range_type> bounds_ranges(const query_options& options) const = 0;

@@ -47,6 +47,7 @@
 #include "cql3/statements/request_validations.hh"
 #include "cql3/restrictions/single_column_primary_key_restrictions.hh"
 #include "cql3/constants.hh"
+#include "cql3/lists.hh"
 #include <boost/algorithm/cxx11/any_of.hpp>
 
 namespace cql3 {
@@ -105,6 +106,20 @@ public:
         return boost::algorithm::any_of(bounds_ranges(options), [&ckey, &schema] (const bounds_range_type& range) {
             return range.contains(query::clustering_range(ckey), clustering_key_prefix::prefix_equal_tri_compare(schema));
         });
+    }
+
+    virtual ::shared_ptr<clustering_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> other) override {
+        auto as_pkr = dynamic_pointer_cast<clustering_key_restrictions>(other);
+        statements::request_validations::check_true(bool(as_pkr),
+            "Mixing single column relations and multi column relations on clustering columns is not allowed");
+        do_merge_with(as_pkr);
+        update_asc_desc_existence();
+        expression = make_conjunction(std::move(expression), other->expression);
+        return this->shared_from_this();
+    }
+
+    virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
+        return cql3::restrictions::uses_function(expression, ks_name, function_name);
     }
 
 protected:
@@ -210,7 +225,10 @@ public:
     EQ(schema_ptr schema, std::vector<const column_definition*> defs, ::shared_ptr<term> value)
         : multi_column_restriction(op::EQ, schema, std::move(defs))
         , _value(std::move(value))
-    { }
+    {
+        expression = binary_operator{
+            std::vector<column_value>(_column_defs.cbegin(), _column_defs.cend()), &operator_type::EQ, _value};
+    }
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
         return restriction::term_uses_function(_value, ks_name, function_name);
@@ -374,7 +392,12 @@ public:
     IN_with_values(schema_ptr schema, std::vector<const column_definition*> defs, std::vector<::shared_ptr<term>> value)
         : multi_column_restriction::IN(schema, std::move(defs))
         , _values(std::move(value))
-    { }
+    {
+        expression = binary_operator{
+            std::vector<column_value>(_column_defs.cbegin(), _column_defs.cend()),
+            &operator_type::IN,
+            ::make_shared<lists::delayed_value>(_values)};
+    }
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override  {
         return restriction::term_uses_function(_values, ks_name, function_name);
@@ -406,6 +429,10 @@ private:
 public:
     IN_with_marker(schema_ptr schema, std::vector<const column_definition*> defs, shared_ptr<abstract_marker> marker)
         : IN(schema, std::move(defs)), _marker(marker) {
+        expression = binary_operator{
+            std::vector<column_value>(_column_defs.cbegin(), _column_defs.cend()),
+            &operator_type::IN,
+            std::move(marker)};
     }
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
@@ -437,7 +464,12 @@ private:
 public:
     slice(schema_ptr schema, std::vector<const column_definition*> defs, statements::bound bound, bool inclusive, shared_ptr<term> term)
         : slice(schema, defs, term_slice::new_instance(bound, inclusive, term))
-    { }
+    {
+        expression = binary_operator{
+            std::vector<column_value>(defs.cbegin(), defs.cend()),
+            pick_operator(bound, inclusive),
+            std::move(term)};
+    }
 
     virtual bool is_supported_by(const secondary_index::index& index) const override {
         for (auto* cdef : _column_defs) {
@@ -504,15 +536,15 @@ public:
 
     virtual void do_merge_with(::shared_ptr<clustering_key_restrictions> other) override {
         using namespace statements::request_validations;
-        check_true(other->is_slice(),
+        check_true(has_slice(other->expression),
                    "Column \"%s\" cannot be restricted by both an equality and an inequality relation",
                    get_columns_in_commons(other));
         auto other_slice = static_pointer_cast<slice>(other);
 
-        check_false(has_bound(statements::bound::START) && other_slice->has_bound(statements::bound::START),
+        check_false(_slice.has_bound(statements::bound::START) && other_slice->_slice.has_bound(statements::bound::START),
                     "More than one restriction was found for the start bound on %s",
                     get_columns_in_commons(other));
-        check_false(has_bound(statements::bound::END) && other_slice->has_bound(statements::bound::END),
+        check_false(_slice.has_bound(statements::bound::END) && other_slice->_slice.has_bound(statements::bound::END),
                     "More than one restriction was found for the end bound on %s",
                     get_columns_in_commons(other));
 
@@ -541,10 +573,10 @@ private:
     }
 
     std::vector<bytes_opt> read_bound_components(const query_options& options, statements::bound b) const {
-        if (!has_bound(b)) {
+        if (!_slice.has_bound(b)) {
             return {};
         }
-        auto vals = component_bounds(b, options);
+        auto vals = first_multicolumn_bound(expression, options, b);
         for (unsigned i = 0; i < vals.size(); i++) {
             statements::request_validations::check_not_null(vals[i], "Invalid null value in condition for column %s", _column_defs.at(i)->name_as_text());
         }
@@ -559,9 +591,9 @@ private:
      */
     std::vector<bounds_range_type> bounds_ranges_unified_order(const query_options& options) const {
         auto start_prefix = clustering_key_prefix::from_optional_exploded(*_schema, read_bound_components(options, statements::bound::START));
-        auto start_bound = bounds_range_type::bound(std::move(start_prefix), is_inclusive(statements::bound::START));
+        auto start_bound = bounds_range_type::bound(std::move(start_prefix), _slice.is_inclusive(statements::bound::START));
         auto end_prefix = clustering_key_prefix::from_optional_exploded(*_schema, read_bound_components(options, statements::bound::END));
-        auto end_bound = bounds_range_type::bound(std::move(end_prefix), is_inclusive(statements::bound::END));
+        auto end_bound = bounds_range_type::bound(std::move(end_prefix), _slice.is_inclusive(statements::bound::END));
         auto make_range = [&] () {
             if (is_asc_order()) {
                 return bounds_range_type::make(start_bound, end_bound);
@@ -641,9 +673,14 @@ private:
                                                              std::size_t column_pos,const bytes_opt& value) const {
         ::shared_ptr<cql3::term> term = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(value));
         if (!bound){
-            return ::make_shared<cql3::restrictions::single_column_restriction::EQ>(*_column_defs[column_pos], term);
+            auto r = ::make_shared<cql3::restrictions::single_column_restriction::EQ>(*_column_defs[column_pos], term);
+            r->expression = make_column_op(_column_defs[column_pos], operator_type::EQ, std::move(term));
+            return r;
         } else {
-            return ::make_shared<cql3::restrictions::single_column_restriction::slice>(*_column_defs[column_pos], bound.value(), inclusive, term);
+            auto r = ::make_shared<cql3::restrictions::single_column_restriction::slice>(*_column_defs[column_pos], bound.value(), inclusive, term);
+            r->expression = make_column_op(
+                    _column_defs[column_pos], *pick_operator(*bound, inclusive), std::move(term));
+            return r;
         }
     }
 
@@ -674,10 +711,10 @@ private:
             ret.emplace_back(::make_shared<cql3::restrictions::single_column_clustering_key_restrictions>(_schema, false));
             std::size_t neq_component_idx = first_neq_component + i;
             for (std::size_t j = 0;j < neq_component_idx; j++) {
-                ret[i]->merge_with(make_single_column_restriction(std::nullopt, false, j, bound_values[j]));
+                ret[i]->merge_to(nullptr, make_single_column_restriction(std::nullopt, false, j, bound_values[j]));
             }
             bool inclusive = (i == (num_of_restrictions-1)) && bound_inclusive;
-            ret[i]->merge_with(make_single_column_restriction(bound, inclusive, neq_component_idx, bound_values[neq_component_idx]));
+            ret[i]->merge_to(nullptr, make_single_column_restriction(bound, inclusive, neq_component_idx, bound_values[neq_component_idx]));
         }
         return ret;
     }
@@ -695,8 +732,8 @@ private:
         std::vector<restriction_shared_ptr> ret;
         auto start_components = read_bound_components(options, statements::bound::START);
         auto end_components = read_bound_components(options, statements::bound::END);
-        bool start_inclusive = is_inclusive(statements::bound::START);
-        bool end_inclusive = is_inclusive(statements::bound::END);
+        bool start_inclusive = _slice.is_inclusive(statements::bound::START);
+        bool end_inclusive = _slice.is_inclusive(statements::bound::END);
         std::optional<std::size_t> first_neq_component = std::nullopt;
 
         // find the first index of the first component that is not equal between the tuples.
@@ -749,7 +786,7 @@ private:
 
         if (both_components_exists) {
             bool inclusive = end_inclusive && ((end_components.size() - first_neq_component.value()) == 1);
-            ret[0]->merge_with(make_single_column_restriction(statements::bound::END, inclusive, first_neq_component.value(),
+            ret[0]->merge_to(nullptr, make_single_column_restriction(statements::bound::END, inclusive, first_neq_component.value(),
                     end_components[first_neq_component.value()]));
         }
         return ret;
