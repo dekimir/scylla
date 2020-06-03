@@ -279,7 +279,6 @@ public:
     // Init to false for now, to easily detect errors.  This whole class is going away.
     cql3::restrictions::expression expression = false;
     virtual ~restriction() {}
-    enum class op { EQ, SLICE, IN, CONTAINS, LIKE };
 };
 
 }
