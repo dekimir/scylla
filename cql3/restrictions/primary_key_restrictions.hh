@@ -68,11 +68,9 @@ public:
     using bounds_range_type = dht::partition_range;
 
     partition_key_restrictions() = default;
-    partition_key_restrictions(op op, target target) : restriction(op, target) {}
 
     virtual ::shared_ptr<partition_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction>) = 0;
 
-    virtual std::vector<partition_key> values_as_keys(const query_options& options) const = 0;
     virtual std::vector<bounds_range_type> bounds_ranges(const query_options& options) const = 0;
 
     using restrictions::uses_function;
@@ -113,6 +111,10 @@ public:
     size_t prefix_size(const schema&) const {
         return 0;
     }
+
+    virtual bool is_IN() const {
+        return false;
+    }
 };
 
 class clustering_key_restrictions : public restriction, public restrictions, public enable_shared_from_this<clustering_key_restrictions> {
@@ -120,11 +122,9 @@ public:
     using bounds_range_type = query::clustering_range;
 
     clustering_key_restrictions() = default;
-    clustering_key_restrictions(op op, target target) : restriction(op, target) {}
 
     virtual ::shared_ptr<clustering_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) = 0;
 
-    virtual std::vector<clustering_key> values_as_keys(const query_options& options) const = 0;
     virtual std::vector<bounds_range_type> bounds_ranges(const query_options& options) const = 0;
 
     using restrictions::uses_function;
