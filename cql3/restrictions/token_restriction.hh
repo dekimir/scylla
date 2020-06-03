@@ -70,6 +70,10 @@ public:
         return _column_definitions;
     }
 
+    bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
+        return cql3::restrictions::uses_function(expression, ks_name, function_name);
+    }
+
     virtual bool has_supporting_index(const secondary_index::secondary_index_manager& index_manager, allow_local_index allow_local) const override {
         return false;
     }
@@ -86,28 +90,16 @@ public:
     }
 
     std::vector<bounds_range_type> bounds_ranges(const query_options& options) const override {
-        auto get_token_bound = [this, &options](statements::bound b) {
-            if (!has_bound(b)) {
-                return is_start(b) ? dht::minimum_token() : dht::maximum_token();
-            }
-            auto buf= bounds(b, options).front();
-            if (!buf) {
-                throw exceptions::invalid_request_exception("Invalid null token value");
-            }
-            auto tk = dht::token::from_bytes(*buf);
-            if (tk.is_minimum() && !is_start(b)) {
-                // The token was parsed as a minimum marker (token::kind::before_all_keys), but
-                // as it appears in the end bound position, it is actually the maximum marker
-                // (token::kind::after_all_keys).
-                return dht::maximum_token();
-            }
-            return tk;
-        };
-
-        const auto start_token = get_token_bound(statements::bound::START);
-        const auto end_token = get_token_bound(statements::bound::END);
-        const auto include_start = this->is_inclusive(statements::bound::START);
-        const auto include_end = this->is_inclusive(statements::bound::END);
+        const auto bounds = to_interval(possible_lhs_values(expression, options));
+        const auto start_token = bounds.lb ? dht::token::from_bytes(bounds.lb->value) : dht::minimum_token();
+        auto end_token = bounds.ub ? dht::token::from_bytes(bounds.ub->value) : dht::maximum_token();
+        if (end_token.is_minimum()) {
+            // The token was parsed as a minimum marker (token::kind::before_all_keys), but as it appears in
+            // the end bound position, it is actually the maximum marker (token::kind::after_all_keys).
+            end_token = dht::maximum_token();
+        }
+        const bool include_start = bounds.lb && bounds.lb->inclusive;
+        const auto include_end = bounds.ub && bounds.ub->inclusive;
 
         /*
          * If we ask SP.getRangeSlice() for (token(200), token(200)], it will happily return the whole ring.
@@ -135,6 +127,11 @@ public:
         return { bounds_range_type(std::move(start), std::move(end)) };
     }
 
+    ::shared_ptr<partition_key_restrictions> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) {
+        this->expression = make_conjunction(std::move(this->expression), restriction->expression);
+        return this->shared_from_this();
+    }
+
     class EQ;
     class slice;
 };
@@ -148,10 +145,6 @@ public:
         : token_restriction(op::EQ, column_defs)
         , _value(std::move(value))
     {}
-
-    bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
-        return restriction::term_uses_function(_value, ks_name, function_name);
-    }
 
     void merge_with(::shared_ptr<restriction>) override {
         throw exceptions::invalid_request_exception(
@@ -195,17 +188,6 @@ public:
         return { to_bytes_opt(_slice.bound(b)->bind_and_get(options)) };
     }
 
-    bool uses_function(const sstring& ks_name,
-            const sstring& function_name) const override {
-        return (_slice.has_bound(statements::bound::START)
-                && restriction::term_uses_function(
-                        _slice.bound(statements::bound::START), ks_name,
-                        function_name))
-                || (_slice.has_bound(statements::bound::END)
-                        && restriction::term_uses_function(
-                                _slice.bound(statements::bound::END),
-                                ks_name, function_name));
-    }
     bool is_inclusive(statements::bound b) const override {
         return _slice.is_inclusive(b);
     }
