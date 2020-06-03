@@ -139,7 +139,7 @@ public:
      * @return the <code>Restriction</code> corresponding to this <code>Relation</code>
      * @throws InvalidRequestException if this <code>Relation</code> is not valid
      */
-    ::shared_ptr<restrictions::restriction> to_restriction(database& db, schema_ptr schema, variable_specifications& bound_names) {
+    virtual ::shared_ptr<restrictions::restriction> to_restriction(database& db, schema_ptr schema, variable_specifications& bound_names) final {
         if (_relation_type == operator_type::EQ) {
             return new_EQ_restriction(db, schema, bound_names);
         } else if (_relation_type == operator_type::LT) {

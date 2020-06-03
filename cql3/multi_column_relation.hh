@@ -41,7 +41,6 @@
 
 #pragma once
 
-#include "cql3/lists.hh"
 #include "cql3/relation.hh"
 #include "cql3/term.hh"
 #include "cql3/tuples.hh"
@@ -163,10 +162,10 @@ protected:
         } else {
             std::vector<::shared_ptr<term::raw>> raws(_in_values.size());
             std::copy(_in_values.begin(), _in_values.end(), raws.begin());
-            const auto ts = to_terms(col_specs, raws, db, schema->ks_name(), bound_names);
+            auto ts = to_terms(col_specs, raws, db, schema->ks_name(), bound_names);
             // Convert a single-item IN restriction to an EQ restriction
             if (ts.size() == 1) {
-              return ::make_shared<restrictions::multi_column_restriction::EQ>(schema, rs, ts[0]);
+                return ::make_shared<restrictions::multi_column_restriction::EQ>(schema, rs, std::move(ts[0]));
             }
             return ::make_shared<restrictions::multi_column_restriction::IN_with_values>(schema, rs, ts);
         }
