@@ -174,6 +174,8 @@ struct value_interval {
         }
         return true;
     }
+
+    bool operator==(const value_interval& that) const = default;
 };
 
 /// A set of discrete values.

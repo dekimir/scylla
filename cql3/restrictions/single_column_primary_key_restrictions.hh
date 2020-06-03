@@ -223,22 +223,22 @@ private:
         if (_restrictions->is_all_eq()) {
             if (_restrictions->size() == 1) {
                 auto&& e = *restrictions().begin();
-                const auto b = to_interval(possible_lhs_values(e.second->expression, options));
-                if (!b.lb) {
+                const auto b = std::get<binary_operator>(e.second->expression).rhs->bind_and_get(options);
+                if (!b) {
                     throw exceptions::invalid_request_exception(sprint(invalid_null_msg, e.first->name_as_text()));
                 }
-                return {range_type::make_singular(ValueType::from_single_value(*_schema, b.lb->value))};
+                return {range_type::make_singular(ValueType::from_single_value(*_schema, to_bytes(b)))};
             }
             std::vector<bytes> components;
             components.reserve(_restrictions->size());
             for (auto&& e : restrictions()) {
                 const column_definition* def = e.first;
                 assert(components.size() == _schema->position(*def));
-                const auto b = to_interval(possible_lhs_values(e.second->expression, options));
-                if (!b.lb) {
-                    throw exceptions::invalid_request_exception(sprint(invalid_null_msg, def->name_as_text()));
+                const auto b = std::get<binary_operator>(e.second->expression).rhs->bind_and_get(options);
+                if (!b) {
+                    throw exceptions::invalid_request_exception(sprint(invalid_null_msg, e.first->name_as_text()));
                 }
-                components.emplace_back(b.lb->value);
+                components.emplace_back(to_bytes(b));
             }
             return {range_type::make_singular(ValueType::from_exploded(*_schema, std::move(components)))};
         }
@@ -255,7 +255,11 @@ private:
             }
 
             if (has_slice(r->expression)) {
-                const auto b = to_interval(possible_lhs_values(r->expression, options));
+                const auto values = possible_lhs_values(r->expression, options);
+                if (values == value_set(value_list{})) {
+                    throw exceptions::invalid_request_exception(sprint(invalid_null_msg, e.first->name_as_text()));
+                }
+                const auto b = to_interval(values);
                 if (cartesian_product_is_empty(vec_of_values)) {
                     const auto make_bound = [&] (const auto& upper_or_lower) {
                         return upper_or_lower ?

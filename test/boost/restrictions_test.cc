@@ -28,6 +28,7 @@
 #include "cql3/values.hh"
 #include "test/lib/cql_assertions.hh"
 #include "test/lib/cql_test_env.hh"
+#include "test/lib/exception_utils.hh"
 #include "types/list.hh"
 #include "types/map.hh"
 #include "types/set.hh"
@@ -116,7 +117,6 @@ SEASTAR_THREAD_TEST_CASE(regular_col_eq) {
         require_rows(e, "select r from t where q=12 and p=2 and r=99 allow filtering", {});
         cquery_nofail(e, "insert into t(p) values (100)");
         require_rows(e, "select q from t where q=12 allow filtering", {{I(12)}});
-        require_rows(e, "select p from t where q=null allow filtering", {});
         auto stmt = e.prepare("select q from t where q=? allow filtering").get0();
         require_rows(e, stmt, {}, {I(12)}, {{I(12)}});
         require_rows(e, stmt, {}, {I(99)}, {});
@@ -232,13 +232,10 @@ SEASTAR_THREAD_TEST_CASE(regular_col_slice) {
         require_rows(e, "select r from t where q<12 and q>=11 allow filtering", {{I(21), I(11)}});
         require_rows(e, "select * from t where q<11 and q>11 allow filtering", {});
         require_rows(e, "select q from t where q<=12 and r>=21 allow filtering", {{I(11), I(21)}, {I(12), I(22)}});
-        require_rows(e, "select q from t where q < null allow filtering", {});
         cquery_nofail(e, "insert into t(p) values (4)");
         require_rows(e, "select q from t where q<12 allow filtering", {{std::nullopt}, {I(10)}, {I(11)}});
         require_rows(e, "select q from t where q>10 allow filtering", {{I(11)}, {I(12)}, {I(13)}});
         require_rows(e, "select q from t where q<12 and q>10 allow filtering", {{I(11)}});
-        require_rows(e, "select q from t where q < null allow filtering", {});
-        require_rows(e, "select q from t where q > null allow filtering", {});
     }).get();
 }
 
@@ -263,6 +260,35 @@ SEASTAR_THREAD_TEST_CASE(regular_col_neq) {
     }).get();
 }
 #endif // 0
+
+SEASTAR_THREAD_TEST_CASE(null) {
+    do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table t (pk1 int, pk2 int, ck1 float, ck2 float, r text, primary key((pk1,pk2),ck1,ck2))");
+        const auto q = [&] (const char* stmt) { return e.execute_cql(stmt).get(); };
+        using ire = exceptions::invalid_request_exception;
+        using exception_predicate::message_contains;
+        const char* expect = "Invalid null";
+        // TODO: investigate why null comparison isn't allowed here.
+        BOOST_REQUIRE_EXCEPTION(q("select * from t where pk1=0 and pk2=null"), ire, message_contains(expect));
+        BOOST_REQUIRE_EXCEPTION(q("select * from t where pk1=0 and pk2=0 and ck1<null"), ire, message_contains(expect));
+        BOOST_REQUIRE_EXCEPTION(q("select * from t where pk1=0 and pk2=0 and (ck1,ck2)>=(0,null)"),
+                                ire, message_contains(expect));
+        BOOST_REQUIRE_EXCEPTION(q("select * from t where ck1=null allow filtering"), ire, message_contains(expect));
+        BOOST_REQUIRE_EXCEPTION(q("select * from t where r=null and ck1=null allow filtering"),
+                                ire, message_contains(expect));
+        BOOST_REQUIRE_EXCEPTION(q("select * from t where r>null and ck1<null allow filtering"),
+                                ire, message_contains(expect));
+        cquery_nofail(e, "insert into t(pk1,pk2,ck1,ck2) values(11,21,101,201)");
+        require_rows(e, "select * from t where r=null allow filtering", {});
+        cquery_nofail(e, "insert into t(pk1,pk2,ck1,ck2,r) values(11,21,101,202,'2')");
+        require_rows(e, "select * from t where r>null allow filtering", {});
+        require_rows(e, "select * from t where r<=null allow filtering", {});
+        require_rows(e, "select * from t where pk1=null allow filtering", {});
+
+        cquery_nofail(e, "create table tb (p int primary key)");
+        BOOST_REQUIRE_EXCEPTION(q("select * from tb where p=null"), ire, message_contains(expect));
+    }).get();
+}
 
 /// Creates a tuple value from individual values.
 bytes make_tuple(std::vector<data_type> types, std::vector<data_value> values) {
