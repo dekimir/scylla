@@ -173,7 +173,7 @@ protected:
 
         auto term = to_term(to_receivers(*schema, column_def), *_value, db, schema->ks_name(), bound_names);
         auto r = ::make_shared<restrictions::single_column_restriction>(column_def);
-        r->expression = restrictions::wip::make_column_op(&column_def, _relation_type, std::move(term));
+        r->expression = restrictions::make_column_op(&column_def, _relation_type, std::move(term));
         return r;
     }
 
@@ -183,7 +183,7 @@ protected:
         auto&& column_def = to_column_definition(*schema, *_entity);
         auto term = to_term(to_receivers(*schema, column_def), *_value, db, schema->ks_name(), bound_names);
         auto r = ::make_shared<restrictions::single_column_restriction>(column_def);
-        r->expression = restrictions::wip::make_column_op(
+        r->expression = restrictions::make_column_op(
                 &column_def, is_key ? operator_type::CONTAINS_KEY : operator_type::CONTAINS, std::move(term));
         return r;
     }

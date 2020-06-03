@@ -102,7 +102,7 @@ public:
         , _allow_filtering(allow_filtering)
         , _restrictions(::make_shared<single_column_restrictions>(schema))
     {
-        this->expression = wip::conjunction{};  // This will track _restrictions, which is a conjunction.
+        this->expression = conjunction{};  // This will track _restrictions, which is a conjunction.
     }
 
     // Convert another primary key restrictions type into this type, possibly using different schema
@@ -172,9 +172,9 @@ public:
     }
 
     virtual ::shared_ptr<primary_key_restrictions<ValueType>> merge_to(schema_ptr, ::shared_ptr<restriction> restriction) override {
-        if (find_if(restriction->expression, [] (const wip::binary_operator& b) {
-                    return std::holds_alternative<std::vector<wip::column_value>>(b.lhs)
-                            && std::get<std::vector<wip::column_value>>(b.lhs).size() > 1;
+        if (find_if(restriction->expression, [] (const binary_operator& b) {
+                    return std::holds_alternative<std::vector<column_value>>(b.lhs)
+                            && std::get<std::vector<column_value>>(b.lhs).size() > 1;
                 })) {
             throw exceptions::invalid_request_exception(
                 "Mixing single column relations and multi column relations on clustering columns is not allowed");
@@ -195,7 +195,7 @@ public:
         for (auto&& e : restrictions()) {
             auto&& r = e.second;
             assert(!has_slice(r->expression));
-            auto values = std::get<wip::value_list>(wip::possible_lhs_values(r->expression, options));
+            auto values = std::get<value_list>(possible_lhs_values(r->expression, options));
             if (values.empty()) {
                 return {};
             }
@@ -216,7 +216,6 @@ public:
 private:
     std::vector<range_type> compute_bounds(const query_options& options) const {
         std::vector<range_type> ranges;
-        using namespace wip;
 
         static constexpr auto invalid_null_msg = std::is_same<ValueType, partition_key>::value
             ? "Invalid null value for partition key part %s" : "Invalid null value for clustering key part %s";
@@ -249,7 +248,7 @@ private:
             const column_definition* def = e.first;
             auto&& r = e.second;
 
-            if (vec_of_values.size() != _schema->position(*def) || wip::needs_filtering(r->expression)) {
+            if (vec_of_values.size() != _schema->position(*def) || cql3::restrictions::needs_filtering(r->expression)) {
                 // The prefixes built so far are the longest we can build,
                 // the rest of the constraints will have to be applied using filtering.
                 break;
@@ -438,7 +437,8 @@ inline unsigned single_column_primary_key_restrictions<clustering_key>::num_pref
     column_id position = 0;
     unsigned int count = 0;
     for (const auto& restriction : restrictions() | boost::adaptors::map_values) {
-        if (wip::needs_filtering(restriction->expression) || position != restriction->get_column_def().id) {
+        if (cql3::restrictions::needs_filtering(restriction->expression)
+            || position != restriction->get_column_def().id) {
             return count;
         }
         if (!has_slice(restriction->expression)) {

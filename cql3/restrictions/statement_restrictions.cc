@@ -59,7 +59,7 @@ class statement_restrictions::initial_key_restrictions : public primary_key_rest
 public:
     initial_key_restrictions(bool allow_filtering)
         : _allow_filtering(allow_filtering) {
-        this->expression = wip::conjunction{};
+        this->expression = conjunction{};
     }
     using bounds_range_type = typename primary_key_restrictions<T>::bounds_range_type;
 
@@ -251,7 +251,7 @@ statement_restrictions::statement_restrictions(database& db,
 
     if (_uses_secondary_indexing || _clustering_columns_restrictions->needs_filtering(*_schema)) {
         _index_restrictions.push_back(_clustering_columns_restrictions);
-    } else if (find_if(_clustering_columns_restrictions->expression, &wip::is_on_collection)) {
+    } else if (find_if(_clustering_columns_restrictions->expression, &is_on_collection)) {
         fail(unimplemented::cause::INDEXES);
 #if 0
         _index_restrictions.push_back(new Forwardingprimary_key_restrictions() {
@@ -465,7 +465,7 @@ void statement_restrictions::process_clustering_columns_restrictions(bool has_qu
         throw exceptions::invalid_request_exception(
             "Cannot restrict clustering columns by IN relations when a collection is selected by the query");
     }
-    if (find_if(_clustering_columns_restrictions->expression, wip::is_on_collection)
+    if (find_if(_clustering_columns_restrictions->expression, is_on_collection)
         && !has_queriable_index && !allow_filtering) {
         throw exceptions::invalid_request_exception(
             "Cannot restrict clustering columns by a CONTAINS relation without a secondary index or filtering");
@@ -594,8 +594,6 @@ static std::optional<atomic_cell_value_view> do_get_value(const schema& schema,
             return c.is_dead(now) ? std::nullopt : std::optional<atomic_cell_value_view>(c.value());
     }
 }
-
-namespace wip {
 
 namespace {
 
@@ -1089,12 +1087,12 @@ bool is_satisfied_by(const expression& restr, column_value_eval_bag bag) {
                             } else if (*opr.op == operator_type::IN) {
                                 return is_one_of(cvs, *opr.rhs, bag);
                             } else {
-                                throw exceptions::unsupported_operation_exception("Unhandled wip::binary_operator");
+                                throw exceptions::unsupported_operation_exception("Unhandled binary_operator");
                             }
                         },
                         // TODO: implement.
                         [] (const token& tok) -> bool {
-                            throw exceptions::unsupported_operation_exception("wip::token");
+                            throw exceptions::unsupported_operation_exception("token");
                         },
                     }, opr.lhs);
             },
@@ -1330,8 +1328,6 @@ expression replace_column_def(const expression& expr, const column_definition* n
             },
         }, expr);
 }
-
-} // namespace wip
 
 } // namespace restrictions
 } // namespace cql3

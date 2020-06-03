@@ -107,7 +107,6 @@ public:
         if (it == _restrictions.end()) {
             return bytes_opt{};
         } else {
-            using namespace wip;
             const auto values = std::get<value_list>(possible_lhs_values(it->second->expression, options));
             assert(values.size() == 1);
             return values.front();
@@ -130,7 +129,7 @@ public:
 
     virtual bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
         for (auto&& e : _restrictions) {
-            if (wip::uses_function(e.second->expression, ks_name, function_name)) {
+            if (cql3::restrictions::uses_function(e.second->expression, ks_name, function_name)) {
                 return true;
             }
         }
@@ -152,7 +151,7 @@ public:
      * @throws InvalidRequestException if the new restriction cannot be added
      */
     void add_restriction(::shared_ptr<single_column_restriction> restriction) {
-        if (!wip::find(restriction->expression, operator_type::EQ)) {
+        if (!find(restriction->expression, operator_type::EQ)) {
             _is_all_eq = false;
         }
 
@@ -161,13 +160,13 @@ public:
             _restrictions.emplace_hint(i, &restriction->get_column_def(), std::move(restriction));
         } else {
             auto& e = i->second->expression;
-            e = wip::make_conjunction(std::move(e), restriction->expression);
+            e = make_conjunction(std::move(e), restriction->expression);
         }
     }
 
     virtual bool has_supporting_index(const secondary_index::secondary_index_manager& index_manager, allow_local_index allow_local) const override {
         for (auto&& e : _restrictions) {
-            if (wip::has_supporting_index(e.second->expression, index_manager, allow_local)) {
+            if (cql3::restrictions::has_supporting_index(e.second->expression, index_manager, allow_local)) {
                 return true;
             }
         }
@@ -231,7 +230,6 @@ public:
      * map[key] = value; <code>false</code> otherwise
      */
     bool has_multiple_contains() const {
-        using namespace wip;
         uint32_t number_of_contains = 0;
         for (auto&& e : _restrictions) {
             number_of_contains += count_if(e.second->expression, is_on_collection);

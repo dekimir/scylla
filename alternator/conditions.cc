@@ -77,7 +77,7 @@ static ::shared_ptr<cql3::restrictions::single_column_restriction> make_map_elem
     bytes raw_value = serialize_item(value);
     auto entry_value = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(std::move(raw_value)));
     auto r = make_shared<cql3::restrictions::single_column_restriction>(cdef);
-    using namespace cql3::restrictions::wip;
+    using namespace cql3::restrictions;
     r->expression = binary_operator{std::vector{column_value(&cdef, key_value)}, &operator_type::EQ, entry_value};
     return r;
 }
@@ -86,7 +86,7 @@ static ::shared_ptr<cql3::restrictions::single_column_restriction> make_key_eq_r
     bytes raw_value = get_key_from_typed_value(value, cdef);
     auto restriction_value = ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(std::move(raw_value)));
     auto r = make_shared<cql3::restrictions::single_column_restriction>(cdef);
-    r->expression = cql3::restrictions::wip::make_column_op(&cdef, operator_type::EQ, std::move(restriction_value));
+    r->expression = cql3::restrictions::make_column_op(&cdef, operator_type::EQ, std::move(restriction_value));
     return r;
 }
 

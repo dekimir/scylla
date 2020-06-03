@@ -86,7 +86,7 @@ namespace raw {
 
 namespace {
 
-using namespace restrictions::wip;
+using namespace restrictions;
 
 /// True iff parameters indicate a multi-column comparison.
 bool is_multi_column(size_t column_count, const term* t) {

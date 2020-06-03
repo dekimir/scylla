@@ -71,7 +71,7 @@ public:
     }
 
     bool uses_function(const sstring& ks_name, const sstring& function_name) const override {
-        return wip::uses_function(expression, ks_name, function_name);
+        return cql3::restrictions::uses_function(expression, ks_name, function_name);
     }
 
     virtual bool has_supporting_index(const secondary_index::secondary_index_manager& index_manager, allow_local_index allow_local) const override {
@@ -86,7 +86,6 @@ public:
 #endif
 
     std::vector<bounds_range_type> bounds_ranges(const query_options& options) const override {
-        using namespace wip;
         const auto bounds = to_interval(possible_lhs_values(expression, options));
         const auto start_token = bounds.lb ? dht::token::from_bytes(bounds.lb->value) : dht::minimum_token();
         auto end_token = bounds.ub ? dht::token::from_bytes(bounds.ub->value) : dht::maximum_token();
@@ -130,7 +129,7 @@ public:
     }
 
     sstring to_string() const override {
-        return wip::to_string(expression);
+        return cql3::restrictions::to_string(expression);
     }
 };
 

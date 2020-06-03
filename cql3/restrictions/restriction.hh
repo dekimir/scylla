@@ -69,17 +69,6 @@ namespace restrictions {
 struct allow_local_index_tag {};
 using allow_local_index = bool_class<allow_local_index_tag>;
 
-/// Work-in-progress new restriction representation.  When complete, it will replace the old one.
-namespace wip {
-
-// The new representation exposes its member data publicly.  Operations on restrictions are
-// performed by free functions that take restrictions as parameters and use the visitor pattern to
-// specialize code for different kinds of restrictions.
-//
-// The most interesting class is wip::binary_operator below, which can represent both multi- and
-// single-column restrictions.  Instead of the old merge_with mechanism for combining restrictions,
-// we will simply add them into a conjunction expression that will be processed using visitors.
-
 class binary_operator;
 class conjunction;
 
@@ -272,7 +261,7 @@ extern expression replace_column_def(const expression&, const column_definition*
 
 /// Makes a binary_operator on a column_definition.
 inline expression make_column_op(const column_definition* cdef, const operator_type& op, ::shared_ptr<term> value) {
-    return wip::binary_operator{std::vector{wip::column_value(cdef)}, &op, std::move(value)};
+    return binary_operator{std::vector{column_value(cdef)}, &op, std::move(value)};
 }
 
 inline const operator_type* pick_operator(statements::bound b, bool inclusive) {
@@ -281,14 +270,14 @@ inline const operator_type* pick_operator(statements::bound b, bool inclusive) {
             (inclusive ? &operator_type::LTE : &operator_type::LT);
 }
 
-} // namespace wip
-
 /**
- * Base class for <code>Restriction</code>s
+ * Result of relation::to_restriction().  TODO: remove this class and rewrite to_restriction to return
+ * expression.
  */
 class restriction {
 public:
-    wip::expression expression = false; ///< wip equivalent of *this.
+    // Init to false for now, to easily detect errors.  This whole class is going away.
+    cql3::restrictions::expression expression = false;
     virtual ~restriction() {}
     enum class op { EQ, SLICE, IN, CONTAINS, LIKE };
 };
@@ -301,10 +290,10 @@ public:
 //
 // See https://github.com/fmtlib/fmt/issues/1283#issuecomment-526114915
 template <typename Char>
-struct fmt::formatter<cql3::restrictions::wip::expression, Char>
-    : fmt::v6::internal::fallback_formatter<cql3::restrictions::wip::expression, Char>
+struct fmt::formatter<cql3::restrictions::expression, Char>
+    : fmt::v6::internal::fallback_formatter<cql3::restrictions::expression, Char>
 {};
 template <typename Char>
-struct fmt::formatter<cql3::restrictions::wip::column_value, Char>
-    : fmt::v6::internal::fallback_formatter<cql3::restrictions::wip::column_value, Char>
+struct fmt::formatter<cql3::restrictions::column_value, Char>
+    : fmt::v6::internal::fallback_formatter<cql3::restrictions::column_value, Char>
 {};
