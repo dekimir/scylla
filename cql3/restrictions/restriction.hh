@@ -287,14 +287,28 @@ public:
 
 }
 
-// This makes fmt::join() work on expression and column_value using operator<<.
-//
-// See https://github.com/fmtlib/fmt/issues/1283#issuecomment-526114915
-template <typename Char>
-struct fmt::formatter<cql3::restrictions::expression, Char>
-    : fmt::v6::internal::fallback_formatter<cql3::restrictions::expression, Char>
-{};
-template <typename Char>
-struct fmt::formatter<cql3::restrictions::column_value, Char>
-    : fmt::v6::internal::fallback_formatter<cql3::restrictions::column_value, Char>
-{};
+/// Required for fmt::join() to work on expression.
+template <>
+struct fmt::formatter<cql3::restrictions::expression> {
+    constexpr auto parse(format_parse_context& ctx) {
+        return ctx.end();
+    }
+
+    template <typename FormatContext>
+    auto format(const cql3::restrictions::expression& expr, FormatContext& ctx) {
+        return format_to(ctx.out(), "{}", expr);
+    }
+};
+
+/// Required for fmt::join() to work on column_value.
+template <>
+struct fmt::formatter<cql3::restrictions::column_value> {
+    constexpr auto parse(format_parse_context& ctx) {
+        return ctx.end();
+    }
+
+    template <typename FormatContext>
+    auto format(const cql3::restrictions::column_value& expr, FormatContext& ctx) {
+        return format_to(ctx.out(), "{}", expr);
+    }
+};
