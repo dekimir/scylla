@@ -671,7 +671,7 @@ bytes_opt get_value_from_mutation(const column_value& col, row_data_from_mutatio
 }
 
 /// Returns col's value from the fetched data.
-bytes_opt get_value(const column_value& col, column_value_eval_bag bag) {
+bytes_opt get_value(const column_value& col, const column_value_eval_bag& bag) {
     using std::placeholders::_1;
     return std::visit(overloaded_functor{
             std::bind(get_value_from_mutation, col, _1),
@@ -706,7 +706,7 @@ const abstract_type* get_value_comparator(const column_value& cv) {
 }
 
 /// True iff lhs's value equals rhs.
-bool equal(const bytes_opt& rhs, const column_value& lhs, column_value_eval_bag bag) {
+bool equal(const bytes_opt& rhs, const column_value& lhs, const column_value_eval_bag& bag) {
     if (!rhs) {
         return false;
     }
@@ -718,7 +718,7 @@ bool equal(const bytes_opt& rhs, const column_value& lhs, column_value_eval_bag 
 }
 
 /// True iff columns' values equal t.
-bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, column_value_eval_bag bag) {
+bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const column_value_eval_bag& bag) {
     if (columns.size() > 1) {
         auto multi = dynamic_pointer_cast<multi_item_terminal>(get_tuple(t, bag.options));
         if (!multi) {
@@ -765,7 +765,7 @@ bool limits(bytes_view lhs, const operator_type& op, bytes_view rhs, const abstr
 
 /// True iff the value of opr.lhs (which must be column_values) is limited by opr.rhs in the manner prescribed
 /// by opr.op.
-bool limits(const binary_operator& opr, column_value_eval_bag bag) {
+bool limits(const binary_operator& opr, const column_value_eval_bag& bag) {
     if (!opr.op->is_slice()) { // For EQ or NEQ, use equal().
         throw std::logic_error("limits() called on non-slice op");
     }
@@ -858,7 +858,7 @@ bool contains(const data_value& collection, const raw_value_view& value) {
 }
 
 /// True iff columns is a single collection containing value.
-bool contains(const raw_value_view& value, const std::vector<column_value>& columns, column_value_eval_bag bag) {
+bool contains(const raw_value_view& value, const std::vector<column_value>& columns, const column_value_eval_bag& bag) {
     if (columns.size() != 1) {
         throw exceptions::unsupported_operation_exception("tuple CONTAINS not allowed");
     }
@@ -874,7 +874,7 @@ bool contains(const raw_value_view& value, const std::vector<column_value>& colu
 }
 
 /// True iff \p columns has a single element that's a map containing \p key.
-bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view key, column_value_eval_bag bag) {
+bool contains_key(const std::vector<column_value>& columns, cql3::raw_value_view key, const column_value_eval_bag& bag) {
     if (columns.size() != 1) {
         throw exceptions::unsupported_operation_exception("CONTAINS KEY on a tuple");
     }
@@ -946,7 +946,7 @@ std::vector<bytes_opt> get_non_pk_values(const selection& selection, const query
 }
 
 /// True iff cv matches the CQL LIKE pattern.
-bool like(const column_value& cv, const bytes_opt& pattern, column_value_eval_bag bag) {
+bool like(const column_value& cv, const bytes_opt& pattern, const column_value_eval_bag& bag) {
     if (!cv.col->type->is_string()) {
         throw exceptions::invalid_request_exception(
                 format("LIKE is allowed only on string types, which {} is not", cv.col->name_as_text()));
@@ -956,7 +956,7 @@ bool like(const column_value& cv, const bytes_opt& pattern, column_value_eval_ba
 }
 
 /// True iff columns' values match rhs pattern(s) as defined by CQL LIKE.
-bool like(const std::vector<column_value>& columns, term& rhs, column_value_eval_bag bag) {
+bool like(const std::vector<column_value>& columns, term& rhs, const column_value_eval_bag& bag) {
     // TODO: reuse matchers.
     if (columns.size() > 1) {
         if (auto multi = dynamic_cast<multi_item_terminal*>(&rhs)) {
@@ -980,7 +980,7 @@ bool like(const std::vector<column_value>& columns, term& rhs, column_value_eval
 }
 
 /// True iff the tuple of column values is in the set defined by rhs.
-bool is_one_of(const std::vector<column_value>& cvs, term& rhs, column_value_eval_bag bag) {
+bool is_one_of(const std::vector<column_value>& cvs, term& rhs, const column_value_eval_bag& bag) {
     if (auto dv = dynamic_cast<lists::delayed_value*>(&rhs)) {
         return boost::algorithm::any_of(dv->get_elements(), [&] (const ::shared_ptr<term>& t) {
                 return equal(t, cvs, bag);
@@ -1056,7 +1056,7 @@ value_set intersection(value_set a, value_set b) {
     return std::visit(intersection_visitor(), a, b);
 }
 
-bool is_satisfied_by(const expression& restr, column_value_eval_bag bag) {
+bool is_satisfied_by(const expression& restr, const column_value_eval_bag& bag) {
     return std::visit(overloaded_functor{
             [&] (bool v) { return v; },
             [&] (const conjunction& conj) {
