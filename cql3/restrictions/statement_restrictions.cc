@@ -1125,8 +1125,7 @@ std::vector<bytes_opt> first_multicolumn_bound(
         return matches(oper.op, bnd) && std::holds_alternative<std::vector<column_value>>(oper.lhs);
     });
     if (found) {
-        auto oper = std::get<binary_operator>(*found);
-        return static_pointer_cast<tuples::value>(oper.rhs->bind(options))->get_elements();
+        return static_pointer_cast<tuples::value>(found->rhs->bind(options))->get_elements();
     } else {
         return std::vector<bytes_opt>{};
     }

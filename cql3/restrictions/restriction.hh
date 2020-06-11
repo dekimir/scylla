@@ -210,11 +210,11 @@ extern std::ostream& operator<<(std::ostream&, const expression&);
 
 /// If there is a binary_operator atom b for which f(b) is true, returns it.  Otherwise returns null.
 template<typename Fn>
-const expression* find_if(const expression& e, Fn f) {
+const binary_operator* find_if(const expression& e, Fn f) {
     return std::visit(overloaded_functor{
-            [&] (const binary_operator& op) { return f(op) ? &e : nullptr; },
-            [] (bool) -> const expression* { return nullptr; },
-            [&] (const conjunction& conj) -> const expression* {
+            [&] (const binary_operator& op) { return f(op) ? &op : nullptr; },
+            [] (bool) -> const binary_operator* { return nullptr; },
+            [&] (const conjunction& conj) -> const binary_operator* {
                 for (auto& child : conj.children) {
                     if (auto found = find_if(child, f)) {
                         return found;
@@ -238,7 +238,7 @@ size_t count_if(const expression& e, Fn f) {
         }, e);
 }
 
-inline const expression* find(const expression& e, const operator_type& op) {
+inline const binary_operator* find(const expression& e, const operator_type& op) {
     return find_if(e, [&] (const binary_operator& o) { return *o.op == op; });
 }
 
