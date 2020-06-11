@@ -807,6 +807,17 @@ SEASTAR_THREAD_TEST_CASE(token) {
         cquery_nofail(e, "insert into t (p,q,r) values (3,13,103);");
         require_rows(e, "select p from t where token(p,q) = token(1,11)", {{I(1)}});
         require_rows(e, "select p from t where token(p,q) >= token(1,11) and token(p,q) <= token(1,11)", {{I(1)}});
+
+        // WARNING: the following two cases rely on having no token collisions, which cannot be guaranteed.
+        // Keeping them because (absent collisions) they complete code coverage, guarding against
+        // hard-to-trigger bugs.
+        require_rows(e, "select p from t where token(p,q) = token(1,11) and token(p,q) = token(2,12)", {});
+        require_rows(e, "select p from t where token(p,q) <= token(1,11) and token(p,q) = token(2,12)", {{I(2)}});
+
+        require_rows(e, "select p from t where token(p,q) > token(9,9) and token(p,q) < token(9,9)", {});
+        const auto min_bounds = format("select p from t where token(p,q) > {:d} and token(p,q) < {:d}",
+               std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::min());
+        require_rows(e, min_bounds, {{I(1)}, {I(2)}, {I(3)}});
         require_rows(e, "select p from t where token(p,q) <= token(1,11) and r<102 allow filtering",
                          {{I(1), I(101)}});
         require_rows(e, "select p from t where token(p,q) = token(2,12) and r<102 allow filtering", {});

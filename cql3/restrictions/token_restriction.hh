@@ -86,7 +86,11 @@ public:
 #endif
 
     std::vector<bounds_range_type> bounds_ranges(const query_options& options) const override {
-        const auto bounds = to_interval(possible_lhs_values(expression, options));
+        auto values = possible_lhs_values(expression, options);
+        if (values == value_set(value_list{})) {
+            return {};
+        }
+        const auto bounds = to_interval(values);
         const auto start_token = bounds.lb ? dht::token::from_bytes(bounds.lb->value) : dht::minimum_token();
         auto end_token = bounds.ub ? dht::token::from_bytes(bounds.ub->value) : dht::maximum_token();
         if (end_token.is_minimum()) {
