@@ -195,7 +195,7 @@ public:
         for (auto&& e : restrictions()) {
             auto&& r = e.second;
             assert(!has_slice(r->expression));
-            auto values = std::get<value_list>(possible_lhs_values(r->expression, options));
+            auto values = std::get<value_list>(possible_lhs_values(e.first, r->expression, options));
             if (values.empty()) {
                 return {};
             }
@@ -255,7 +255,7 @@ private:
             }
 
             if (has_slice(r->expression)) {
-                const auto values = possible_lhs_values(r->expression, options);
+                const auto values = possible_lhs_values(def, r->expression, options);
                 if (values == value_set(value_list{})) {
                     throw exceptions::invalid_request_exception(sprint(invalid_null_msg, e.first->name_as_text()));
                 }
@@ -298,7 +298,7 @@ private:
                 return ranges;
             }
 
-            auto values = std::get<value_list>(possible_lhs_values(r->expression, options));
+            auto values = std::get<value_list>(possible_lhs_values(def, r->expression, options));
             if (values.empty()) {
                 return {};
             }

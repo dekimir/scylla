@@ -1094,6 +1094,14 @@ bool is_satisfied_by(const expression& restr, const column_value_eval_bag& bag) 
         }, restr);
 }
 
+/// True iff lhs contains cdef as first element OR cdef is null and lhs is token.
+bool matches(const column_definition* cdef, const std::variant<std::vector<column_value>, token>& lhs) {
+    return std::visit(overloaded_functor{
+            [&] (token) { return !cdef; },
+            [&] (const std::vector<column_value>& cvs) { return cvs.size() > 0 && cvs.front().col == cdef; },
+        }, lhs);
+}
+
 } // anonymous namespace
 
 expression make_conjunction(expression a, expression b) {
@@ -1131,7 +1139,7 @@ std::vector<bytes_opt> first_multicolumn_bound(
     }
 }
 
-value_set possible_lhs_values(const expression& expr, const query_options& options) {
+value_set possible_lhs_values(const column_definition* cdef, const expression& expr, const query_options& options) {
     return std::visit(overloaded_functor{
             [] (bool b) {
                 return b ? unbounded_value_set : empty_value_set;
@@ -1139,10 +1147,13 @@ value_set possible_lhs_values(const expression& expr, const query_options& optio
             [&] (const conjunction& conj) {
                 return boost::accumulate(conj.children, unbounded_value_set,
                         [&] (const value_set& acc, const expression& child) {
-                            return intersection(std::move(acc), possible_lhs_values(child, options));
+                            return intersection(std::move(acc), possible_lhs_values(cdef, child, options));
                         });
             },
             [&] (const binary_operator& oper) -> value_set {
+                if (!matches(cdef, oper.lhs)) {
+                    return unbounded_value_set;
+                }
                 if (*oper.op == operator_type::EQ) {
                     const auto rhs = oper.rhs->bind_and_get(options);
                     return rhs ? value_list{to_bytes(rhs)} : empty_value_set; // Nothing equals null.
@@ -1189,9 +1200,8 @@ value_set possible_lhs_values(const expression& expr, const query_options& optio
                         lb = lower_bound{to_bytes(val), inclusive, cmptype};
                     }
                     return value_interval{lb, ub};
-                } else {
-                    return unbounded_value_set;
                 }
+                return unbounded_value_set;
             },
         }, expr);
 }

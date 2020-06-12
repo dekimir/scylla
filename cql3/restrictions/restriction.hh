@@ -184,9 +184,14 @@ using value_list = std::vector<bytes>; // Sorted (bitwise) and deduped.
 /// General set of values.
 using value_set = std::variant<value_list, value_interval>;
 
-/// A vector of all LHS values that would satisfy an expression.  Assumes all expression's atoms have the same
-/// LHS, which is either token or a single column_value.
-value_set possible_lhs_values(const expression&, const query_options&);
+/// A set of all column values that would satisfy an expression.  If column is null, a set of all token values
+/// that satisfy.
+///
+/// An expression restricts possible values of a column or token:
+/// - `A>5` restricts A from below
+/// - `A>5 AND A>6 AND B<10 AND A=12 AND B>0` restricts A to 12 and B to between 0 and 10
+/// - `A=1 AND A<=0` restricts A completely; no value is able to satisfy the expression
+value_set possible_lhs_values(const column_definition*, const expression&, const query_options&);
 
 /// Turns s into an interval if possible, otherwise throws.
 value_interval to_interval(value_set s);

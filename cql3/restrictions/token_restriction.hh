@@ -86,7 +86,7 @@ public:
 #endif
 
     std::vector<bounds_range_type> bounds_ranges(const query_options& options) const override {
-        auto values = possible_lhs_values(expression, options);
+        auto values = possible_lhs_values(nullptr, expression, options);
         if (values == value_set(value_list{})) {
             return {};
         }

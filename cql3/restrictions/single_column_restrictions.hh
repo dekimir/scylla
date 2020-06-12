@@ -107,7 +107,7 @@ public:
         if (it == _restrictions.end()) {
             return bytes_opt{};
         } else {
-            const auto values = std::get<value_list>(possible_lhs_values(it->second->expression, options));
+            const auto values = std::get<value_list>(possible_lhs_values(&cdef, it->second->expression, options));
             assert(values.size() == 1);
             return values.front();
         }
