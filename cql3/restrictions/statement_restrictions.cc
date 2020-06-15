@@ -680,12 +680,14 @@ bytes_opt get_value(const column_value& col, const column_value_eval_bag& bag) {
 }
 
 /// Type for comparing results of get_value().
+const abstract_type* get_value_comparator(const column_definition* cdef) {
+    return cdef->type->is_reversed() ? cdef->type->underlying_type().get() : cdef->type.get();
+}
+
+/// Type for comparing results of get_value().
 const abstract_type* get_value_comparator(const column_value& cv) {
-    auto col_type = cv.col->type;
-    if (cv.sub) {
-        return static_pointer_cast<const collection_type_impl>(col_type)->value_comparator().get();
-    }
-    return col_type->is_reversed() ? col_type->underlying_type().get() : col_type.get();
+    return cv.sub ? static_pointer_cast<const collection_type_impl>(cv.col->type)->value_comparator().get()
+            : get_value_comparator(cv.col);
 }
 
 /// Returns a tuple-valued terminal from t, if possible.  Otherwise, returns null.
