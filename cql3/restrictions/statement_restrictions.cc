@@ -755,7 +755,7 @@ bool limits(bytes_view lhs, const operator_type& op, bytes_view rhs, const abstr
     if (!op.is_compare()) {
         throw std::logic_error("limits() called on non-compare op");
     }
-    const auto cmp = type.as_tri_comparator()(lhs, rhs);
+    const auto cmp = type.compare(lhs, rhs);
     if (cmp < 0) {
         return op == operator_type::LT || op == operator_type::LTE || op == operator_type::NEQ;
     } else if (cmp > 0) {
@@ -784,7 +784,7 @@ bool limits(const binary_operator& opr, const column_value_eval_bag& bag) {
                            columns.size(), rhs.size()));
         }
         for (size_t i = 0; i < rhs.size(); ++i) {
-            const auto cmp = get_value_comparator(columns[i])->as_tri_comparator()(
+            const auto cmp = get_value_comparator(columns[i])->compare(
                     // CQL dictates that columns[i] is a clustering column and non-null.
                     *get_value(columns[i], bag),
                     *rhs[i]);
