@@ -690,19 +690,16 @@ const abstract_type* get_value_comparator(const column_value& cv) {
             : get_value_comparator(cv.col);
 }
 
-/// Returns a tuple-valued terminal from t, if possible.  Otherwise, returns null.
-::shared_ptr<terminal> get_tuple(const ::shared_ptr<term>& t, const query_options& opts) {
-    auto tml = dynamic_pointer_cast<terminal>(t);
-    if (tml) {
-        return tml;
+/// Returns a tuple value for t, if t (bound) represents a tuple.  Otherwise, returns null.
+::shared_ptr<tuples::value> get_tuple(const ::shared_ptr<term>& t, const query_options& opts) {
+    if (auto val = dynamic_pointer_cast<tuples::value>(t)) {
+        return val;
     }
-    auto marker = dynamic_pointer_cast<tuples::marker>(t);
-    if (marker) {
-        return marker->bind(opts);
+    if (auto marker = dynamic_pointer_cast<tuples::marker>(t)) {
+        return static_pointer_cast<tuples::value>(marker->bind(opts));
     }
-    auto delayed = dynamic_pointer_cast<tuples::delayed_value>(t);
-    if (delayed) {
-        return delayed->bind(opts);
+    if (auto delayed = dynamic_pointer_cast<tuples::delayed_value>(t)) {
+        return static_pointer_cast<tuples::value>(delayed->bind(opts));
     }
     return nullptr;
 }
@@ -722,11 +719,11 @@ bool equal(const bytes_opt& rhs, const column_value& lhs, const column_value_eva
 /// True iff columns' values equal t.
 bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const column_value_eval_bag& bag) {
     if (columns.size() > 1) {
-        auto multi = dynamic_pointer_cast<multi_item_terminal>(get_tuple(t, bag.options));
-        if (!multi) {
+        const auto tup = get_tuple(t, bag.options);
+        if (!tup) {
             throw exceptions::invalid_request_exception("multi-column equality has right-hand side that isn't a tuple");
         }
-        const auto& rhs = multi->get_elements();
+        const auto& rhs = tup->get_elements();
         if (rhs.size() != columns.size()) {
             throw exceptions::invalid_request_exception(
                     format("tuple equality size mismatch: {} elements on left-hand side, {} on right",
@@ -736,7 +733,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
             return equal(rhs, lhs, bag);
         });
     } else if (columns.size() == 1) {
-        auto tup = dynamic_pointer_cast<tuples::value>(get_tuple(t, bag.options));
+        const auto tup = get_tuple(t, bag.options);
         if (tup && tup->size() == 1) {
             // Assume this is an external query WHERE (ck1)=(123), rather than an internal query WHERE
             // col=(123), because internal queries have no reason to use single-element tuples.
@@ -773,11 +770,11 @@ bool limits(const binary_operator& opr, const column_value_eval_bag& bag) {
     }
     const auto& columns = std::get<0>(opr.lhs);
     if (columns.size() > 1) {
-        auto multi = dynamic_pointer_cast<multi_item_terminal>(get_tuple(opr.rhs, bag.options));
-        if (!multi) {
+        const auto tup = get_tuple(opr.rhs, bag.options);
+        if (!tup) {
             throw exceptions::invalid_request_exception("multi-column comparison has right-hand side that isn't a tuple");
         }
-        const auto& rhs = multi->get_elements();
+        const auto& rhs = tup->get_elements();
         if (rhs.size() != columns.size()) {
             throw exceptions::invalid_request_exception(
                     format("tuple comparison size mismatch: {} elements on left-hand side, {} on right",
@@ -815,12 +812,8 @@ bool limits(const binary_operator& opr, const column_value_eval_bag& bag) {
         if (!lhs) {
             lhs = bytes(); // Compatible with old code, which feeds null to type comparators.
         }
-        auto tup = dynamic_pointer_cast<tuples::value>(get_tuple(opr.rhs, bag.options));
-        // Assume this is an external query WHERE (ck1)>(123), rather than an internal query WHERE col>(123),
-        // because internal queries have no reason to use single-element tuples.
-        //
-        // TODO: make the two cases distinguishable.
-        auto rhs = (tup && tup->size() == 1) ? tup->get_elements()[0]
+        const auto tup = get_tuple(opr.rhs, bag.options);
+        auto rhs = (tup && tup->size() == 1) ? tup->get_elements()[0] // Assume an external query WHERE (ck1)>(123).
                 : to_bytes_opt(opr.rhs->bind_and_get(bag.options));
         if (!rhs) {
             return false;
