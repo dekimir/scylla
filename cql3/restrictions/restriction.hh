@@ -209,6 +209,10 @@ inline bool has_token(const expression& e) {
     return find_if(e, [] (const binary_operator& o) { return std::holds_alternative<token>(o.lhs); });
 }
 
+inline bool has_slice_or_needs_filtering(const expression& e) {
+    return find_if(e, [] (const binary_operator& o) { return o.op->is_slice() || o.op->needs_filtering(); });
+}
+
 /// True iff binary_operator involves a collection.
 extern bool is_on_collection(const binary_operator&);
 
