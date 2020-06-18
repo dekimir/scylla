@@ -947,12 +947,12 @@ bool like(const column_value& cv, const bytes_opt& pattern, const column_value_e
                 format("LIKE is allowed only on string types, which {} is not", cv.col->name_as_text()));
     }
     auto value = get_value(cv, bag);
+    // TODO: reuse matchers.
     return (pattern && value) ? like_matcher(*pattern)(*value) : false;
 }
 
 /// True iff columns' values match rhs pattern(s) as defined by CQL LIKE.
 bool like(const std::vector<column_value>& columns, term& rhs, const column_value_eval_bag& bag) {
-    // TODO: reuse matchers.
     if (columns.size() > 1) {
         if (auto multi = dynamic_cast<multi_item_terminal*>(&rhs)) {
             const auto& elements = multi->get_elements();
