@@ -1014,6 +1014,7 @@ struct intersection_visitor {
     const abstract_type* type;
     value_set operator()(const value_list& a, const value_list& b) const {
         value_list common;
+        common.reserve(std::max(a.size(), b.size()));
         boost::set_intersection(a, b, back_inserter(common), type->as_less_comparator());
         return std::move(common);
     }
