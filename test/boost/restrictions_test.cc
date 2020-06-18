@@ -270,14 +270,13 @@ SEASTAR_THREAD_TEST_CASE(null) {
         const char* expect = "Invalid null";
         // TODO: investigate why null comparison isn't allowed here.
         BOOST_REQUIRE_EXCEPTION(q("select * from t where pk1=0 and pk2=null"), ire, message_contains(expect));
-        BOOST_REQUIRE_EXCEPTION(q("select * from t where pk1=0 and pk2=0 and ck1<null"), ire, message_contains(expect));
         BOOST_REQUIRE_EXCEPTION(q("select * from t where pk1=0 and pk2=0 and (ck1,ck2)>=(0,null)"),
                                 ire, message_contains(expect));
         BOOST_REQUIRE_EXCEPTION(q("select * from t where ck1=null allow filtering"), ire, message_contains(expect));
         BOOST_REQUIRE_EXCEPTION(q("select * from t where r=null and ck1=null allow filtering"),
                                 ire, message_contains(expect));
-        BOOST_REQUIRE_EXCEPTION(q("select * from t where r>null and ck1<null allow filtering"),
-                                ire, message_contains(expect));
+        require_rows(e, "select * from t where pk1=0 and pk2=0 and ck1<null", {});
+        require_rows(e, "select * from t where r>null and ck1<null allow filtering", {});
         cquery_nofail(e, "insert into t(pk1,pk2,ck1,ck2) values(11,21,101,201)");
         require_rows(e, "select * from t where r=null allow filtering", {});
         cquery_nofail(e, "insert into t(pk1,pk2,ck1,ck2,r) values(11,21,101,202,'2')");
@@ -789,8 +788,8 @@ SEASTAR_THREAD_TEST_CASE(bounds_reversed) {
         require_rows(e, "select pk from t where pk=1 and (ck1)>=(10)", {{I(1)}});
         require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,30)", {{I(1)}});
         require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,30) and (ck1)<(20)", {{I(1)}});
-        require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,30) and (ck1,ck2)<(20,0)", {{I(1)}});
-        require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,30) and (ck1,ck2)<=(11,20)", {});
+        require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,20) and (ck1,ck2)<(20,21)", {{I(1)}});
+        require_rows(e, "select pk from t where pk=1 and (ck1,ck2)>=(10,20) and (ck1,ck2)<=(11,20)", {});
         require_rows(e, "select pk from t where pk=1 and (ck1)=(11)", {{I(1)}});
         require_rows(e, "select pk from t where pk=1 and (ck1,ck2)=(11,21)", {{I(1)}});
         cquery_nofail(e, "insert into t (pk,ck1,ck2) values (2,12,23);");

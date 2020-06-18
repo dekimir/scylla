@@ -56,6 +56,7 @@
 #include "cql3/statements/bound.hh"
 #include "index/secondary_index_manager.hh"
 #include "query-result-reader.hh"
+#include "range.hh"
 #include "types.hh"
 
 namespace cql3 {
@@ -120,69 +121,13 @@ extern bool is_satisfied_by(
 
 /// Finds the first binary_operator in restr that represents a bound and returns its RHS as a tuple.  If no
 /// such binary_operator exists, returns an empty vector.  The search is depth first.
-std::vector<bytes_opt> first_multicolumn_bound(const expression&, const query_options&, statements::bound);
-
-struct upper_bound {
-    bytes value;
-    bool inclusive;
-    const abstract_type* type;
-    bool includes(const bytes& v) const {
-        const auto cmp = type->compare(v, this->value);
-        return cmp < 0 || (cmp == 0 && this->inclusive);
-    }
-    bool operator==(const upper_bound& that) const {
-        return value == that.value && inclusive == that.inclusive && type == that.type;
-    }
-    bool operator!=(const upper_bound& that) const {
-        return !(*this == that);
-    }
-};
-
-struct lower_bound {
-    bytes value;
-    bool inclusive;
-    const abstract_type* type;
-    bool includes(const bytes& v) const {
-        const auto cmp = type->compare(v, this->value);
-        return cmp > 0 || (cmp == 0 && this->inclusive);
-    }
-    bool operator==(const lower_bound& that) const {
-        return value == that.value && inclusive == that.inclusive && type == that.type;
-    }
-    bool operator!=(const lower_bound& that) const {
-        return !(*this == that);
-    }
-    bool operator<(const lower_bound& that) const {
-        return this->includes(that.value) && *this != that;
-    }
-};
-
-/// An interval of values between two bounds.
-struct value_interval {
-    std::optional<lower_bound> lb;
-    std::optional<upper_bound> ub;
-
-    bool includes(const bytes_opt& el) const {
-        if (!el) {
-            return false;
-        }
-        if (lb && !lb->includes(*el)) {
-            return false;
-        }
-        if (ub && !ub->includes(*el)) {
-            return false;
-        }
-        return true;
-    }
-
-    bool operator==(const value_interval& that) const = default;
-};
+extern std::vector<bytes_opt> first_multicolumn_bound(const expression&, const query_options&, statements::bound);
 
 /// A set of discrete values.
-using value_list = std::vector<bytes>; // Sorted (bitwise) and deduped.
+using value_list = std::vector<bytes>; // Sorted and deduped using value comparator.
 
 /// General set of values.
-using value_set = std::variant<value_list, value_interval>;
+using value_set = std::variant<value_list, nonwrapping_range<bytes>>;
 
 /// A set of all column values that would satisfy an expression.  If column is null, a set of all token values
 /// that satisfy.
@@ -190,21 +135,25 @@ using value_set = std::variant<value_list, value_interval>;
 /// An expression restricts possible values of a column or token:
 /// - `A>5` restricts A from below
 /// - `A>5 AND A>6 AND B<10 AND A=12 AND B>0` restricts A to 12 and B to between 0 and 10
-/// - `A=1 AND A<=0` restricts A completely; no value is able to satisfy the expression
-value_set possible_lhs_values(const column_definition*, const expression&, const query_options&);
+/// - `A IN (1, 3, 5)` restricts A to 1, 3, or 5
+/// - `A IN (1, 3, 5) AND A>3` restricts A to just 5
+/// - `A=1 AND A<=0` restricts A to an empty list; no value is able to satisfy the expression
+/// - `A>=NULL` also restricts A to an empty list; all comparisons to NULL are false
+/// - an expression without A "restricts" A to unbounded range
+extern value_set possible_lhs_values(const column_definition*, const expression&, const query_options&);
 
-/// Turns s into an interval if possible, otherwise throws.
-value_interval to_interval(value_set s);
+/// Turns value_set into a range, unless it's a multi-valued list (in which case this throws).
+extern nonwrapping_range<bytes> to_range(value_set);
 
 /// True iff expr references the function.
-bool uses_function(const expression& expr, const sstring& ks_name, const sstring& function_name);
+extern bool uses_function(const expression& expr, const sstring& ks_name, const sstring& function_name);
 
 /// True iff the index can support the entire expression.
-bool is_supported_by(const expression&, const secondary_index::index&);
+extern bool is_supported_by(const expression&, const secondary_index::index&);
 
 /// True iff any of the indices from the manager can support the entire expression.  If allow_local, use all
 /// indices; otherwise, use only global indices.
-bool has_supporting_index(
+extern bool has_supporting_index(
         const expression&, const secondary_index::secondary_index_manager&, allow_local_index allow_local);
 
 extern sstring to_string(const expression&);

@@ -220,6 +220,8 @@ private:
         static constexpr auto invalid_null_msg = std::is_same<ValueType, partition_key>::value
             ? "Invalid null value for partition key part %s" : "Invalid null value for clustering key part %s";
 
+        // TODO: rewrite this to simply invoke possible_lhs_values on each clustering columns, find the first
+        // non-list, and take Cartesian product of that prefix.  No need for to_range() and std::get() here.
         if (_restrictions->is_all_eq()) {
             if (_restrictions->size() == 1) {
                 auto&& e = *restrictions().begin();
@@ -257,17 +259,18 @@ private:
             if (has_slice(r->expression)) {
                 const auto values = possible_lhs_values(def, r->expression, options);
                 if (values == value_set(value_list{})) {
-                    throw exceptions::invalid_request_exception(sprint(invalid_null_msg, e.first->name_as_text()));
+                    return {};
                 }
-                const auto b = to_interval(values);
+                const auto b = to_range(values);
                 if (cartesian_product_is_empty(vec_of_values)) {
-                    const auto make_bound = [&] (const auto& upper_or_lower) {
-                        return upper_or_lower ?
-                                std::optional(range_bound(ValueType::from_single_value(*_schema, upper_or_lower->value),
-                                                          upper_or_lower->inclusive)) :
+                    // TODO: use b.transform().
+                    const auto make_bound = [&] (const std::optional<::range_bound<bytes>>& bytes_bound) {
+                        return bytes_bound ?
+                                std::optional(range_bound(ValueType::from_single_value(*_schema, bytes_bound->value()),
+                                                          bytes_bound->is_inclusive())) :
                                 std::nullopt;
                     };
-                    ranges.emplace_back(range_type(make_bound(b.lb), make_bound(b.ub)));
+                    ranges.emplace_back(range_type(make_bound(b.start()), make_bound(b.end())));
                     if (def->type->is_reversed()) {
                         ranges.back().reverse();
                     }
@@ -279,17 +282,18 @@ private:
                         restricted_component_name_v<ValueType>);
                 ranges.reserve(size);
                 for (auto&& prefix : make_cartesian_product(vec_of_values)) {
-                    auto make_bound = [&prefix, this] (const auto& upper_or_lower) {
-                        if (upper_or_lower) {
-                            prefix.emplace_back(upper_or_lower->value);
+                    // TODO: use ranges.transform().
+                    auto make_bound = [&prefix, this] (const std::optional<::range_bound<bytes>>& bytes_bound) {
+                        if (bytes_bound) {
+                            prefix.emplace_back(bytes_bound->value());
                             auto val = ValueType::from_optional_exploded(*_schema, prefix);
                             prefix.pop_back();
-                            return range_bound(std::move(val), upper_or_lower->inclusive);
+                            return range_bound(std::move(val), bytes_bound->is_inclusive());
                         } else {
                             return range_bound(ValueType::from_optional_exploded(*_schema, prefix));
                         }
                     };
-                    ranges.emplace_back(range_type(make_bound(b.lb), make_bound(b.ub)));
+                    ranges.emplace_back(range_type(make_bound(b.start()), make_bound(b.end())));
                     if (def->type->is_reversed()) {
                         ranges.back().reverse();
                     }

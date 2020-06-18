@@ -90,16 +90,12 @@ public:
         if (values == value_set(value_list{})) {
             return {};
         }
-        const auto bounds = to_interval(values);
-        const auto start_token = bounds.lb ? dht::token::from_bytes(bounds.lb->value) : dht::minimum_token();
-        auto end_token = bounds.ub ? dht::token::from_bytes(bounds.ub->value) : dht::maximum_token();
-        if (end_token.is_minimum()) {
-            // The token was parsed as a minimum marker (token::kind::before_all_keys), but as it appears in
-            // the end bound position, it is actually the maximum marker (token::kind::after_all_keys).
-            end_token = dht::maximum_token();
-        }
-        const bool include_start = bounds.lb && bounds.lb->inclusive;
-        const auto include_end = bounds.ub && bounds.ub->inclusive;
+        const auto bounds = to_range(values);
+        const auto start_token = bounds.start() ? dht::token::from_bytes(bounds.start()->value())
+                : dht::minimum_token();
+        auto end_token = bounds.end() ? dht::token::from_bytes(bounds.end()->value()) : dht::maximum_token();
+        const bool include_start = bounds.start() && bounds.start()->is_inclusive();
+        const auto include_end = bounds.end() && bounds.end()->is_inclusive();
 
         /*
          * If we ask SP.getRangeSlice() for (token(200), token(200)], it will happily return the whole ring.
