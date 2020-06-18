@@ -1038,6 +1038,35 @@ value_set intersection(value_set a, value_set b, const abstract_type* type) {
     return std::visit(intersection_visitor{type}, std::move(a), std::move(b));
 }
 
+bool is_satisfied_by(const binary_operator& opr, const column_value_eval_bag& bag) {
+    return std::visit(overloaded_functor{
+            [&] (const std::vector<column_value>& cvs) {
+                if (*opr.op == operator_type::EQ) {
+                    return equal(opr.rhs, cvs, bag);
+                } else if (*opr.op == operator_type::NEQ) {
+                    return !equal(opr.rhs, cvs, bag);
+                } else if (opr.op->is_slice()) {
+                    return limits(opr, bag);
+                } else if (*opr.op == operator_type::CONTAINS) {
+                    return contains(opr.rhs->bind_and_get(bag.options), cvs, bag);
+                } else if (*opr.op == operator_type::CONTAINS_KEY) {
+                    return contains_key(cvs, opr.rhs->bind_and_get(bag.options), bag);
+                } else if (*opr.op == operator_type::LIKE) {
+                    return like(cvs, *opr.rhs, bag);
+                } else if (*opr.op == operator_type::IN) {
+                    return is_one_of(cvs, *opr.rhs, bag);
+                } else {
+                    throw exceptions::unsupported_operation_exception("Unhandled binary_operator");
+                }
+            },
+            [] (const token& tok) -> bool {
+                // The RHS value was already used to ensure we fetch only rows in the specified
+                // token range.  It is impossible for any fetched row not to match now.
+                return true;
+            },
+        }, opr.lhs);
+}
+
 bool is_satisfied_by(const expression& restr, const column_value_eval_bag& bag) {
     return std::visit(overloaded_functor{
             [&] (bool v) { return v; },
@@ -1046,34 +1075,7 @@ bool is_satisfied_by(const expression& restr, const column_value_eval_bag& bag) 
                     return is_satisfied_by(c, bag);
                 });
             },
-            [&] (const binary_operator& opr) {
-                return std::visit(overloaded_functor{
-                        [&] (const std::vector<column_value>& cvs) {
-                            if (*opr.op == operator_type::EQ) {
-                                return equal(opr.rhs, cvs, bag);
-                            } else if (*opr.op == operator_type::NEQ) {
-                                return !equal(opr.rhs, cvs, bag);
-                            } else if (opr.op->is_slice()) {
-                                return limits(opr, bag);
-                            } else if (*opr.op == operator_type::CONTAINS) {
-                                return contains(opr.rhs->bind_and_get(bag.options), cvs, bag);
-                            } else if (*opr.op == operator_type::CONTAINS_KEY) {
-                                return contains_key(cvs, opr.rhs->bind_and_get(bag.options), bag);
-                            } else if (*opr.op == operator_type::LIKE) {
-                                return like(cvs, *opr.rhs, bag);
-                            } else if (*opr.op == operator_type::IN) {
-                                return is_one_of(cvs, *opr.rhs, bag);
-                            } else {
-                                throw exceptions::unsupported_operation_exception("Unhandled binary_operator");
-                            }
-                        },
-                        [] (const token& tok) -> bool {
-                            // The RHS value was already used to ensure we fetch only rows in the specified
-                            // token range.  It is impossible for any fetched row not to match now.
-                            return true;
-                        },
-                    }, opr.lhs);
-            },
+            [&] (const binary_operator& opr) { return is_satisfied_by(opr, bag); },
         }, restr);
 }
 
