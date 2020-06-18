@@ -948,8 +948,8 @@ bool like(const column_value& cv, const bytes_opt& pattern, const column_value_e
 /// True iff columns' values match rhs pattern(s) as defined by CQL LIKE.
 bool like(const std::vector<column_value>& columns, term& rhs, const column_value_eval_bag& bag) {
     if (columns.size() > 1) {
-        if (auto multi = dynamic_cast<multi_item_terminal*>(&rhs)) {
-            const auto& elements = multi->get_elements();
+        if (const auto tup = get_tuple(rhs, bag.options)) {
+            const auto& elements = tup->get_elements();
             if (elements.size() != columns.size()) {
                 throw exceptions::invalid_request_exception(
                         format("LIKE tuple size mismatch: {} elements on left-hand side, {} on right",
