@@ -1067,9 +1067,10 @@ bool is_satisfied_by(const expression& restr, const column_value_eval_bag& bag) 
                                 throw exceptions::unsupported_operation_exception("Unhandled binary_operator");
                             }
                         },
-                        // TODO: implement.
                         [] (const token& tok) -> bool {
-                            throw exceptions::unsupported_operation_exception("token");
+                            // The RHS value was already used to ensure we fetch only rows in the specified
+                            // token range.  It is impossible for any fetched row not to match now.
+                            return true;
                         },
                     }, opr.lhs);
             },
