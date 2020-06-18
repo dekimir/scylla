@@ -690,18 +690,12 @@ const abstract_type* get_value_comparator(const column_value& cv) {
             : get_value_comparator(cv.col);
 }
 
-/// Returns a tuple value for t, if t (bound) represents a tuple.  Otherwise, returns null.
-::shared_ptr<tuples::value> get_tuple(const ::shared_ptr<term>& t, const query_options& opts) {
-    if (auto val = dynamic_pointer_cast<tuples::value>(t)) {
-        return val;
-    }
-    if (auto marker = dynamic_pointer_cast<tuples::marker>(t)) {
-        return static_pointer_cast<tuples::value>(marker->bind(opts));
-    }
-    if (auto delayed = dynamic_pointer_cast<tuples::delayed_value>(t)) {
-        return static_pointer_cast<tuples::value>(delayed->bind(opts));
-    }
-    return nullptr;
+/// If t represents a tuple value, returns that value.  Otherwise, null.
+///
+/// Useful for checking binary_operator::rhs, which packs multiple values into a single term when lhs is itself
+/// a tuple or when op is IN.
+::shared_ptr<tuples::value> get_tuple(term& t, const query_options& opts) {
+    return dynamic_pointer_cast<tuples::value>(t.bind(opts));
 }
 
 /// True iff lhs's value equals rhs.
@@ -719,7 +713,7 @@ bool equal(const bytes_opt& rhs, const column_value& lhs, const column_value_eva
 /// True iff columns' values equal t.
 bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const column_value_eval_bag& bag) {
     if (columns.size() > 1) {
-        const auto tup = get_tuple(t, bag.options);
+        const auto tup = get_tuple(*t, bag.options);
         if (!tup) {
             throw exceptions::invalid_request_exception("multi-column equality has right-hand side that isn't a tuple");
         }
@@ -733,7 +727,7 @@ bool equal(::shared_ptr<term> t, const std::vector<column_value>& columns, const
             return equal(rhs, lhs, bag);
         });
     } else if (columns.size() == 1) {
-        const auto tup = get_tuple(t, bag.options);
+        const auto tup = get_tuple(*t, bag.options);
         if (tup && tup->size() == 1) {
             // Assume this is an external query WHERE (ck1)=(123), rather than an internal query WHERE
             // col=(123), because internal queries have no reason to use single-element tuples.
@@ -770,7 +764,7 @@ bool limits(const binary_operator& opr, const column_value_eval_bag& bag) {
     }
     const auto& columns = std::get<0>(opr.lhs);
     if (columns.size() > 1) {
-        const auto tup = get_tuple(opr.rhs, bag.options);
+        const auto tup = get_tuple(*opr.rhs, bag.options);
         if (!tup) {
             throw exceptions::invalid_request_exception("multi-column comparison has right-hand side that isn't a tuple");
         }
@@ -812,7 +806,7 @@ bool limits(const binary_operator& opr, const column_value_eval_bag& bag) {
         if (!lhs) {
             lhs = bytes(); // Compatible with old code, which feeds null to type comparators.
         }
-        const auto tup = get_tuple(opr.rhs, bag.options);
+        const auto tup = get_tuple(*opr.rhs, bag.options);
         auto rhs = (tup && tup->size() == 1) ? tup->get_elements()[0] // Assume an external query WHERE (ck1)>(123).
                 : to_bytes_opt(opr.rhs->bind_and_get(bag.options));
         if (!rhs) {
@@ -1184,7 +1178,7 @@ value_set possible_lhs_values(const column_definition* cdef, const expression& e
                             }
                             const auto column_index_on_lhs = std::distance(cvs.begin(), found);
                             if (oper.op->is_compare()) {
-                                const auto tup = get_tuple(oper.rhs, options);
+                                const auto tup = get_tuple(*oper.rhs, options);
                                 bytes_opt val = tup ? tup->get_elements()[column_index_on_lhs]
                                         : to_bytes_opt(oper.rhs->bind_and_get(options));
                                 if (!val) {
