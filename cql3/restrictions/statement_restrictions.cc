@@ -1247,10 +1247,10 @@ value_set possible_lhs_values(const column_definition* cdef, const expression& e
         }, expr);
 }
 
-nonwrapping_range<bytes> to_range(value_set s) {
+nonwrapping_range<bytes> to_range(const value_set& s) {
     return std::visit(overloaded_functor{
-            [] (nonwrapping_range<bytes>& r) { return std::move(r); },
-            [] (value_list& lst) {
+            [] (const nonwrapping_range<bytes>& r) { return std::move(r); },
+            [] (const value_list& lst) {
                 if (lst.size() != 1) {
                     throw std::logic_error(format("to_range called on list of size {}", lst.size()));
                 }

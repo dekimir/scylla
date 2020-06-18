@@ -143,7 +143,7 @@ using value_set = std::variant<value_list, nonwrapping_range<bytes>>;
 extern value_set possible_lhs_values(const column_definition*, const expression&, const query_options&);
 
 /// Turns value_set into a range, unless it's a multi-valued list (in which case this throws).
-extern nonwrapping_range<bytes> to_range(value_set);
+extern nonwrapping_range<bytes> to_range(const value_set&);
 
 /// True iff expr references the function.
 extern bool uses_function(const expression& expr, const sstring& ks_name, const sstring& function_name);
