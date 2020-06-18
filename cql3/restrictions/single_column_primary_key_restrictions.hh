@@ -220,7 +220,7 @@ private:
         static constexpr auto invalid_null_msg = std::is_same<ValueType, partition_key>::value
             ? "Invalid null value for partition key part %s" : "Invalid null value for clustering key part %s";
 
-        // TODO: rewrite this to simply invoke possible_lhs_values on each clustering columns, find the first
+        // TODO: rewrite this to simply invoke possible_lhs_values on each clustering column, find the first
         // non-list, and take Cartesian product of that prefix.  No need for to_range() and std::get() here.
         if (_restrictions->is_all_eq()) {
             if (_restrictions->size() == 1) {
