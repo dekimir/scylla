@@ -126,7 +126,8 @@ extern std::vector<bytes_opt> first_multicolumn_bound(const expression&, const q
 /// A set of discrete values.
 using value_list = std::vector<bytes>; // Sorted and deduped using value comparator.
 
-/// General set of values.
+/// General set of values.  Empty set and single-element sets are always value_list.  nonwrapping_range is
+/// never singular and never has start > end.  Universal set is a nonwrapping_range with both bounds null.
 using value_set = std::variant<value_list, nonwrapping_range<bytes>>;
 
 /// A set of all column values that would satisfy an expression.  If column is null, a set of all token values
