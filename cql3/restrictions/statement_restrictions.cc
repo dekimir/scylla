@@ -693,7 +693,7 @@ const abstract_type* get_value_comparator(const column_value& cv) {
 /// If t represents a tuple value, returns that value.  Otherwise, null.
 ///
 /// Useful for checking binary_operator::rhs, which packs multiple values into a single term when lhs is itself
-/// a tuple or when op is IN.
+/// a tuple.  NOT useful for the IN operator, whose rhs is either a list or tuples::in_value.
 ::shared_ptr<tuples::value> get_tuple(term& t, const query_options& opts) {
     return dynamic_pointer_cast<tuples::value>(t.bind(opts));
 }
@@ -970,26 +970,25 @@ bool like(const std::vector<column_value>& columns, term& rhs, const column_valu
 
 /// True iff the tuple of column values is in the set defined by rhs.
 bool is_one_of(const std::vector<column_value>& cvs, term& rhs, const column_value_eval_bag& bag) {
+    // RHS is prepared differently for different CQL cases.  Cast it dynamically to discern which case this is.
     if (auto dv = dynamic_cast<lists::delayed_value*>(&rhs)) {
+        // This is either `a IN (1,2,3)` or `(a,b) IN ((1,1),(2,2),(3,3))`.  RHS elements are themselves terms.
         return boost::algorithm::any_of(dv->get_elements(), [&] (const ::shared_ptr<term>& t) {
                 return equal(t, cvs, bag);
             });
     } else if (auto mkr = dynamic_cast<lists::marker*>(&rhs)) {
-        auto multi = dynamic_pointer_cast<multi_item_terminal>(mkr->bind(bag.options));
-        if (multi) {
-            if (cvs.size() != 1) {
-                throw std::logic_error("too many columns for lists::marker in is_one_of");
-            }
-            return boost::algorithm::any_of(multi->get_elements(), [&] (const bytes_opt& b) {
-                    return equal(b, cvs[0], bag);
-                });
+        // This is `a IN ?`.  RHS elements are values representable as bytes_opt.
+        if (cvs.size() != 1) {
+            throw std::logic_error("too many columns for lists::marker in is_one_of");
         }
+        const auto values = static_pointer_cast<lists::value>(mkr->bind(bag.options));
+        return boost::algorithm::any_of(values->get_elements(), [&] (const bytes_opt& b) {
+                return equal(b, cvs[0], bag);
+            });
     } else if (auto mkr = dynamic_cast<tuples::in_marker*>(&rhs)) {
-        const auto val = dynamic_pointer_cast<tuples::in_value>(mkr->bind(bag.options));
-        if (!val) {
-            return false;
-        }
-        return boost::algorithm::any_of(val->get_split_values(), [&] (const std::vector<bytes_opt>& el) {
+        // This is `(a,b) IN ?`.  RHS elements are themselves tuples, represented as vector<bytes_opt>.
+        const auto marker_value = static_pointer_cast<tuples::in_value>(mkr->bind(bag.options));
+        return boost::algorithm::any_of(marker_value->get_split_values(), [&] (const std::vector<bytes_opt>& el) {
                 return boost::equal(cvs, el, [&] (const column_value& c, const bytes_opt& b) {
                     return equal(b, c, bag);
                 });
@@ -1089,7 +1088,7 @@ bytes_opt get_kth(size_t k, const query_options& options, const ::shared_ptr<ter
 
 template<typename Range>
 value_list to_sorted_vector(const Range& r, const serialized_compare& comparator) {
-    value_list tmp(r.begin(), r.end()); // Need random-access range to sort.
+    value_list tmp(r.begin(), r.end()); // Need random-access range to sort (r is not necessarily random-access).
     const auto unique = boost::unique(boost::sort(tmp, comparator));
     return value_list(unique.begin(), unique.end());
 }
@@ -1099,14 +1098,18 @@ value_list get_IN_values(const ::shared_ptr<term>& t, size_t k, const query_opti
                          const serialized_compare& comparator) {
     const auto non_null = filtered([] (const bytes_opt& b) { return b.has_value(); });
     const auto deref = transformed([] (const bytes_opt& b) { return b.value(); });
+    // RHS is prepared differently for different CQL cases.  Cast it dynamically to discern which case this is.
     if (auto dv = dynamic_pointer_cast<lists::delayed_value>(t)) {
+        // Case `a IN (1,2,3)` or `(a,b) in ((1,1),(2,2),(3,3)).  Get kth value from each term element.
         auto result_range = dv->get_elements() | transformed(std::bind_front(get_kth, k, options)) | non_null | deref;
         return to_sorted_vector(result_range, comparator);
     } else if (auto mkr = dynamic_pointer_cast<lists::marker>(t)) {
+        // Case `a IN ?`.  Collect all list-element values.
         assert(k == 0 && "lists::marker is for single-column IN");
         auto result_range =  static_pointer_cast<lists::value>(mkr->bind(options))->get_elements() | non_null | deref;
         return to_sorted_vector(result_range, comparator);
     } else if (auto mkr = dynamic_pointer_cast<tuples::in_marker>(t)) {
+        // Case `(a,b) IN ?`.  Get kth value from each vector<bytes> element.
         auto result_range =  static_pointer_cast<tuples::in_value>(mkr->bind(options))->get_split_values()
                 | transformed([k] (const std::vector<bytes_opt>& v) { return v[k]; }) | non_null | deref;
         return to_sorted_vector(result_range, comparator);
