@@ -1113,7 +1113,7 @@ value_list get_IN_values(const ::shared_ptr<term>& t, size_t k, const query_opti
     } else if (auto mkr = dynamic_pointer_cast<lists::marker>(t)) {
         // Case `a IN ?`.  Collect all list-element values.
         assert(k == 0 && "lists::marker is for single-column IN");
-        auto result_range =  static_pointer_cast<lists::value>(mkr->bind(options))->get_elements() | non_null | deref;
+        auto result_range = static_pointer_cast<lists::value>(mkr->bind(options))->get_elements() | non_null | deref;
         return to_sorted_vector(result_range, comparator);
     } else if (auto mkr = dynamic_pointer_cast<tuples::in_marker>(t)) {
         // Case `(a,b) IN ?`.  Get kth value from each vector<bytes> element.
