@@ -1108,16 +1108,18 @@ value_list get_IN_values(const ::shared_ptr<term>& t, size_t k, const query_opti
     // RHS is prepared differently for different CQL cases.  Cast it dynamically to discern which case this is.
     if (auto dv = dynamic_pointer_cast<lists::delayed_value>(t)) {
         // Case `a IN (1,2,3)` or `(a,b) in ((1,1),(2,2),(3,3)).  Get kth value from each term element.
-        auto result_range = dv->get_elements() | transformed(std::bind_front(get_kth, k, options)) | non_null | deref;
+        const auto result_range = dv->get_elements()
+                | transformed(std::bind_front(get_kth, k, options)) | non_null | deref;
         return to_sorted_vector(result_range, comparator);
     } else if (auto mkr = dynamic_pointer_cast<lists::marker>(t)) {
         // Case `a IN ?`.  Collect all list-element values.
         assert(k == 0 && "lists::marker is for single-column IN");
-        auto result_range = static_pointer_cast<lists::value>(mkr->bind(options))->get_elements() | non_null | deref;
-        return to_sorted_vector(result_range, comparator);
+        const auto val = static_pointer_cast<lists::value>(mkr->bind(options));
+        return to_sorted_vector(val->get_elements() | non_null | deref, comparator);
     } else if (auto mkr = dynamic_pointer_cast<tuples::in_marker>(t)) {
         // Case `(a,b) IN ?`.  Get kth value from each vector<bytes> element.
-        auto result_range =  static_pointer_cast<tuples::in_value>(mkr->bind(options))->get_split_values()
+        const auto val = static_pointer_cast<tuples::in_value>(mkr->bind(options));
+        const auto result_range =  val->get_split_values()
                 | transformed([k] (const std::vector<bytes_opt>& v) { return v[k]; }) | non_null | deref;
         return to_sorted_vector(result_range, comparator);
     }
