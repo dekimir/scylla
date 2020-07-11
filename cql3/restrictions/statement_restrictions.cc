@@ -25,6 +25,7 @@
 #include <boost/algorithm/cxx11/any_of.hpp>
 #include <boost/range/adaptors.hpp>
 #include <boost/range/algorithm.hpp>
+#include <boost/range/concepts.hpp>
 #include <functional>
 #include <stdexcept>
 
@@ -1074,6 +1075,7 @@ bytes_opt get_kth(size_t k, const query_options& options, const ::shared_ptr<ter
 
 template<typename Range>
 value_list to_sorted_vector(const Range& r, const serialized_compare& comparator) {
+    BOOST_CONCEPT_ASSERT((boost::ForwardRangeConcept<Range>));
     value_list tmp(r.begin(), r.end()); // Need random-access range to sort (r is not necessarily random-access).
     const auto unique = boost::unique(boost::sort(tmp, comparator));
     return value_list(unique.begin(), unique.end());
