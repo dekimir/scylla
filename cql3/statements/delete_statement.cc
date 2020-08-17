@@ -147,6 +147,9 @@ bool bounds_ck_symmetrically(const expression& expr) {
             }
         }
 
+        /// Updates state for a regex-match builtin.
+        void operator()(const match_regex& mr) {} // No new bounds discovered.
+
         /// Updates state for a conjunction.
         void operator()(const conjunction& conj) {
             for (const auto& child : conj.children) {

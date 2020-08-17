@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <boost/regex/icu.hpp>
 #include <fmt/core.h>
 #include <ostream>
 #include <seastar/core/shared_ptr.hh>
@@ -53,9 +54,12 @@ using allow_local_index = bool_class<allow_local_index_tag>;
 
 class binary_operator;
 class conjunction;
+class match_regex;
+
+using builtin = match_regex; // For now.  Will become variant of all supported builtins one day.
 
 /// A restriction expression -- union of all possible restriction types.  bool means a Boolean constant.
-using expression = std::variant<bool, conjunction, binary_operator>;
+using expression = std::variant<bool, conjunction, binary_operator, builtin>;
 
 /// A column, optionally subscripted by a term (eg, c1 or c2['abc']).
 struct column_value {
@@ -78,6 +82,12 @@ struct binary_operator {
     std::variant<column_value, std::vector<column_value>, token> lhs;
     oper_t op;
     ::shared_ptr<term> rhs;
+};
+
+/// Matches a column's value (presumed to be UTF-8 encoded) to a regex.
+struct match_regex {
+    column_value lhs;
+    boost::u32regex re;
 };
 
 /// A conjunction of restrictions.
@@ -154,7 +164,6 @@ requires std::regular_invocable<Fn, const binary_operator&>
 const binary_operator* find_atom(const expression& e, Fn f) {
     return std::visit(overloaded_functor{
             [&] (const binary_operator& op) { return f(op) ? &op : nullptr; },
-            [] (bool) -> const binary_operator* { return nullptr; },
             [&] (const conjunction& conj) -> const binary_operator* {
                 for (auto& child : conj.children) {
                     if (auto found = find_atom(child, f)) {
@@ -163,6 +172,7 @@ const binary_operator* find_atom(const expression& e, Fn f) {
                 }
                 return nullptr;
             },
+            [] (const auto&) -> const binary_operator* { return nullptr; },
         }, e);
 }
 
@@ -176,7 +186,7 @@ size_t count_if(const expression& e, Fn f) {
                 return std::accumulate(conj.children.cbegin(), conj.children.cend(), size_t{0},
                                        [&] (size_t acc, const expression& c) { return acc + count_if(c, f); });
             },
-            [] (bool) -> size_t { return 0; },
+            [] (const auto&) -> size_t { return 0; },
         }, e);
 }
 
