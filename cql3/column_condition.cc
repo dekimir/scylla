@@ -83,7 +83,7 @@ int is_satisfied_by(cql3::expr::oper_t op, const abstract_type& cell_type,
         } else {
             rc = cell_type.compare(cell_type.decompose(cell_value), param);
         }
-        switch(op) {
+        switch (op) {
             using cql3::expr::oper_t;
         case oper_t::EQ:
             return rc == 0;
