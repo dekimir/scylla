@@ -202,7 +202,7 @@ inline bool has_slice(const expression& e) {
 }
 
 inline bool is_compare(oper_t op) {
-    switch(op) {
+    switch (op) {
     case oper_t::EQ:
     case oper_t::LT:
     case oper_t::LTE:

@@ -208,7 +208,7 @@ bool equal(term& t, const std::vector<column_value>& columns, const column_value
 /// True iff lhs is limited by rhs in the manner prescribed by op.
 bool limits(bytes_view lhs, oper_t op, bytes_view rhs, const abstract_type& type) {
     const auto cmp = type.compare(lhs, rhs);
-    switch(op) {
+    switch (op) {
     case oper_t::LT:
         return cmp < 0;
     case oper_t::LTE:
@@ -610,7 +610,7 @@ static constexpr bool inclusive = true, exclusive = false;
 
 /// A range of all X such that X op val.
 nonwrapping_range<bytes> to_range(oper_t op, const bytes& val) {
-    switch(op) {
+    switch (op) {
     case oper_t::GT:
         return nonwrapping_range<bytes>::make_starting_with(range_bound(val, exclusive));
     case oper_t::GTE:
@@ -907,7 +907,7 @@ expression make_column_op(const column_definition* cdef, const operator_type& op
 }
 
 std::ostream& operator<<(std::ostream& s, oper_t op) {
-    switch(op) {
+    switch (op) {
     case oper_t::EQ:
         return s << "=";
     case oper_t::NEQ:
