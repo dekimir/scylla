@@ -23,7 +23,6 @@
 
 #include "like_matcher.hh"
 
-#include <boost/regex/icu.hpp>
 #include <boost/locale/encoding.hpp>
 #include <string>
 
@@ -90,6 +89,10 @@ wstring regex_from_pattern(bytes_view pattern) {
 
 } // anonymous namespace
 
+boost::u32regex make_regex_from_like_pattern(bytes_view pattern) {
+    return boost::make_u32regex(regex_from_pattern(pattern), boost::u32regex::basic | boost::u32regex::optimize);
+}
+
 class like_matcher::impl {
     bytes _pattern;
     boost::u32regex _re; // Performs pattern matching.
@@ -99,7 +102,7 @@ class like_matcher::impl {
     void reset(bytes_view pattern);
   private:
     void init_re() {
-        _re = boost::make_u32regex(regex_from_pattern(_pattern), boost::u32regex::basic | boost::u32regex::optimize);
+        _re = make_regex_from_like_pattern(_pattern);
     }
 };
 

@@ -25,15 +25,15 @@
 
 #include "utils/like_matcher.hh"
 
-auto matcher(const char* s) { return like_matcher(bytes(s)); }
+auto matcher(const char* s) { return make_regex_from_like_pattern(bytes(s)); }
 
-bool matches(const like_matcher& m, const char* txt) { return m(bytes(txt)); }
+bool matches(const boost::u32regex& re, const char* txt) { return boost::u32regex_match(txt, re); }
 
 #if __cplusplus > 201703L
 
 auto matcher(const char8_t* s) { return matcher(reinterpret_cast<const char*>(s)); }
 
-bool matches(const like_matcher& m, const char8_t* txt) { return m(bytes(reinterpret_cast<const char*>(txt))); }
+bool matches(const boost::u32regex& re, const char8_t* txt) { return matches(re, reinterpret_cast<const char*>(txt)); }
 
 #endif
 
@@ -441,18 +441,4 @@ BOOST_AUTO_TEST_CASE(test_dollar) {
     BOOST_TEST(matches(matcher(u8R"(\$abc)"), u8"$abc"));
     BOOST_TEST(matches(matcher(u8"a$bc"), u8"a$bc"));
     BOOST_TEST(matches(matcher(u8R"(a\$bc)"), u8"a$bc"));
-}
-
-BOOST_AUTO_TEST_CASE(test_reset) {
-    auto m = matcher(u8"alpha");
-    BOOST_TEST(matches(m, u8"alpha"));
-    m.reset(bytes(reinterpret_cast<const char*>(u8"omega")));
-    BOOST_TEST(!matches(m, u8"alpha"));
-    BOOST_TEST(matches(m, u8"omega"));
-    m.reset(bytes(reinterpret_cast<const char*>(u8"omega")));
-    BOOST_TEST(!matches(m, u8"alpha"));
-    BOOST_TEST(matches(m, u8"omega"));
-    m.reset(bytes(reinterpret_cast<const char*>(u8"alpha")));
-    BOOST_TEST(matches(m, u8"alpha"));
-    BOOST_TEST(!matches(m, u8"omega"));
 }

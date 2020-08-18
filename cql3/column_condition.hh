@@ -66,12 +66,12 @@ private:
     ::shared_ptr<term> _value;
     // List of terminals for "a IN (value, value, ...)"
     std::vector<::shared_ptr<term>> _in_values;
-    const std::unique_ptr<like_matcher> _matcher;
+    const std::unique_ptr<boost::u32regex> _matcher;
     expr::oper_t _op;
 public:
     column_condition(const column_definition& column, ::shared_ptr<term> collection_element,
         ::shared_ptr<term> value, std::vector<::shared_ptr<term>> in_values,
-        std::unique_ptr<like_matcher> matcher, expr::oper_t op)
+        std::unique_ptr<boost::u32regex> matcher, expr::oper_t op)
             : column(column)
             , _collection_element(std::move(collection_element))
             , _value(std::move(value))
@@ -105,7 +105,7 @@ public:
      * "IF col LIKE <pattern>"
      */
     static lw_shared_ptr<column_condition> condition(const column_definition& def, ::shared_ptr<term> collection_element,
-            ::shared_ptr<term> value, std::unique_ptr<like_matcher> matcher, expr::oper_t op) {
+            ::shared_ptr<term> value, std::unique_ptr<boost::u32regex> matcher, expr::oper_t op) {
         return make_lw_shared<column_condition>(def, std::move(collection_element), std::move(value),
             std::vector<::shared_ptr<term>>{}, std::move(matcher), op);
     }
