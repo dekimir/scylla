@@ -255,8 +255,9 @@ bool column_condition::applies_to(const data_value* cell_value, const query_opti
         if (cell_value == nullptr) {
             return false;
         }
+        const auto bval = cell_value->serialize_nonnull();
         if (_matcher) {
-            return (*_matcher)(bytes_view(cell_value->serialize_nonnull()));
+            return boost::u32regex_match(bval.begin(), bval.end(), *_matcher);
         } else {
             auto param = _value->bind_and_get(options);  // LIKE pattern
             if (param.is_unset_value()) {
@@ -265,8 +266,7 @@ bool column_condition::applies_to(const data_value* cell_value, const query_opti
             if (param.is_null()) {
                 throw exceptions::invalid_request_exception("Invalid NULL value in LIKE pattern");
             }
-            like_matcher matcher(to_bytes(param));
-            return matcher(bytes_view(cell_value->serialize_nonnull()));
+            return boost::u32regex_match(bval.begin(), bval.end(), make_regex_from_like_pattern(to_bytes(param)));
         }
     }
 
@@ -342,7 +342,9 @@ column_condition::raw::prepare(database& db, const sstring& keyspace, const colu
             const sstring& pattern = literal_term->get_raw_text();
             return column_condition::condition(receiver, collection_element_term,
                     _value->prepare(db, keyspace, value_spec),
-                    std::make_unique<like_matcher>(bytes_view(reinterpret_cast<const int8_t*>(pattern.data()), pattern.size())),
+                    std::make_unique<boost::u32regex>(
+                            make_regex_from_like_pattern(
+                                    bytes_view(reinterpret_cast<const int8_t*>(pattern.data()), pattern.size()))),
                     _op);
         } else {
             // Pass through rhs value, matcher object built on execution

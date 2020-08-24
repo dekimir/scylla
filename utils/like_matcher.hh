@@ -22,11 +22,12 @@
 #pragma once
 
 #include "bytes.hh"
+#include <boost/regex/icu.hpp>
 #include <memory>
 
-/// Implements <code>text LIKE pattern</code>.
+/// Makes a regular expression corresponding to a CQL LIKE pattern.
 ///
-/// The pattern is a string of characters with two wildcards:
+/// The pattern is UTF-8 text that matches as follows:
 /// - '_' matches any single character
 /// - '%' matches any substring (including an empty string)
 /// - '\' escapes the next pattern character, so it matches verbatim
@@ -34,6 +35,9 @@
 ///
 /// The whole text must match the pattern; thus <code>'abc' LIKE 'a'</code> doesn't match, but
 /// <code>'abc' LIKE 'a%'</code> matches.
+boost::u32regex make_regex_from_like_pattern(bytes_view pattern);
+
+/// Implements <code>text LIKE pattern</code>.
 class like_matcher {
     class impl;
     std::unique_ptr<impl> _impl;

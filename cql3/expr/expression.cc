@@ -403,7 +403,8 @@ bool like(const column_value& cv, const bytes_opt& pattern, const column_value_e
     }
     auto value = get_value(cv, bag);
     // TODO: reuse matchers.
-    return (pattern && value) ? like_matcher(*pattern)(*value) : false;
+    return (pattern && value) ?
+            boost::u32regex_match(value->begin(), value->end(), make_regex_from_like_pattern(*pattern)) : false;
 }
 
 /// True iff the column value is in the set defined by rhs.
