@@ -534,13 +534,17 @@ bool is_satisfied_by(const binary_operator& opr, const column_value_eval_bag& ba
 
 bool is_satisfied_by(const expression& restr, const column_value_eval_bag& bag) {
     return std::visit(overloaded_functor{
-            [&] (bool v) { return v; },
+            [&] (const atom& a) {
+                return std::visit(overloaded_functor{
+                        [&] (bool v) { return v; },
+                        [&] (const binary_operator& opr) { return is_satisfied_by(opr, bag); },
+                    }, a);
+            },
             [&] (const conjunction& conj) {
                 return boost::algorithm::all_of(conj.children, [&] (const expression& c) {
                     return is_satisfied_by(c, bag);
                 });
             },
-            [&] (const binary_operator& opr) { return is_satisfied_by(opr, bag); },
         }, restr);
 }
 
@@ -651,7 +655,7 @@ bool is_satisfied_by(
 
 std::vector<bytes_opt> first_multicolumn_bound(
         const expression& restr, const query_options& options, statements::bound bnd) {
-    auto found = find_atom(restr, [bnd] (const binary_operator& oper) {
+    auto found = find_binop(restr, [bnd] (const binary_operator& oper) {
         return matches(oper.op, bnd) && std::holds_alternative<std::vector<column_value>>(oper.lhs);
     });
     if (found) {
@@ -661,18 +665,13 @@ std::vector<bytes_opt> first_multicolumn_bound(
     }
 }
 
-value_set possible_lhs_values(const column_definition* cdef, const expression& expr, const query_options& options) {
-    const auto type = cdef ? get_value_comparator(cdef) : long_type.get();
+namespace {
+
+value_set possible_lhs_values(const column_definition* cdef, const atom& expr, const query_options& options) {
+    const auto type = cdef ? get_value_comparator(cdef)->as_less_comparator() : long_type->as_less_comparator();
     return std::visit(overloaded_functor{
             [] (bool b) {
                 return b ? unbounded_value_set : empty_value_set;
-            },
-            [&] (const conjunction& conj) {
-                return boost::accumulate(conj.children, unbounded_value_set,
-                        [&] (const value_set& acc, const expression& child) {
-                            return intersection(
-                                    std::move(acc), possible_lhs_values(cdef, child, options), type);
-                        });
             },
             [&] (const binary_operator& oper) -> value_set {
                 return std::visit(overloaded_functor{
@@ -688,7 +687,7 @@ value_set possible_lhs_values(const column_definition* cdef, const expression& e
                                 return oper.op == oper_t::EQ ? value_set(value_list{*val})
                                         : to_range(oper.op, *val);
                             } else if (oper.op == oper_t::IN) {
-                                return get_IN_values(oper.rhs, options, type->as_less_comparator());
+                                return get_IN_values(oper.rhs, options, type);
                             }
                             throw std::logic_error(format("possible_lhs_values: unhandled operator {}", oper));
                         },
@@ -718,7 +717,7 @@ value_set possible_lhs_values(const column_definition* cdef, const expression& e
                                 }
                                 return to_range(oper.op, *val);
                             } else if (oper.op == oper_t::IN) {
-                                return get_IN_values(oper.rhs, column_index_on_lhs, options, type->as_less_comparator());
+                                return get_IN_values(oper.rhs, column_index_on_lhs, options, type);
                             }
                             return unbounded_value_set;
                         },
@@ -750,6 +749,22 @@ value_set possible_lhs_values(const column_definition* cdef, const expression& e
                             throw std::logic_error(format("get_token_interval invalid operator {}", oper.op));
                         },
                     }, oper.lhs);
+            },
+        }, expr);
+}
+
+} // anonymous namespace
+
+value_set possible_lhs_values(const column_definition* cdef, const expression& expr, const query_options& options) {
+    const auto type = cdef ? get_value_comparator(cdef) : long_type.get();
+    return std::visit(overloaded_functor{
+            [&] (const atom& a) { return possible_lhs_values(cdef, a, options); },
+            [&] (const conjunction& conj) {
+                return boost::accumulate(conj.children, unbounded_value_set,
+                        [&] (const value_set& acc, const expression& child) {
+                            return intersection(
+                                    std::move(acc), possible_lhs_values(cdef, child, options), type);
+                        });
             },
         }, expr);
 }
@@ -792,20 +807,24 @@ bool is_supported_by(const expression& expr, const secondary_index::index& idx) 
             [&] (const conjunction& conj) {
                 return boost::algorithm::all_of(conj.children, std::bind(is_supported_by, _1, idx));
             },
-            [&] (const binary_operator& oper) {
+            [&] (const atom& a) {
                 return std::visit(overloaded_functor{
-                        [&] (const column_value& col) {
-                            return idx.supports_expression(*col.col, oper.op);
+                        [&] (const binary_operator& oper) {
+                            return std::visit(overloaded_functor{
+                                    [&] (const column_value& col) {
+                                        return idx.supports_expression(*col.col, oper.op);
+                                    },
+                                    [&] (const std::vector<column_value>& cvs) {
+                                        return boost::algorithm::any_of(cvs, [&] (const column_value& c) {
+                                            return idx.supports_expression(*c.col, oper.op);
+                                        });
+                                    },
+                                    [&] (const token&) { return false; },
+                                }, oper.lhs);
                         },
-                        [&] (const std::vector<column_value>& cvs) {
-                            return boost::algorithm::any_of(cvs, [&] (const column_value& c) {
-                                return idx.supports_expression(*c.col, oper.op);
-                            });
-                        },
-                        [&] (const token&) { return false; },
-                    }, oper.lhs);
+                        [] (const auto& default_case) { return false; }
+                    }, a);
             },
-            [] (const auto& default_case) { return false; }
         }, expr);
 }
 
@@ -831,19 +850,21 @@ std::ostream& operator<<(std::ostream& os, const column_value& cv) {
 
 std::ostream& operator<<(std::ostream& os, const expression& expr) {
     std::visit(overloaded_functor{
-            [&] (bool b) { os << (b ? "TRUE" : "FALSE"); },
             [&] (const conjunction& conj) { fmt::print(os, "({})", fmt::join(conj.children, ") AND (")); },
-            [&] (const binary_operator& opr) {
+            [&] (const atom& a) {
                 std::visit(overloaded_functor{
-                        [&] (const token& t) { os << "TOKEN"; },
-                        [&] (const column_value& col) {
-                            fmt::print(os, "({})", col);
+                        [&] (bool b) { os << (b ? "TRUE" : "FALSE"); },
+                        [&] (const binary_operator& opr) {
+                            std::visit(overloaded_functor{
+                                    [&] (const token& t) { os << "TOKEN"; },
+                                    [&] (const column_value& col) { fmt::print(os, "({})", col); },
+                                    [&] (const std::vector<column_value>& cvs) {
+                                        fmt::print(os, "(({}))", fmt::join(cvs, ","));
+                                    },
+                                }, opr.lhs);
+                            os << ' ' << opr.op << ' ' << *opr.rhs;
                         },
-                        [&] (const std::vector<column_value>& cvs) {
-                            fmt::print(os, "(({}))", fmt::join(cvs, ","));
-                        },
-                    }, opr.lhs);
-                os << ' ' << opr.op << ' ' << *opr.rhs;
+                    }, a);
             },
         }, expr);
     return os;
@@ -865,22 +886,27 @@ bool is_on_collection(const binary_operator& b) {
 
 expression replace_column_def(const expression& expr, const column_definition* new_cdef) {
     return std::visit(overloaded_functor{
-            [] (bool b){ return expression(b); },
             [&] (const conjunction& conj) {
                 const auto applied = conj.children | transformed(
                         std::bind(replace_column_def, std::placeholders::_1, new_cdef));
                 return expression(conjunction{std::vector(applied.begin(), applied.end())});
             },
-            [&] (const binary_operator& oper) {
+            [&] (const atom& a) {
                 return std::visit(overloaded_functor{
-                        [&] (const column_value& col) {
-                            return expression(binary_operator{column_value{new_cdef}, oper.op, oper.rhs});
+                        [] (bool b) { return expression(b); },
+                        [&] (const binary_operator& oper) {
+                            return std::visit(overloaded_functor{
+                                    [&] (const column_value& col) {
+                                        return expression(binary_operator{column_value{new_cdef}, oper.op, oper.rhs});
+                                    },
+                                    [&] (const std::vector<column_value>& cvs) -> expression {
+                                        throw std::logic_error(
+                                                format("replace_column_def invalid LHS: {}", to_string(oper)));
+                                    },
+                                    [&] (const token&) { return expr; },
+                                }, oper.lhs);
                         },
-                        [&] (const std::vector<column_value>& cvs) -> expression {
-                            throw std::logic_error(format("replace_column_def invalid LHS: {}", to_string(oper)));
-                        },
-                        [&] (const token&) { return expr; },
-                    }, oper.lhs);
+                    }, a);
             },
         }, expr);
 }

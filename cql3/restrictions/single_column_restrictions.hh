@@ -151,7 +151,7 @@ public:
      * @throws InvalidRequestException if the new restriction cannot be added
      */
     void add_restriction(::shared_ptr<single_column_restriction> restriction) {
-        if (!find(restriction->expression, expr::oper_t::EQ)) {
+        if (!find_binop(restriction->expression, expr::oper_t::EQ)) {
             _is_all_eq = false;
         }
 
@@ -233,7 +233,12 @@ public:
     bool has_multiple_contains() const {
         uint32_t number_of_contains = 0;
         for (auto&& e : _restrictions) {
-            number_of_contains += count_if(e.second->expression, expr::is_on_collection);
+            number_of_contains += count_if(e.second->expression, [] (const expr::atom& a) {
+                    if (auto binop = std::get_if<expr::binary_operator>(&a)) {
+                        return is_on_collection(*binop);
+                    }
+                    return false;
+                });
             if (number_of_contains > 1) {
                 return true;
             }

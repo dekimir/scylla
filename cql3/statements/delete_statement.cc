@@ -156,6 +156,11 @@ bool bounds_ck_symmetrically(const expression& expr) {
                 }
             }
         }
+
+        /// Updates state for an atom.
+        void operator()(const atom& a) {
+            std::visit(*this, a);
+        }
     } tracker;
 
     std::visit(tracker, expr);

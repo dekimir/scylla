@@ -174,7 +174,7 @@ public:
     }
 
     virtual void merge_with(::shared_ptr<restriction> restriction) override {
-        if (find_atom(restriction->expression, [] (const expr::binary_operator& b) {
+        if (find_binop(restriction->expression, [] (const expr::binary_operator& b) {
                     return std::holds_alternative<std::vector<expr::column_value>>(b.lhs)
                             && std::get<std::vector<expr::column_value>>(b.lhs).size() > 1;
                 })) {
@@ -225,7 +225,8 @@ private:
         if (_restrictions->is_all_eq()) {
             if (_restrictions->size() == 1) {
                 auto&& e = *restrictions().begin();
-                const auto b = std::get<expr::binary_operator>(e.second->expression).rhs->bind_and_get(options);
+                const auto b = std::get<expr::binary_operator>(std::get<expr::atom>(e.second->expression))
+                        .rhs->bind_and_get(options);
                 if (!b) {
                     throw exceptions::invalid_request_exception(sprint(invalid_null_msg, e.first->name_as_text()));
                 }
@@ -236,7 +237,8 @@ private:
             for (auto&& e : restrictions()) {
                 const column_definition* def = e.first;
                 assert(components.size() == _schema->position(*def));
-                const auto b = std::get<expr::binary_operator>(e.second->expression).rhs->bind_and_get(options);
+                const auto b = std::get<expr::binary_operator>(std::get<expr::atom>(e.second->expression))
+                        .rhs->bind_and_get(options);
                 if (!b) {
                     throw exceptions::invalid_request_exception(sprint(invalid_null_msg, e.first->name_as_text()));
                 }

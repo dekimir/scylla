@@ -52,10 +52,14 @@ struct allow_local_index_tag {};
 using allow_local_index = bool_class<allow_local_index_tag>;
 
 class binary_operator;
+
+/// An expression without subexpressions.  bool means a Boolean constant.
+using atom = std::variant<bool, binary_operator>;
+
 class conjunction;
 
-/// A restriction expression -- union of all possible restriction types.  bool means a Boolean constant.
-using expression = std::variant<bool, conjunction, binary_operator>;
+/// A restriction expression -- union of all possible restriction types.
+using expression = std::variant<conjunction, atom>;
 
 /// A column, optionally subscripted by a term (eg, c1 or c2['abc']).
 struct column_value {
@@ -148,14 +152,13 @@ extern std::ostream& operator<<(std::ostream&, const column_value&);
 
 extern std::ostream& operator<<(std::ostream&, const expression&);
 
-/// If there is a binary_operator atom b for which f(b) is true, returns it.  Otherwise returns null.
+/// If there is an atom a for which f(a) is true, returns it.  Otherwise returns null.
 template<typename Fn>
-requires std::regular_invocable<Fn, const binary_operator&>
-const binary_operator* find_atom(const expression& e, Fn f) {
+requires std::regular_invocable<Fn, const atom&>
+const atom* find_atom(const expression& e, Fn f) {
     return std::visit(overloaded_functor{
-            [&] (const binary_operator& op) { return f(op) ? &op : nullptr; },
-            [] (bool) -> const binary_operator* { return nullptr; },
-            [&] (const conjunction& conj) -> const binary_operator* {
+            [&] (const atom& a) { return f(a) ? &a : nullptr; },
+            [&] (const conjunction& conj) -> const atom* {
                 for (auto& child : conj.children) {
                     if (auto found = find_atom(child, f)) {
                         return found;
@@ -166,22 +169,42 @@ const binary_operator* find_atom(const expression& e, Fn f) {
         }, e);
 }
 
-/// Counts binary_operator atoms b for which f(b) is true.
+/// Counts atoms b for which f(b) is true.
 template<typename Fn>
-requires std::regular_invocable<Fn, const binary_operator&>
+requires std::regular_invocable<Fn, const atom&>
 size_t count_if(const expression& e, Fn f) {
     return std::visit(overloaded_functor{
-            [&] (const binary_operator& op) -> size_t { return f(op) ? 1 : 0; },
+            [&] (const atom& a) -> size_t { return f(a) ? 1 : 0; },
             [&] (const conjunction& conj) {
                 return std::accumulate(conj.children.cbegin(), conj.children.cend(), size_t{0},
                                        [&] (size_t acc, const expression& c) { return acc + count_if(c, f); });
             },
-            [] (bool) -> size_t { return 0; },
         }, e);
 }
 
-inline const binary_operator* find(const expression& e, oper_t op) {
-    return find_atom(e, [&] (const binary_operator& o) { return o.op == op; });
+/// If there is a binary_operator b for which f(b) is true, returns it.  Otherwise returns null.
+template<typename Fn>
+requires std::regular_invocable<Fn, const binary_operator&>
+const binary_operator* find_binop(const expression& e, Fn f) {
+    return std::get_if<binary_operator>(
+            find_atom(e, [&] (const atom& a) {
+                if (auto binop = std::get_if<binary_operator>(&a)) {
+                    return f(*binop);
+                }
+                return false;
+            }));
+}
+
+/// If there is a binary_operator op in e, returns it.  Otherwise, returns null.
+inline const binary_operator* find_binop(const expression& e, oper_t op) {
+    return find_binop(e, [op] (const binary_operator& b) { return b.op == op; });
+}
+
+/// If there is a binary_operator b for which f(b.op) is true, returns it.  Otherwise returns null.
+template<typename Fn>
+requires std::regular_invocable<Fn, oper_t>
+const binary_operator* find_binop(const expression& e, Fn f) {
+    return find_binop(e, [&] (const binary_operator& b) { return f(b.op); });
 }
 
 inline bool needs_filtering(oper_t op) {
@@ -189,7 +212,7 @@ inline bool needs_filtering(oper_t op) {
 }
 
 inline auto find_needs_filtering(const expression& e) {
-    return find_atom(e, [] (const binary_operator& bo) { return needs_filtering(bo.op); });
+    return find_binop(e, needs_filtering);
 }
 
 inline bool is_slice(oper_t op) {
@@ -197,7 +220,7 @@ inline bool is_slice(oper_t op) {
 }
 
 inline bool has_slice(const expression& e) {
-    return find_atom(e, [] (const binary_operator& bo) { return is_slice(bo.op); });
+    return find_binop(e, is_slice);
 }
 
 inline bool is_compare(oper_t op) {
@@ -215,11 +238,11 @@ inline bool is_compare(oper_t op) {
 }
 
 inline bool has_token(const expression& e) {
-    return find_atom(e, [] (const binary_operator& o) { return std::holds_alternative<token>(o.lhs); });
+    return find_binop(e, [] (const binary_operator& o) { return std::holds_alternative<token>(o.lhs); });
 }
 
 inline bool has_slice_or_needs_filtering(const expression& e) {
-    return find_atom(e, [] (const binary_operator& o) { return is_slice(o.op) || needs_filtering(o.op); });
+    return find_binop(e, [] (const binary_operator& o) { return is_slice(o.op) || needs_filtering(o.op); });
 }
 
 /// True iff binary_operator involves a collection.
