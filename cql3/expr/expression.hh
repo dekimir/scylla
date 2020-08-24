@@ -208,7 +208,14 @@ const binary_operator* find_binop(const expression& e, Fn f) {
 }
 
 inline bool needs_filtering(oper_t op) {
-    return (op == oper_t::CONTAINS) || (op == oper_t::CONTAINS_KEY) || (op == oper_t::LIKE);
+    switch (op) {
+    case oper_t::CONTAINS:
+    case oper_t::CONTAINS_KEY:
+    case oper_t::LIKE:
+        return true;
+    default:
+        return false;
+    }
 }
 
 inline auto find_needs_filtering(const expression& e) {
@@ -216,7 +223,15 @@ inline auto find_needs_filtering(const expression& e) {
 }
 
 inline bool is_slice(oper_t op) {
-    return (op == oper_t::LT) || (op == oper_t::LTE) || (op == oper_t::GT) || (op == oper_t::GTE);
+    switch (op) {
+    case oper_t::LT:
+    case oper_t::LTE:
+    case oper_t::GT:
+    case oper_t::GTE:
+        return true;
+    default:
+        return false;
+    }
 }
 
 inline bool has_slice(const expression& e) {
