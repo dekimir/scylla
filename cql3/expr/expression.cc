@@ -538,6 +538,10 @@ bool is_satisfied_by(const expression& restr, const column_value_eval_bag& bag) 
                 return std::visit(overloaded_functor{
                         [&] (bool v) { return v; },
                         [&] (const binary_operator& opr) { return is_satisfied_by(opr, bag); },
+                        [&] (const match_regex& mr) {
+                            const auto val = get_value(mr.lhs, bag);
+                            return val ? boost::u32regex_match(val->begin(), val->end(), mr.re) : false;
+                        },
                     }, a);
             },
             [&] (const conjunction& conj) {
@@ -670,9 +674,8 @@ namespace {
 value_set possible_lhs_values(const column_definition* cdef, const atom& expr, const query_options& options) {
     const auto type = cdef ? get_value_comparator(cdef)->as_less_comparator() : long_type->as_less_comparator();
     return std::visit(overloaded_functor{
-            [] (bool b) {
-                return b ? unbounded_value_set : empty_value_set;
-            },
+            [] (bool b) { return b ? unbounded_value_set : empty_value_set; },
+            [] (const match_regex&) { return unbounded_value_set; },
             [&] (const binary_operator& oper) -> value_set {
                 return std::visit(overloaded_functor{
                         [&] (const column_value& col) -> value_set {
@@ -864,6 +867,14 @@ std::ostream& operator<<(std::ostream& os, const expression& expr) {
                                 }, opr.lhs);
                             os << ' ' << opr.op << ' ' << *opr.rhs;
                         },
+                        [&] (const match_regex& mr) {
+                            os << mr.lhs << " MATCHES ";
+                            const auto str = mr.re.str();
+                            using conv_type = boost::u32_to_u8_iterator<decltype(str.cbegin()), char>;
+                            for (auto i = conv_type(str.cbegin()), e = conv_type(str.cend()); i != e; ++i) {
+                                os << *i;
+                            }
+                        },
                     }, a);
             },
         }, expr);
@@ -894,6 +905,7 @@ expression replace_column_def(const expression& expr, const column_definition* n
             [&] (const atom& a) {
                 return std::visit(overloaded_functor{
                         [] (bool b) { return expression(b); },
+                        [&] (const match_regex& mr) { return expression(match_regex{column_value{new_cdef}, mr.re}); },
                         [&] (const binary_operator& oper) {
                             return std::visit(overloaded_functor{
                                     [&] (const column_value& col) {

@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <boost/regex/icu.hpp>
 #include <fmt/core.h>
 #include <ostream>
 #include <seastar/core/shared_ptr.hh>
@@ -52,9 +53,10 @@ struct allow_local_index_tag {};
 using allow_local_index = bool_class<allow_local_index_tag>;
 
 class binary_operator;
+class match_regex;
 
 /// An expression without subexpressions.  bool means a Boolean constant.
-using atom = std::variant<bool, binary_operator>;
+using atom = std::variant<bool, binary_operator, match_regex>;
 
 class conjunction;
 
@@ -82,6 +84,12 @@ struct binary_operator {
     std::variant<column_value, std::vector<column_value>, token> lhs;
     oper_t op;
     ::shared_ptr<term> rhs;
+};
+
+/// Matches a column's value (presumed to be UTF-8 encoded) to a regex.
+struct match_regex {
+    column_value lhs;
+    boost::u32regex re;
 };
 
 /// A conjunction of restrictions.
@@ -219,7 +227,13 @@ inline bool needs_filtering(oper_t op) {
 }
 
 inline auto find_needs_filtering(const expression& e) {
-    return find_binop(e, needs_filtering);
+    return find_atom(e, [] (const atom& a) {
+        return std::visit(overloaded_functor{
+                [] (bool) { return false; },
+                [] (const binary_operator& b) { return needs_filtering(b.op); },
+                [] (const match_regex&) { return true; },
+            }, a);
+    });
 }
 
 inline bool is_slice(oper_t op) {
