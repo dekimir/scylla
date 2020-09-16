@@ -411,10 +411,7 @@ void statement_restrictions::process_clustering_columns_restrictions(bool has_qu
     }
 
     const bool needs_filtering = _clustering_columns_restrictions->needs_filtering(*_schema);
-    if (needs_filtering) {
-        if (has_queriable_index) {
-            _uses_secondary_indexing = true;
-        } else if (!allow_filtering && !for_view) {
+    if (needs_filtering && !has_queriable_index && !allow_filtering && !for_view) {
             auto clustering_columns_iter = _schema->clustering_key_columns().begin();
             for (auto&& restricted_column : _clustering_columns_restrictions->get_column_defs()) {
                 const column_definition* clustering_column = &(*clustering_columns_iter);
@@ -424,11 +421,10 @@ void statement_restrictions::process_clustering_columns_restrictions(bool has_qu
                             restricted_column->name_as_text(), clustering_column->name_as_text()));
                 }
             }
-        }
     }
 
     // Covers indexes on the first clustering column (among others).
-    _uses_secondary_indexing |= (has_queriable_index && _is_key_range);
+    _uses_secondary_indexing |= (has_queriable_index && (needs_filtering || _is_key_range));
 
     if (_uses_secondary_indexing || needs_filtering) {
         _index_restrictions.push_back(_clustering_columns_restrictions);
