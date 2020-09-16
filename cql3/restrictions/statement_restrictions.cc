@@ -229,41 +229,6 @@ statement_restrictions::statement_restrictions(database& db,
 
     process_clustering_columns_restrictions(has_queriable_clustering_column_index, select_a_collection, for_view, allow_filtering);
 
-    // Covers indexes on the first clustering column (among others).
-    if (_is_key_range && has_queriable_clustering_column_index) {
-        _uses_secondary_indexing = true;
-    }
-
-    if (_uses_secondary_indexing || _clustering_columns_restrictions->needs_filtering(*_schema)) {
-        _index_restrictions.push_back(_clustering_columns_restrictions);
-    } else if (find_atom(_clustering_columns_restrictions->expression, expr::is_on_collection)) {
-        fail(unimplemented::cause::INDEXES);
-#if 0
-        _index_restrictions.push_back(new Forwardingprimary_key_restrictions() {
-
-            @Override
-            protected primary_key_restrictions getDelegate()
-            {
-                return _clustering_columns_restrictions;
-            }
-
-            @Override
-            public void add_index_expression_to(List<::shared_ptr<index_expression>> expressions, const query_options& options) throws InvalidRequestException
-            {
-                List<::shared_ptr<index_expression>> list = new ArrayList<>();
-                super.add_index_expression_to(list, options);
-
-                for (::shared_ptr<index_expression> expression : list)
-                {
-                    if (expression.is_contains() || expression.is_containsKey())
-                        expressions.add(expression);
-                }
-            }
-        });
-        uses_secondary_indexing = true;
-#endif
-    }
-
     if (!_nonprimary_key_restrictions->empty()) {
         if (has_queriable_regular_index) {
             _uses_secondary_indexing = true;
@@ -459,6 +424,17 @@ void statement_restrictions::process_clustering_columns_restrictions(bool has_qu
                 }
             }
         }
+    }
+
+    // Covers indexes on the first clustering column (among others).
+    if (_is_key_range && has_queriable_index) {
+        _uses_secondary_indexing = true;
+    }
+
+    if (_uses_secondary_indexing || _clustering_columns_restrictions->needs_filtering(*_schema)) {
+        _index_restrictions.push_back(_clustering_columns_restrictions);
+    } else if (find_atom(_clustering_columns_restrictions->expression, expr::is_on_collection)) {
+        fail(unimplemented::cause::INDEXES);
     }
 }
 
