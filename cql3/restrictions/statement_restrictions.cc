@@ -410,7 +410,8 @@ void statement_restrictions::process_clustering_columns_restrictions(bool has_qu
             "Cannot restrict clustering columns by a CONTAINS relation without a secondary index or filtering");
     }
 
-    if (_clustering_columns_restrictions->needs_filtering(*_schema)) {
+    const bool needs_filtering = _clustering_columns_restrictions->needs_filtering(*_schema);
+    if (needs_filtering) {
         if (has_queriable_index) {
             _uses_secondary_indexing = true;
         } else if (!allow_filtering && !for_view) {
@@ -431,7 +432,7 @@ void statement_restrictions::process_clustering_columns_restrictions(bool has_qu
         _uses_secondary_indexing = true;
     }
 
-    if (_uses_secondary_indexing || _clustering_columns_restrictions->needs_filtering(*_schema)) {
+    if (_uses_secondary_indexing || needs_filtering) {
         _index_restrictions.push_back(_clustering_columns_restrictions);
     } else if (find_atom(_clustering_columns_restrictions->expression, expr::is_on_collection)) {
         fail(unimplemented::cause::INDEXES);
