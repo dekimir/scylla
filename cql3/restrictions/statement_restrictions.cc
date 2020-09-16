@@ -412,15 +412,16 @@ void statement_restrictions::process_clustering_columns_restrictions(bool has_qu
 
     const bool needs_filtering = _clustering_columns_restrictions->needs_filtering(*_schema);
     if (needs_filtering && !has_queriable_index && !allow_filtering && !for_view) {
-            auto clustering_columns_iter = _schema->clustering_key_columns().begin();
-            for (auto&& restricted_column : _clustering_columns_restrictions->get_column_defs()) {
-                const column_definition* clustering_column = &(*clustering_columns_iter);
-                ++clustering_columns_iter;
-                if (clustering_column != restricted_column) {
-                        throw exceptions::invalid_request_exception(format("PRIMARY KEY column \"{}\" cannot be restricted as preceding column \"{}\" is not restricted",
-                            restricted_column->name_as_text(), clustering_column->name_as_text()));
-                }
+        auto clustering_columns_iter = _schema->clustering_key_columns().begin();
+        for (auto&& restricted_column : _clustering_columns_restrictions->get_column_defs()) {
+            const column_definition* clustering_column = &(*clustering_columns_iter);
+            ++clustering_columns_iter;
+            if (clustering_column != restricted_column) {
+                throw exceptions::invalid_request_exception(
+                        format("PRIMARY KEY column \"{}\" cannot be restricted as preceding column \"{}\" is not restricted",
+                               restricted_column->name_as_text(), clustering_column->name_as_text()));
             }
+        }
     }
 
     // Covers indexes on the first clustering column (among others).
