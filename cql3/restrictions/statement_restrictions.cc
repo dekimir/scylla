@@ -200,12 +200,6 @@ statement_restrictions::statement_restrictions(database& db,
     // At this point, the select statement if fully constructed, but we still have a few things to validate
     process_partition_key_restrictions(has_queriable_pk_index, for_view, allow_filtering);
 
-    // Some but not all of the partition key columns have been specified;
-    // hence we need turn these restrictions into index expressions.
-    if (_partition_key_restrictions->needs_filtering(*_schema)) {
-        _index_restrictions.push_back(_partition_key_restrictions);
-    }
-
     // If the only updated/deleted columns are static, then we don't need clustering columns.
     // And in fact, unless it is an INSERT, we reject if clustering columns are provided as that
     // suggest something unintended. For instance, given:
@@ -383,8 +377,10 @@ void statement_restrictions::process_partition_key_restrictions(bool has_queriab
         }
         _is_key_range = true;
         _uses_secondary_indexing = has_queriable_index;
+        // Some but not all of the partition key columns have been specified;
+        // hence we need turn these restrictions into index expressions.
+        _index_restrictions.push_back(_partition_key_restrictions);
     }
-
 }
 
 bool statement_restrictions::has_partition_key_unrestricted_components() const {
