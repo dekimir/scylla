@@ -202,7 +202,7 @@ statement_restrictions::statement_restrictions(database& db,
 
     // Some but not all of the partition key columns have been specified;
     // hence we need turn these restrictions into index expressions.
-    if (_uses_secondary_indexing || _partition_key_restrictions->needs_filtering(*_schema)) {
+    if (_partition_key_restrictions->needs_filtering(*_schema)) {
         _index_restrictions.push_back(_partition_key_restrictions);
     }
 
@@ -408,12 +408,7 @@ void statement_restrictions::process_partition_key_restrictions(bool has_queriab
     // - Is it queriable without 2ndary index, which is always more efficient
     // If a component of the partition key is restricted by a relation, all preceding
     // components must have a EQ. Only the last partition key component can be in IN relation.
-    if (has_token(_partition_key_restrictions->expression)) {
-        _is_key_range = true;
-    } else if (_partition_key_restrictions->empty()) {
-        _is_key_range = true;
-        _uses_secondary_indexing = has_queriable_index;
-    }
+    _is_key_range = has_token(_partition_key_restrictions->expression) || _partition_key_restrictions->empty();
 
     if (_partition_key_restrictions->needs_filtering(*_schema)) {
         if (!allow_filtering && !for_view && !has_queriable_index) {
