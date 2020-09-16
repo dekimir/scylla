@@ -428,9 +428,7 @@ void statement_restrictions::process_clustering_columns_restrictions(bool has_qu
     }
 
     // Covers indexes on the first clustering column (among others).
-    if (_is_key_range && has_queriable_index) {
-        _uses_secondary_indexing = true;
-    }
+    _uses_secondary_indexing |= (has_queriable_index && _is_key_range);
 
     if (_uses_secondary_indexing || needs_filtering) {
         _index_restrictions.push_back(_clustering_columns_restrictions);
