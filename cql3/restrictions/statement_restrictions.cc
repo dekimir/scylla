@@ -410,7 +410,7 @@ void statement_restrictions::process_clustering_columns_restrictions(bool has_qu
             "Cannot restrict clustering columns by a CONTAINS relation without a secondary index or filtering");
     }
 
-    if (has_clustering_columns_restriction() && _clustering_columns_restrictions->needs_filtering(*_schema)) {
+    if (_clustering_columns_restrictions->needs_filtering(*_schema)) {
         if (has_queriable_index) {
             _uses_secondary_indexing = true;
         } else if (!allow_filtering && !for_view) {
