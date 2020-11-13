@@ -149,7 +149,7 @@ future<> password_authenticator::create_default_if_missing() const {
     });
 }
 
-future<> password_authenticator::start() {
+future<> password_authenticator::start(service&) {
      return once_among_shards([this] {
          auto f = create_metadata_table_if_missing(
                  meta::roles_table::name,

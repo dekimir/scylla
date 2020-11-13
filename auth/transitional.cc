@@ -74,8 +74,8 @@ public:
             : _authenticator(std::move(a)) {
     }
 
-    virtual future<> start() override {
-        return _authenticator->start();
+    virtual future<> start(service& s) override {
+        return _authenticator->start(s);
     }
 
     virtual future<> stop() override {

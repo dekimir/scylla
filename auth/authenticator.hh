@@ -67,6 +67,7 @@ namespace db {
 namespace auth {
 
 class authenticated_user;
+class service;
 
 ///
 /// Abstract client for authenticating role identity.
@@ -89,7 +90,7 @@ public:
 
     virtual ~authenticator() = default;
 
-    virtual future<> start() = 0;
+    virtual future<> start(service&) = 0;
 
     virtual future<> stop() = 0;
 

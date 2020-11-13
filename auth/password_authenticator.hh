@@ -67,7 +67,7 @@ public:
 
     ~password_authenticator();
 
-    virtual future<> start() override;
+    virtual future<> start(service&) override;
 
     virtual future<> stop() override;
 

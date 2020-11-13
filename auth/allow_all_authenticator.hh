@@ -44,7 +44,7 @@ public:
     allow_all_authenticator(cql3::query_processor&, ::service::migration_manager&) {
     }
 
-    virtual future<> start() override {
+    virtual future<> start(service&) override {
         return make_ready_future<>();
     }
 

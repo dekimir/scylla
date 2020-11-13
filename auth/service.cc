@@ -165,7 +165,7 @@ future<> service::start(::service::migration_manager& mm) {
         return create_keyspace_if_missing(mm);
     }).then([this] {
         return _role_manager->start().then([this] {
-            return when_all_succeed(_authorizer->start(), _authenticator->start()).discard_result();
+            return when_all_succeed(_authorizer->start(), _authenticator->start(*this)).discard_result();
         });
     }).then([this] {
         _permissions_cache = std::make_unique<permissions_cache>(_permissions_cache_config, *this, log);
