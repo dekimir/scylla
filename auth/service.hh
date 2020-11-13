@@ -22,6 +22,7 @@
 #pragma once
 
 #include <string_view>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -72,10 +73,12 @@ public:
 
 /// A description of a CQL command from which auth::service can tell whether or not this command could endanger
 /// internal data on which auth::service depends.
-struct command_desc {};
+struct command_desc {
+    const resource& resource; ///< Resource impacted by this command.
+};
 
 /// A predicate on command_desc that decides whether it's safe to execute.
-using protector = bool(*)(command_desc);
+using protector = std::function<bool(command_desc)>;
 
 ///
 /// Client for access-control in the system.

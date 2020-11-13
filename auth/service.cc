@@ -377,7 +377,7 @@ bool is_enforcing(const service& ser)  {
 
 bool is_protected(const service& ser, const resource& r) noexcept {
     return ser.underlying_role_manager().protected_resources().contains(r)
-            || ser.underlying_authenticator().protected_resources().contains(r)
+            || !ser.is_safe(command_desc{r})
             || ser.underlying_authorizer().protected_resources().contains(r);
 }
 
