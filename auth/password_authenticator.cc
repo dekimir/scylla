@@ -149,13 +149,15 @@ future<> password_authenticator::create_default_if_missing() const {
     });
 }
 
-future<> password_authenticator::start(service&) {
-     return once_among_shards([this] {
+future<> password_authenticator::start(service& svc) {
+     return once_among_shards([this, &svc] {
          auto f = create_metadata_table_if_missing(
                  meta::roles_table::name,
                  _qp,
                  meta::roles_table::creation_query(),
-                 _migration_manager);
+                 _migration_manager).then([&svc] {
+                     svc.add_protector([] (command_desc) { return true; });
+                 });
 
          _stopped = do_after_system_ready(_as, [this] {
              return async([this] {

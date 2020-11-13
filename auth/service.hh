@@ -24,6 +24,7 @@
 #include <string_view>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include <seastar/core/future.hh>
 #include <seastar/core/sstring.hh>
@@ -69,6 +70,13 @@ public:
     using std::invalid_argument::invalid_argument;
 };
 
+/// A description of a CQL command from which auth::service can tell whether or not this command could endanger
+/// internal data on which auth::service depends.
+struct command_desc {};
+
+/// A predicate on command_desc that decides whether it's safe to execute.
+using protector = bool(*)(command_desc);
+
 ///
 /// Client for access-control in the system.
 ///
@@ -97,6 +105,7 @@ class service final : public seastar::peering_sharded_service<service> {
     // Only one of these should be registered, so we end up with some unused instances. Not the end of the world.
     std::unique_ptr<::service::migration_listener> _migration_listener;
 
+    std::vector<protector> _protectors;
 public:
     service(
             permissions_cache_config,
@@ -160,6 +169,15 @@ public:
     const role_manager& underlying_role_manager() const {
         return *_role_manager;
     }
+
+    /// Registers a protector for is_safe().
+    void add_protector(protector p) { _protectors.push_back(p); }
+
+    /// Removes all registered protectors.
+    void reset_protectors() { _protectors.clear(); }
+
+    /// True iff command is safe for this service.  Requires all registered protectors to return true;
+    bool is_safe(command_desc) const;
 
 private:
     future<bool> has_existing_legacy_users() const;

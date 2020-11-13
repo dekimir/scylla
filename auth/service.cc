@@ -335,6 +335,10 @@ future<bool> service::exists(const resource& r) const {
     return make_ready_future<bool>(false);
 }
 
+bool service::is_safe(command_desc cmd) const {
+    return all_of(_protectors.cbegin(), _protectors.cend(), [&] (protector p) { return p(cmd); });
+}
+
 //
 // Free functions.
 //
