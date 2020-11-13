@@ -133,10 +133,6 @@ public:
         return _authenticator->query_custom_options(role_name);
     }
 
-    virtual const resource_set& protected_resources() const override {
-        return _authenticator->protected_resources();
-    }
-
     virtual ::shared_ptr<sasl_challenge> new_sasl_challenge() const override {
         class sasl_wrapper : public sasl_challenge {
         public:

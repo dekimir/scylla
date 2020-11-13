@@ -311,7 +311,7 @@ future<custom_options> password_authenticator::query_custom_options(std::string_
     return make_ready_future<custom_options>();
 }
 
-const resource_set& password_authenticator::protected_resources() const {
+const resource_set& password_authenticator::protected_resources() {
     static const resource_set resources({make_data_resource(meta::AUTH_KS, meta::roles_table::name)});
     return resources;
 }

@@ -88,11 +88,6 @@ public:
         return make_ready_future<custom_options>();
     }
 
-    virtual const resource_set& protected_resources() const override {
-        static const resource_set resources;
-        return resources;
-    }
-
     virtual ::shared_ptr<sasl_challenge> new_sasl_challenge() const override {
         throw std::runtime_error("Should not reach");
     }

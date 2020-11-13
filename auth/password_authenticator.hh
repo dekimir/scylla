@@ -89,11 +89,12 @@ public:
 
     virtual future<custom_options> query_custom_options(std::string_view role_name) const override;
 
-    virtual const resource_set& protected_resources() const override;
-
     virtual ::shared_ptr<sasl_challenge> new_sasl_challenge() const override;
 
 private:
+    /// System resources used internally as part of the implementation. These are made inaccessible to users.
+    static const resource_set& protected_resources();
+
     bool legacy_metadata_exists() const;
 
     future<> migrate_legacy_metadata() const;

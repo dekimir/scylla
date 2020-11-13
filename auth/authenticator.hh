@@ -146,11 +146,6 @@ public:
     ///
     virtual future<custom_options> query_custom_options(std::string_view role_name) const = 0;
 
-    ///
-    /// System resources used internally as part of the implementation. These are made inaccessible to users.
-    ///
-    virtual const resource_set& protected_resources() const = 0;
-
     virtual ::shared_ptr<sasl_challenge> new_sasl_challenge() const = 0;
 };
 
