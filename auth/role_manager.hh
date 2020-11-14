@@ -37,6 +37,8 @@
 
 namespace auth {
 
+class service;
+
 struct role_config final {
     bool is_superuser{false};
     bool can_login{false};
@@ -108,7 +110,7 @@ public:
 
     virtual const resource_set& protected_resources() const = 0;
 
-    virtual future<> start() = 0;
+    virtual future<> start(service&) = 0;
 
     virtual future<> stop() = 0;
 

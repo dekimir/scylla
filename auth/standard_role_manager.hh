@@ -59,7 +59,7 @@ public:
 
     virtual const resource_set& protected_resources() const override;
 
-    virtual future<> start() override;
+    virtual future<> start(service&) override;
 
     virtual future<> stop() override;
 

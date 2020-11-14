@@ -164,7 +164,7 @@ future<> service::start(::service::migration_manager& mm) {
     return once_among_shards([this, &mm] {
         return create_keyspace_if_missing(mm);
     }).then([this] {
-        return _role_manager->start().then([this] {
+        return _role_manager->start(*this).then([this] {
             return when_all_succeed(_authorizer->start(*this), _authenticator->start(*this)).discard_result();
         });
     }).then([this] {
@@ -376,8 +376,7 @@ bool is_enforcing(const service& ser)  {
 }
 
 bool is_protected(const service& ser, const resource& r) noexcept {
-    return ser.underlying_role_manager().protected_resources().contains(r)
-            || !ser.is_safe(command_desc{r});
+    return !ser.is_safe(command_desc{r});
 }
 
 static void validate_authentication_options_are_supported(

@@ -213,9 +213,10 @@ future<> standard_role_manager::migrate_legacy_metadata() const {
     });
 }
 
-future<> standard_role_manager::start() {
-    return once_among_shards([this] {
-        return this->create_metadata_tables_if_missing().then([this] {
+future<> standard_role_manager::start(service& svc) {
+    return once_among_shards([this, &svc] {
+        return this->create_metadata_tables_if_missing().then([this, &svc] {
+            svc.add_protector([this] (command_desc cmd) { return !protected_resources().contains(cmd.resource); });
             _stopped = auth::do_after_system_ready(_as, [this] {
                 return seastar::async([this] {
                     wait_for_schema_agreement(_migration_manager, _qp.db(), _as).get0();

@@ -39,7 +39,7 @@ auto make_manager(cql_test_env& env) {
 SEASTAR_TEST_CASE(create_role) {
     return do_with_cql_env_thread([](auto&& env) {
         auto m = make_manager(env);
-        m->start().get0();
+        m->start(env.local_auth_service()).get0();
 
         const auto anon = auth::authenticated_user();
 
@@ -70,7 +70,7 @@ SEASTAR_TEST_CASE(create_role) {
 SEASTAR_TEST_CASE(drop_role) {
     return do_with_cql_env_thread([](auto&& env) {
         auto m = make_manager(env);
-        m->start().get0();
+        m->start(env.local_auth_service()).get0();
 
         const auto anon = auth::authenticated_user();
 
@@ -120,7 +120,7 @@ SEASTAR_TEST_CASE(drop_role) {
 SEASTAR_TEST_CASE(grant_role) {
     return do_with_cql_env_thread([](auto&& env) {
         auto m = make_manager(env);
-        m->start().get0();
+        m->start(env.local_auth_service()).get0();
 
         const auto anon = auth::authenticated_user();
 
@@ -162,7 +162,7 @@ SEASTAR_TEST_CASE(grant_role) {
 SEASTAR_TEST_CASE(revoke_role) {
     return do_with_cql_env_thread([](auto&& env) {
         auto m = make_manager(env);
-        m->start().get0();
+        m->start(env.local_auth_service()).get0();
 
         const auto anon = auth::authenticated_user();
 
@@ -201,7 +201,7 @@ SEASTAR_TEST_CASE(revoke_role) {
 SEASTAR_TEST_CASE(alter_role) {
     return do_with_cql_env_thread([](auto&& env) {
         auto m = make_manager(env);
-        m->start().get0();
+        m->start(env.local_auth_service()).get0();
 
         const auto anon = auth::authenticated_user();
 
