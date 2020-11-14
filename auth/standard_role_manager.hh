@@ -57,8 +57,6 @@ public:
 
     virtual std::string_view qualified_java_name() const noexcept override;
 
-    virtual const resource_set& protected_resources() const override;
-
     virtual future<> start(service&) override;
 
     virtual future<> stop() override;
@@ -84,6 +82,9 @@ public:
     virtual future<bool> can_login(std::string_view role_name) const override;
 
 private:
+    /// System resources used internally as part of the implementation. These are made inaccessible to users.
+    static const resource_set& protected_resources();
+
     enum class membership_change { add, remove };
 
     future<> create_metadata_tables_if_missing() const;

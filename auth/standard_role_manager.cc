@@ -124,7 +124,7 @@ std::string_view standard_role_manager::qualified_java_name() const noexcept {
     return "org.apache.cassandra.auth.CassandraRoleManager";
 }
 
-const resource_set& standard_role_manager::protected_resources() const {
+const resource_set& standard_role_manager::protected_resources() {
     static const resource_set resources({
             make_data_resource(meta::AUTH_KS, meta::roles_table::name),
             make_data_resource(meta::AUTH_KS, meta::role_members_table::name)});
