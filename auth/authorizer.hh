@@ -146,11 +146,6 @@ public:
     /// \throws \ref unsupported_authorization_operation if revoking permissions is not supported.
     ///
     virtual future<> revoke_all(const resource&) const = 0;
-
-    ///
-    /// System resources used internally as part of the implementation. These are made inaccessible to users.
-    ///
-    virtual const resource_set& protected_resources() const = 0;
 };
 
 }

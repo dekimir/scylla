@@ -232,10 +232,6 @@ public:
     virtual future<> revoke_all(const resource& r) const override {
         return _authorizer->revoke_all(r);
     }
-
-    virtual const resource_set& protected_resources() const override {
-        return _authorizer->protected_resources();
-    }
 };
 
 }

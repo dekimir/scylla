@@ -82,11 +82,6 @@ public:
         return make_exception_future(
                 unsupported_authorization_operation("REVOKE operation is not supported by AllowAllAuthorizer"));
     }
-
-    virtual const resource_set& protected_resources() const override {
-        static const resource_set resources;
-        return resources;
-    }
 };
 
 }

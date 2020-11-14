@@ -83,9 +83,10 @@ public:
 
     virtual future<> revoke_all(const resource&) const override;
 
-    virtual const resource_set& protected_resources() const override;
-
 private:
+    /// System resources used internally as part of the implementation. These are made inaccessible to users.
+    static const resource_set& protected_resources();
+
     bool legacy_metadata_exists() const;
 
     future<bool> any_granted() const;
