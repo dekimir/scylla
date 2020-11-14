@@ -157,7 +157,7 @@ future<> password_authenticator::start(service& svc) {
                  meta::roles_table::creation_query(),
                  _migration_manager).then([this, &svc] {
                      svc.add_protector([this] (command_desc cmd) {
-                         return !protected_resources().contains(cmd.resource);
+                         return !protected_resources().contains(cmd.resource) || cmd.alter_with_opts;
                      });
                  });
 

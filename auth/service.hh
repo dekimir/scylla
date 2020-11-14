@@ -75,6 +75,7 @@ public:
 /// internal data on which auth::service depends.
 struct command_desc {
     const resource& resource; ///< Resource impacted by this command.
+    bool alter_with_opts; ///< True iff command is ALTER ... WITH ...
 };
 
 /// A predicate on command_desc that decides whether it's safe to execute.

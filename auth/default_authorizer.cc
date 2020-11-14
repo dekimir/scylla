@@ -158,7 +158,9 @@ future<> default_authorizer::start(service& svc) {
                 _qp,
                 create_table,
                 _migration_manager).then([this, &svc] {
-            svc.add_protector([this] (command_desc cmd) { return !protected_resources().contains(cmd.resource); });
+            svc.add_protector([this] (command_desc cmd) {
+                return !protected_resources().contains(cmd.resource) || cmd.alter_with_opts;
+            });
             _finished = do_after_system_ready(_as, [this] {
                 return async([this] {
                     wait_for_schema_agreement(_migration_manager, _qp.db(), _as).get0();

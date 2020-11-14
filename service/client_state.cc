@@ -118,11 +118,11 @@ future<> service::client_state::has_keyspace_access(const sstring& ks,
 }
 
 future<> service::client_state::has_column_family_access(const sstring& ks,
-                const sstring& cf, auth::permission p) const {
+                const sstring& cf, auth::permission p, bool alter_with_opts) const {
     validation::validate_column_family(ks, cf);
 
-    return do_with(ks, auth::make_data_resource(ks, cf), [this, p](const auto& ks, const auto& r) {
-        return has_access(ks, p, r);
+    return do_with(ks, auth::make_data_resource(ks, cf), [this, p, alter_with_opts](const auto& ks, const auto& r) {
+        return has_access(ks, p, r, alter_with_opts);
     });
 }
 
@@ -135,7 +135,8 @@ future<> service::client_state::has_schema_access(const schema& s, auth::permiss
     });
 }
 
-future<> service::client_state::has_access(const sstring& ks, auth::permission p, const auth::resource& resource) const {
+future<> service::client_state::has_access(
+        const sstring& ks, auth::permission p, const auth::resource& resource, bool alter_with_opts) const {
     if (ks.empty()) {
         throw exceptions::invalid_request_exception("You have not set a keyspace for this session");
     }
@@ -187,7 +188,7 @@ future<> service::client_state::has_access(const sstring& ks, auth::permission p
     if (p == auth::permission::SELECT && readable_system_resources.contains(resource)) {
         return make_ready_future();
     }
-    if (!_auth_service->is_safe(auth::command_desc{resource})) {
+    if (!_auth_service->is_safe(auth::command_desc{resource, alter_with_opts})) {
             throw exceptions::unauthorized_exception(format("{} is protected", resource));
     }
 
