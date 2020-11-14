@@ -135,7 +135,7 @@ future<> default_authorizer::migrate_legacy_metadata() const {
     });
 }
 
-future<> default_authorizer::start() {
+future<> default_authorizer::start(service& svc) {
     static const sstring create_table = sprint(
             "CREATE TABLE %s.%s ("
             "%s text,"
@@ -152,12 +152,13 @@ future<> default_authorizer::start() {
             RESOURCE_NAME,
             90 * 24 * 60 * 60); // 3 months.
 
-    return once_among_shards([this] {
+    return once_among_shards([this, &svc] {
         return create_metadata_table_if_missing(
                 PERMISSIONS_CF,
                 _qp,
                 create_table,
-                _migration_manager).then([this] {
+                _migration_manager).then([this, &svc] {
+            svc.add_protector([this] (command_desc cmd) { return !protected_resources().contains(cmd.resource); });
             _finished = do_after_system_ready(_as, [this] {
                 return async([this] {
                     wait_for_schema_agreement(_migration_manager, _qp.db(), _as).get0();

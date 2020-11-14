@@ -65,7 +65,7 @@ public:
 
     ~default_authorizer();
 
-    virtual future<> start() override;
+    virtual future<> start(service&) override;
 
     virtual future<> stop() override;
 

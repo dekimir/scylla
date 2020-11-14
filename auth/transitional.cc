@@ -189,8 +189,8 @@ public:
     ~transitional_authorizer() {
     }
 
-    virtual future<> start() override {
-        return _authorizer->start();
+    virtual future<> start(service& s) override {
+        return _authorizer->start(s);
     }
 
     virtual future<> stop() override {

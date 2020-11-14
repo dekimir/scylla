@@ -58,6 +58,7 @@
 namespace auth {
 
 class role_or_anonymous;
+class service;
 
 struct permission_details {
     sstring role_name;
@@ -93,7 +94,7 @@ class authorizer {
 public:
     virtual ~authorizer() = default;
 
-    virtual future<> start() = 0;
+    virtual future<> start(service&) = 0;
 
     virtual future<> stop() = 0;
 
