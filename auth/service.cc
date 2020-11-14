@@ -375,10 +375,6 @@ bool is_enforcing(const service& ser)  {
     return enforcing_authorizer || enforcing_authenticator;
 }
 
-bool is_protected(const service& ser, const resource& r) noexcept {
-    return !ser.is_safe(command_desc{r});
-}
-
 static void validate_authentication_options_are_supported(
         const authentication_options& options,
         const authentication_option_set& supported) {
