@@ -323,6 +323,13 @@ SEASTAR_TEST_CASE(test_many_columns) {
                 {{int32_type->decompose(1)}, {int32_type->decompose(2)}, {int32_type->decompose(3)}, {int32_type->decompose(4)}, {int32_type->decompose(5)}, {int32_type->decompose(6)}},
             });
         });
+        BOOST_TEST_PASSPOINT();
+        eventually([&] {
+            // #7659
+            cquery_nofail(e, "SELECT * FROM tab WHERE d=0 AND f>0 ALLOW FILTERING");
+            cquery_nofail(e, "SELECT * FROM tab WHERE f=0 AND d>0 ALLOW FILTERING");
+            cquery_nofail(e, "SELECT * FROM tab WHERE f=0 AND f>0 ALLOW FILTERING");
+        });
     });
 }
 
@@ -1586,6 +1593,29 @@ SEASTAR_TEST_CASE(test_filtering_indexed_column) {
         eventually([&] {
             auto msg = cquery_nofail(e, "select d from ks.test_index where c > 25;");
             assert_that(msg).is_rows().with_rows({{int32_type->decompose(44)}});
+        });
+    });
+}
+
+namespace {
+
+auto I(int32_t x) { return int32_type->decompose(x); }
+
+} // anonymous namespace
+
+SEASTAR_TEST_CASE(indexed_multicolumn_where) {
+    return do_with_cql_env_thread([] (auto& e) {
+        cquery_nofail(e, "create table t (p int, c1 int, c2 int, c3 int, primary key(p, c1, c2, c3))");
+        cquery_nofail(e, "create index i3 on t(c3)");
+        cquery_nofail(e, "insert into t(p, c1, c2, c3) values (1, 11, 21, 31)");
+        cquery_nofail(e, "insert into t(p, c1, c2, c3) values (2, 12, 22, 32)");
+        eventually([&] {
+            assert_that(cquery_nofail(e, "select c1 from t where (c1)=(11)")).is_rows().with_rows({{I(11)}});
+            assert_that(cquery_nofail(e, "select c1 from t where (c1,c2)=(11,21)")).is_rows().with_rows({{I(11)}});
+#if 0 // TODO: Enable when #7680 is fixed.
+            assert_that(cquery_nofail(e, "select c1 from t where (c1,c2,c3)=(11,21,31)")).is_rows().with_rows({{I(11)}});
+            assert_that(cquery_nofail(e, "select c1 from t where (c1,c2,c3)=(11,21,33)")).is_rows().is_empty();
+#endif //0
         });
     });
 }
