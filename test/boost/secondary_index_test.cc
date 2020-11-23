@@ -255,10 +255,6 @@ SEASTAR_TEST_CASE(test_many_columns) {
         e.execute_cql("CREATE INDEX ON tab (d)").get();
         e.execute_cql("CREATE INDEX ON tab (e)").get();
         e.execute_cql("CREATE INDEX ON tab (f)").get();
-        // #7659
-        require_rows(e, "SELECT * FROM tab WHERE d=0 AND f>0 ALLOW FILTERING", {});
-        require_rows(e, "SELECT * FROM tab WHERE f=0 AND d>0 ALLOW FILTERING", {});
-        require_rows(e, "SELECT * FROM tab WHERE f=0 AND f>0 ALLOW FILTERING", {});
         e.execute_cql("INSERT INTO tab (a, b, c, d, e, f) VALUES (1, 2, 3, 4, 5, 6)").get();
         e.execute_cql("INSERT INTO tab (a, b, c, d, e, f) VALUES (1, 0, 0, 0, 0, 0)").get();
         e.execute_cql("INSERT INTO tab (a, b, c, d, e, f) VALUES (0, 2, 0, 0, 0, 0)").get();
@@ -326,6 +322,13 @@ SEASTAR_TEST_CASE(test_many_columns) {
                 {{int32_type->decompose(0)}, {int32_type->decompose(0)}, {int32_type->decompose(0)}, {int32_type->decompose(7)}, {int32_type->decompose(0)}, {int32_type->decompose(6)}},
                 {{int32_type->decompose(1)}, {int32_type->decompose(2)}, {int32_type->decompose(3)}, {int32_type->decompose(4)}, {int32_type->decompose(5)}, {int32_type->decompose(6)}},
             });
+        });
+        BOOST_TEST_PASSPOINT();
+        eventually([&] {
+            // #7659
+            cquery_nofail(e, "SELECT * FROM tab WHERE d=0 AND f>0 ALLOW FILTERING");
+            cquery_nofail(e, "SELECT * FROM tab WHERE f=0 AND d>0 ALLOW FILTERING");
+            cquery_nofail(e, "SELECT * FROM tab WHERE f=0 AND f>0 ALLOW FILTERING");
         });
     });
 }
