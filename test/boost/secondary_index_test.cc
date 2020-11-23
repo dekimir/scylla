@@ -258,6 +258,7 @@ SEASTAR_TEST_CASE(test_many_columns) {
         // #7659
         require_rows(e, "SELECT * FROM tab WHERE d=0 AND f>0 ALLOW FILTERING", {});
         require_rows(e, "SELECT * FROM tab WHERE f=0 AND d>0 ALLOW FILTERING", {});
+        require_rows(e, "SELECT * FROM tab WHERE f=0 AND f>0 ALLOW FILTERING", {});
         e.execute_cql("INSERT INTO tab (a, b, c, d, e, f) VALUES (1, 2, 3, 4, 5, 6)").get();
         e.execute_cql("INSERT INTO tab (a, b, c, d, e, f) VALUES (1, 0, 0, 0, 0, 0)").get();
         e.execute_cql("INSERT INTO tab (a, b, c, d, e, f) VALUES (0, 2, 0, 0, 0, 0)").get();
