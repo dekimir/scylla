@@ -345,24 +345,6 @@ std::optional<single_column_restrictions::restrictions_map> get_individual_restr
     return std::nullopt;
 }
 
-/// If rs contains a restriction on cdef, returns it; otherwise, returns null.
-const restriction* find(const column_definition* cdef, const restrictions* rs) {
-    if (auto rmap = get_individual_restrictions_map(rs)) {
-        const auto found = rmap->find(cdef);
-        if (found != rmap->end()) {
-            return found->second.get();
-        }
-        return nullptr;
-    }
-    if (auto mc = dynamic_cast<const multi_column_restriction*>(rs)) {
-        const auto defs = mc->get_column_defs();
-        if (boost::find(defs, cdef) != defs.end()) {
-            return mc;
-        }
-    }
-    return nullptr;
-}
-
 } // anonymous namespace
 
 std::pair<std::optional<secondary_index::index>, ::shared_ptr<cql3::restrictions::restrictions>> statement_restrictions::find_idx(secondary_index::secondary_index_manager& sim) const {
@@ -373,8 +355,10 @@ std::pair<std::optional<secondary_index::index>, ::shared_ptr<cql3::restrictions
     for (const auto& index : sim.list_indexes()) {
         auto cdef = _schema->get_column_definition(to_bytes(index.target_column()));
         for (::shared_ptr<cql3::restrictions::restrictions> restriction : index_restrictions()) {
-            if (auto found = find(cdef, restriction.get())) {
-                if (is_supported_by(found->expression, index) && score(index) > chosen_index_score) {
+            if (auto rmap = get_individual_restrictions_map(restriction.get())) {
+                const auto found = rmap->find(cdef);
+                if (found != rmap->end() && is_supported_by(found->second->expression, index)
+                    && score(index) > chosen_index_score) {
                     chosen_index = index;
                     chosen_index_score = score(index);
                     chosen_index_restrictions = restriction;
