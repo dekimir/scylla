@@ -333,16 +333,16 @@ namespace {
 
 using namespace cql3::restrictions;
 
-/// If rs contains a restrictions_map of individual columns to their restrictions, returns it.
-std::optional<single_column_restrictions::restrictions_map> get_individual_restrictions_map(const restrictions* rs) {
+/// If rs contains a restrictions_map of individual columns to their restrictions, returns it.  Otherwise, returns null.
+const single_column_restrictions::restrictions_map* get_individual_restrictions_map(const restrictions* rs) {
     if (auto regular = dynamic_cast<const single_column_restrictions*>(rs)) {
-        return regular->restrictions();
+        return &regular->restrictions();
     } else if (auto partition = dynamic_cast<const single_column_partition_key_restrictions*>(rs)) {
-        return partition->restrictions();
+        return &partition->restrictions();
     } else if (auto clustering = dynamic_cast<const single_column_clustering_key_restrictions*>(rs)) {
-        return clustering->restrictions();
+        return &clustering->restrictions();
     }
-    return std::nullopt;
+    return nullptr;
 }
 
 } // anonymous namespace
