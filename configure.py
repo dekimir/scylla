@@ -302,6 +302,7 @@ scylla_tests = set([
     'test/boost/clustering_ranges_walker_test',
     'test/boost/column_mapping_test',
     'test/boost/commitlog_test',
+    'test/boost/compiler_test',
     'test/boost/compound_test',
     'test/boost/compress_test',
     'test/boost/config_test',
