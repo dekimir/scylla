@@ -23,6 +23,7 @@
 
 #include <limits>
 
+#include "cql3/expr/range_gen.hh"
 #include "cql3/result_generator.hh"
 #include "cql3/result_set.hh"
 #include "cql3/selection/selection.hh"
@@ -74,7 +75,11 @@ protected:
 
 } // anonymous namespace
 
-SEASTAR_TEST_CASE(t1) {
+// Transform a WHERE expression into a series of proxy queries plus a filtering expression.  A proxy query is a
+// read optionally followed by an indirection.  A read is table + selection + partition range + partition
+// slice.  Indirection is table + selection + reference to a prior index read.
+
+SEASTAR_TEST_CASE(empty_expr) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
         cquery_nofail(e, "create table ks.cf (p int primary key, r int)");
         cquery_nofail(e, "insert into ks.cf(p, r) values (1, 11)");
@@ -87,10 +92,11 @@ SEASTAR_TEST_CASE(t1) {
         const auto cmd = make_lw_shared<query::read_command>(
                 schema->id(), schema->version(), partition_slice_builder(*schema).build(),
                 query::max_result_size(max_size), query::row_limit(1000));
+        auto ranges = cql3::expr::make_partition_ranges(true);
         auto results = get_local_storage_proxy().query(
                 schema,
                 cmd,
-                dht::partition_range_vector(),
+                move(ranges),
                 db::consistency_level::ANY,
                 storage_proxy::coordinator_query_options(
                         storage_proxy::clock_type::time_point(), empty_service_permit(), state)
