@@ -1592,4 +1592,6 @@ def test_7868(cql, test_keyspace):
     with create_table(cql, test_keyspace, f"(a int, b frozen<list<int>>, PRIMARY KEY (a,b)) WITH CLUSTERING ORDER BY (b DESC)") as table:
         execute(cql, table, "INSERT INTO %s (a, b) VALUES (?, ?)", 0, [1, 2, 3]);
         assert list(cql.execute("SELECT * FROM " + table)) == [(0, [1, 2, 3])]
-
+    with create_table(cql, test_keyspace, f"(a int, b frozen<map<int,int>>, PRIMARY KEY (a,b)) WITH CLUSTERING ORDER BY (b DESC)") as table:
+        execute(cql, table, "INSERT INTO %s (a, b) VALUES (?, ?)", 0, {1:11, 2:22, 3:33});
+        assert list(cql.execute("SELECT * FROM " + table)) == [(0, {1:11, 2:22, 3:33})]

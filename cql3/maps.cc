@@ -266,7 +266,11 @@ maps::marker::bind(const query_options& options) {
         throw exceptions::invalid_request_exception(
                 format("Exception while binding column {:s}: {:s}", _receiver->name->to_cql_string(), e.what()));
     }
-    return ::make_shared<maps::value>(maps::value::from_serialized(*val, static_cast<const map_type_impl&>(*_receiver->type), options.get_cql_serialization_format()));
+    return ::make_shared<maps::value>(
+            maps::value::from_serialized(
+                    *val,
+                    static_cast<const map_type_impl&>(*_receiver->type->underlying_type()),
+                    options.get_cql_serialization_format()));
 }
 
 void
