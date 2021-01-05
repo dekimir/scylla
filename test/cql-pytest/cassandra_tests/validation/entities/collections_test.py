@@ -1583,3 +1583,10 @@ def testSelectionOfEmptyCollections(cql, test_keyspace):
             assert_rows(execute(cql, table, "SELECT m['0'], s[0] FROM %s WHERE k = 3"), [None, None])
             assert_rows(execute(cql, table, "SELECT m['0'..'1'], s[0..1] FROM %s WHERE k = 3"), [None, None])
             assert_rows(execute(cql, table, "SELECT m['0'..'1']['3'..'5'], s[0..1][3..5] FROM %s WHERE k = 3"), [None, None])
+
+# Regression-test for #7868.
+def test_7868(cql, test_keyspace):
+    with create_table(cql, test_keyspace, f"(a int, b frozen<set<int>>, PRIMARY KEY (a,b)) WITH CLUSTERING ORDER BY (b DESC)") as table:
+        execute(cql, table, "INSERT INTO %s (a, b) VALUES (?, ?)", 0, {1, 2, 3});
+        assert list(cql.execute("SELECT * FROM " + table)) == [(0, {1, 2, 3})]
+

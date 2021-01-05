@@ -224,7 +224,7 @@ sets::delayed_value::bind(const query_options& options) {
 
 sets::marker::marker(int32_t bind_index, lw_shared_ptr<column_specification> receiver)
     : abstract_marker{bind_index, std::move(receiver)} {
-        assert(dynamic_cast<const set_type_impl*>(_receiver->type.get()));
+        assert(dynamic_cast<const set_type_impl*>(_receiver->type->underlying_type().get()));
     }
 
 ::shared_ptr<terminal>
@@ -235,7 +235,7 @@ sets::marker::bind(const query_options& options) {
     } else if (value.is_unset_value()) {
         return constants::UNSET_VALUE;
     } else {
-        auto& type = static_cast<const set_type_impl&>(*_receiver->type);
+        auto& type = static_cast<const set_type_impl&>(*_receiver->type->underlying_type());
         try {
             type.validate(*value, options.get_cql_serialization_format());
         } catch (marshal_exception& e) {
