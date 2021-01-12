@@ -39,45 +39,10 @@ using namespace cql3::selection;
 using namespace cql_transport::messages;
 using namespace service;
 
-namespace {
-
-class stub_selection : public selection {
-public:
-    stub_selection(schema_ptr schema,
-                   std::vector<const column_definition*> columns,
-                   std::vector<lw_shared_ptr<cql3::column_specification>> metadata)
-        : selection(schema, std::move(columns), std::move(metadata),
-                    /*collect_timestamps=*/false, /*collect_TTLs=*/false, trivial::yes)
-    {}
-
-    bool is_wildcard() const override { return false; }
-    bool is_aggregate() const override { return false; }
-protected:
-    class stub_selectors : public selectors {
-    public:
-        void reset() override {};
-
-        bool requires_thread() const override { return false; }
-
-        std::vector<bytes_opt> get_output_row(cql_serialization_format sf) override {
-            return {};
-        }
-
-        void add_input_row(cql_serialization_format sf, result_set_builder& rs) override {}
-
-        bool is_aggregate() const { return false; }
-    };
-
-    std::unique_ptr<selectors> new_selectors() const override {
-        return std::make_unique<stub_selectors>();
-    }
-};
-
-} // anonymous namespace
-
-// Transform a WHERE expression into a series of proxy queries plus a filtering expression.  A proxy query is a
-// read optionally followed by an indirection.  A read is table + selection + partition range + partition
-// slice.  Indirection is table + selection + reference to a prior index read.
+// Transform a WHERE expression into a series of commands.  A command could be
+// 1. a proxy query with specified ranges and slice
+// 2. a proxy query with primary keys from the input
+// 3. a filtering expression
 
 SEASTAR_TEST_CASE(empty_expr) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
@@ -102,10 +67,7 @@ SEASTAR_TEST_CASE(empty_expr) {
                         storage_proxy::clock_type::time_point(), empty_service_permit(), state)
         ).get0().query_result;
         BOOST_CHECK_EQUAL(results->row_count(), 0);
-        auto sel = ::make_shared<stub_selection>(
-                schema,
-                std::vector<const column_definition*>{},
-                std::vector<lw_shared_ptr<cql3::column_specification>>{});
+        auto sel = selection::for_columns(schema, std::vector<const column_definition*> {});
         cql3::cql_stats stats;
         cql3::untyped_result_set rset(
                 static_pointer_cast<result_message>(
