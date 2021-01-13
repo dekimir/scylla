@@ -69,11 +69,9 @@ SEASTAR_TEST_CASE(empty_expr) {
         BOOST_CHECK_EQUAL(results->row_count(), 0);
         auto sel = selection::for_columns(schema, std::vector<const column_definition*> {});
         cql3::cql_stats stats;
-        cql3::untyped_result_set rset(
-                static_pointer_cast<result_message>(
-                        make_shared<result_message::rows>(
-                                cql3::result(
-                                        cql3::result_generator(schema, std::move(results), std::move(cmd), sel, stats),
-                                        ::make_shared<cql3::metadata>(*sel->get_result_metadata())))));
+        rows_assertions(make_shared<result_message::rows>(cql3::result(
+                cql3::result_generator(schema, std::move(results), std::move(cmd), sel, stats),
+                ::make_shared<cql3::metadata>(*sel->get_result_metadata()))))
+                .is_empty();
     });
 }
