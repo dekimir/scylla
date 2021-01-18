@@ -26,7 +26,7 @@ namespace cql3 {
 namespace expr {
 
 dht::partition_range_vector make_partition_ranges(const expression&) {
-    return {};
+    return {dht::partition_range::make_open_ended_both_sides()};
 }
 
 } // namespace expr

@@ -44,7 +44,13 @@ using namespace service;
 // 2. a proxy query with primary keys from the input
 // 3. a filtering expression
 
-SEASTAR_TEST_CASE(empty_expr) {
+namespace {
+
+auto I(int32_t x) { return int32_type->decompose(x); }
+
+} // anonymous namespace
+
+SEASTAR_TEST_CASE(whole_table) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
         cquery_nofail(e, "create table ks.cf (p int primary key, r int)");
         cquery_nofail(e, "insert into ks.cf(p, r) values (1, 11)");
@@ -54,8 +60,17 @@ SEASTAR_TEST_CASE(empty_expr) {
         auto schema = e.local_db().find_schema("ks", "cf");
         client_state state(client_state::external_tag(), e.local_auth_service());
         const auto max_size = std::numeric_limits<size_t>::max();
+        auto col_p = schema->get_column_definition("p");
+        auto col_r = schema->get_column_definition("r");
+        query::partition_slice::option_set opts;
+        opts.set(query::partition_slice::option::send_partition_key);
         const auto cmd = make_lw_shared<query::read_command>(
-                schema->id(), schema->version(), partition_slice_builder(*schema).build(),
+                schema->id(), schema->version(),
+                query::partition_slice(
+                        {query::clustering_range::make_open_ended_both_sides()},
+                        /*static_columns=*/{},
+                        /*regular_columns=*/{col_r->id},
+                        opts),
                 query::max_result_size(max_size), query::row_limit(1000));
         auto ranges = cql3::expr::make_partition_ranges(true);
         auto results = get_local_storage_proxy().query(
@@ -64,14 +79,15 @@ SEASTAR_TEST_CASE(empty_expr) {
                 move(ranges),
                 db::consistency_level::ANY,
                 storage_proxy::coordinator_query_options(
-                        storage_proxy::clock_type::time_point(), empty_service_permit(), state)
+                        db::no_timeout, empty_service_permit(), state)
         ).get0().query_result;
-        BOOST_CHECK_EQUAL(results->row_count(), 0);
-        auto sel = selection::for_columns(schema, std::vector<const column_definition*> {});
+        auto sel = selection::for_columns(schema, std::vector{col_p, col_r});
         cql3::cql_stats stats;
-        rows_assertions(make_shared<result_message::rows>(cql3::result(
-                cql3::result_generator(schema, std::move(results), std::move(cmd), sel, stats),
-                ::make_shared<cql3::metadata>(*sel->get_result_metadata()))))
-                .is_empty();
+        rows_assertions(
+                make_shared<result_message::rows>(
+                        cql3::result(
+                                cql3::result_generator(schema, std::move(results), std::move(cmd), sel, stats),
+                                ::make_shared<cql3::metadata>(*sel->get_result_metadata()))))
+                .with_rows_ignore_order({{I(1), I(11)}, {I(2), I(12)}, {I(3), I(13)}, {I(4), I(14)}});
     });
 }
