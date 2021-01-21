@@ -122,6 +122,7 @@ public:
         bool for_view = false,
         bool allow_filtering = false);
 
+private:
     void add_restriction(::shared_ptr<restriction> restriction, bool for_view, bool allow_filtering);
     void add_single_column_restriction(::shared_ptr<single_column_restriction> restriction, bool for_view, bool allow_filtering);
 public:
