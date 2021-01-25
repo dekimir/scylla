@@ -104,6 +104,8 @@ private:
 
     bool _has_queriable_regular_index = false, _has_queriable_pk_index = false, _has_queriable_ck_index = false;
 
+    expr::expression _where;
+
 public:
     /**
      * Creates a new empty <code>StatementRestrictions</code>.
