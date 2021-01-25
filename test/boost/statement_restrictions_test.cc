@@ -36,7 +36,7 @@ namespace {
 
 /// Returns statement_restrictions::get_clustering_bounds() of where_clause, with reasonable defaults in
 /// boilerplate.
-query::clustering_row_ranges get_clustering_bounds(
+query::clustering_row_ranges slice(
         const std::vector<relation_ptr>& where_clause, cql_test_env& env,
         const sstring& table_name = "t", const sstring& keyspace_name = "ks") {
     variable_specifications bound_names;
@@ -52,10 +52,10 @@ query::clustering_row_ranges get_clustering_bounds(
 
 /// Overload that parses the WHERE clause from string.  Named differently to disambiguate when where_clause is
 /// brace-initialized.
-query::clustering_row_ranges get_clustering_bounds_of_parsed(
+query::clustering_row_ranges slice_parse(
         sstring_view where_clause, cql_test_env& env,
         const sstring& table_name = "t", const sstring& keyspace_name = "ks") {
-    return get_clustering_bounds(cql3::util::where_clause_to_relations(where_clause), env, table_name, keyspace_name);
+    return slice(cql3::util::where_clause_to_relations(where_clause), env, table_name, keyspace_name);
 }
 
 auto I(int32_t x) { return int32_type->decompose(x); }
@@ -73,13 +73,13 @@ auto left_open(std::vector<bytes> values) {
 SEASTAR_TEST_CASE(slice_empty_restriction) {
     return do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table ks.t(p int, c int, primary key(p,c))");
-        BOOST_CHECK_EQUAL(get_clustering_bounds(/*where_clause=*/{}, e), std::vector{open_ended});
+        BOOST_CHECK_EQUAL(slice(/*where_clause=*/{}, e), std::vector{open_ended});
     });
 }
 
 SEASTAR_TEST_CASE(slice_one_restriction) {
     return do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table ks.t(p int, c int, primary key(p,c))");
-        BOOST_CHECK_EQUAL(get_clustering_bounds_of_parsed("c>123", e), std::vector{left_open({I(123)})});
+        BOOST_CHECK_EQUAL(slice_parse("c>123", e), std::vector{left_open({I(123)})});
     });
 }
