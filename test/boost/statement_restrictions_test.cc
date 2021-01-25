@@ -35,7 +35,9 @@ using cql3::util::where_clause_to_relations;
 
 namespace {
 
-auto get_clustering_bounds(
+/// Returns statement_restrictions::get_clustering_bounds() of where_clause, with reasonable defaults in
+/// boilerplate.
+query::clustering_row_ranges get_clustering_bounds(
         const std::vector<relation_ptr>& where_clause, cql_test_env& env,
         const sstring& table_name = "t", const sstring& keyspace_name = "ks") {
     variable_specifications bound_names;
