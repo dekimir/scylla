@@ -36,12 +36,12 @@ using cql3::util::where_clause_to_relations;
 namespace {
 
 auto get_clustering_bounds(
-        const std::vector<relation_ptr>& where_clause, database& db,
+        const std::vector<relation_ptr>& where_clause, cql_test_env& env,
         const sstring& table_name = "t", const sstring& keyspace_name = "ks") {
     variable_specifications bound_names;
     return restrictions::statement_restrictions(
-            db,
-            db.find_schema(keyspace_name, table_name),
+            env.local_db(),
+            env.local_db().find_schema(keyspace_name, table_name),
             statements::statement_type::SELECT,
             where_clause,
             bound_names,
@@ -57,7 +57,7 @@ SEASTAR_TEST_CASE(slice_empty_restriction) {
     return do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table ks.t(p int, c int, primary key(p,c))");
         BOOST_CHECK_EQUAL(
-                get_clustering_bounds(/*where_clause=*/{}, e.local_db()),
+                get_clustering_bounds(/*where_clause=*/{}, e),
                 std::vector{query::clustering_range::make_open_ended_both_sides()});
     });
 }
@@ -67,7 +67,7 @@ SEASTAR_TEST_CASE(slice_one_restriction) {
         cquery_nofail(e, "create table ks.t(p int, c int, primary key(p,c))");
         const bool inclusive = true, exclusive = false;
         BOOST_CHECK_EQUAL(
-                get_clustering_bounds(where_clause_to_relations("c>123"), e.local_db()),
+                get_clustering_bounds(where_clause_to_relations("c>123"), e),
                 std::vector{query::clustering_range::make_starting_with({clustering_key_prefix({I(123)}), exclusive})});
     });
 }
