@@ -36,11 +36,12 @@ using cql3::util::where_clause_to_relations;
 namespace {
 
 auto get_clustering_bounds(
-        const std::vector<relation_ptr>& where_clause, database& db, sstring_view table_name = "t", sstring_view keyspace_name = "ks") {
+        const std::vector<relation_ptr>& where_clause, database& db,
+        const sstring& table_name = "t", const sstring& keyspace_name = "ks") {
     variable_specifications bound_names;
     return restrictions::statement_restrictions(
             db,
-            db.find_schema("ks", "t"),
+            db.find_schema(keyspace_name, table_name),
             statements::statement_type::SELECT,
             where_clause,
             bound_names,
