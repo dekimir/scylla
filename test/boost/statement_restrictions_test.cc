@@ -60,6 +60,8 @@ query::clustering_row_ranges get_clustering_bounds_of_parsed(
 
 auto I(int32_t x) { return int32_type->decompose(x); }
 
+const auto open_ended = query::clustering_range::make_open_ended_both_sides();
+
 } // anonymous namespace
 
 SEASTAR_TEST_CASE(slice_empty_restriction) {
@@ -67,7 +69,7 @@ SEASTAR_TEST_CASE(slice_empty_restriction) {
         cquery_nofail(e, "create table ks.t(p int, c int, primary key(p,c))");
         BOOST_CHECK_EQUAL(
                 get_clustering_bounds(/*where_clause=*/{}, e),
-                std::vector{query::clustering_range::make_open_ended_both_sides()});
+                std::vector{open_ended});
     });
 }
 
