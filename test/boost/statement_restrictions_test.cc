@@ -62,6 +62,12 @@ auto I(int32_t x) { return int32_type->decompose(x); }
 
 const auto open_ended = query::clustering_range::make_open_ended_both_sides();
 
+const bool inclusive = true, exclusive = false;
+
+auto left_open(std::vector<bytes> values) {
+    return query::clustering_range::make_starting_with({clustering_key_prefix(move(values)), exclusive});
+}
+
 } // anonymous namespace
 
 SEASTAR_TEST_CASE(slice_empty_restriction) {
@@ -76,9 +82,8 @@ SEASTAR_TEST_CASE(slice_empty_restriction) {
 SEASTAR_TEST_CASE(slice_one_restriction) {
     return do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table ks.t(p int, c int, primary key(p,c))");
-        const bool inclusive = true, exclusive = false;
         BOOST_CHECK_EQUAL(
                 get_clustering_bounds_of_parsed("c>123", e),
-                std::vector{query::clustering_range::make_starting_with({clustering_key_prefix({I(123)}), exclusive})});
+                std::vector{left_open({I(123)})});
     });
 }
