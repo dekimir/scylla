@@ -73,17 +73,13 @@ auto left_open(std::vector<bytes> values) {
 SEASTAR_TEST_CASE(slice_empty_restriction) {
     return do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table ks.t(p int, c int, primary key(p,c))");
-        BOOST_CHECK_EQUAL(
-                get_clustering_bounds(/*where_clause=*/{}, e),
-                std::vector{open_ended});
+        BOOST_CHECK_EQUAL(get_clustering_bounds(/*where_clause=*/{}, e), std::vector{open_ended});
     });
 }
 
 SEASTAR_TEST_CASE(slice_one_restriction) {
     return do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table ks.t(p int, c int, primary key(p,c))");
-        BOOST_CHECK_EQUAL(
-                get_clustering_bounds_of_parsed("c>123", e),
-                std::vector{left_open({I(123)})});
+        BOOST_CHECK_EQUAL(get_clustering_bounds_of_parsed("c>123", e), std::vector{left_open({I(123)})});
     });
 }
