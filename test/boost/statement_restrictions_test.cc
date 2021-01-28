@@ -46,7 +46,9 @@ query::clustering_row_ranges slice(
             statements::statement_type::SELECT,
             where_clause,
             bound_names,
-            /*contains_only_static_columns=*/false)
+            /*contains_only_static_columns=*/false,
+            /*for_view=*/false,
+            /*allow_filtering=*/true)
             .get_clustering_bounds(query_options({}));
 }
 
@@ -59,6 +61,8 @@ query::clustering_row_ranges slice_parse(
 }
 
 auto I(int32_t x) { return int32_type->decompose(x); }
+
+auto T(const char* t) { return utf8_type->decompose(t); }
 
 const auto open_ended = query::clustering_range::make_open_ended_both_sides();
 
@@ -77,7 +81,19 @@ SEASTAR_TEST_CASE(slice_empty_restriction) {
 
 SEASTAR_TEST_CASE(slice_one_restriction) {
     return do_with_cql_env_thread([](cql_test_env& e) {
-        cquery_nofail(e, "create table ks.t(p int, c int, primary key(p,c))");
-        BOOST_CHECK_EQUAL(slice_parse("c=123", e), std::vector{singular({I(123)})});
+        cquery_nofail(e, "create table ks.t(p int, c text, primary key(p,c))");
+        BOOST_CHECK_EQUAL(slice_parse("c='123'", e), std::vector{singular({T("123")})});
+        BOOST_CHECK_EQUAL(slice_parse("c like '123'", e), std::vector{open_ended});
+        BOOST_CHECK_EQUAL(slice_parse("p=1", e), std::vector{open_ended});
+    });
+}
+
+SEASTAR_TEST_CASE(slice_two_restrictions) {
+    return do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table ks.t(p int, c1 int, c2 text, primary key(p,c1,c2))");
+        BOOST_CHECK_EQUAL(slice_parse("c1=123 and c2='321'", e), std::vector{singular({I(123), T("321")})});
+        BOOST_CHECK_EQUAL(slice_parse("c1=123 and c2 like '321'", e), std::vector{singular({I(123)})});
+        BOOST_CHECK_EQUAL(slice_parse("c1=123 and c1=123", e), std::vector{singular({I(123)})});
+        BOOST_CHECK_EQUAL(slice_parse("c2='abc'", e), std::vector{open_ended});
     });
 }
