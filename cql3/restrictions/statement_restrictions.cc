@@ -132,7 +132,6 @@ statement_restrictions::statement_restrictions(schema_ptr schema, bool allow_fil
     , _partition_key_restrictions(get_initial_partition_key_restrictions(allow_filtering))
     , _clustering_columns_restrictions(get_initial_clustering_key_restrictions(allow_filtering))
     , _nonprimary_key_restrictions(::make_shared<single_column_restrictions>(schema))
-    , _where(true)
 { }
 #if 0
 static const column_definition*
@@ -263,7 +262,9 @@ statement_restrictions::statement_restrictions(database& db,
             }
         }
     }
-    _clustering_prefix_restrictions = extract_clustering_prefix_restrictions(_where, _schema);
+    if (_where.has_value()) {
+        _clustering_prefix_restrictions = extract_clustering_prefix_restrictions(*_where, _schema);
+    }
     auto& cf = db.find_column_family(schema);
     auto& sim = cf.get_index_manager();
     const expr::allow_local_index allow_local(
@@ -365,7 +366,7 @@ void statement_restrictions::add_restriction(::shared_ptr<restriction> restricti
     } else {
         add_single_column_restriction(::static_pointer_cast<single_column_restriction>(restriction), for_view, allow_filtering);
     }
-    _where = make_conjunction(std::move(_where), restriction->expression);
+    _where = _where.has_value() ? make_conjunction(std::move(*_where), restriction->expression) : restriction->expression;
 }
 
 void statement_restrictions::add_single_column_restriction(::shared_ptr<single_column_restriction> restriction, bool for_view, bool allow_filtering) {
