@@ -92,8 +92,9 @@ SEASTAR_TEST_CASE(slice_one_restriction) {
 
         BOOST_CHECK_EQUAL(slice_parse("c in ('x','y','z')", e),
                           (std::vector{singular({T("x")}), singular({T("y")}), singular({T("z")})}));
-        BOOST_CHECK_EQUAL(slice_parse("c in ()", e), query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("c in ('x')", e), std::vector{singular({T("x")})});
+        BOOST_CHECK_EQUAL(slice_parse("c in ()", e), query::clustering_row_ranges{});
+        BOOST_CHECK_EQUAL(slice_parse("c in ('x','y') and c in ('a','b')", e), query::clustering_row_ranges{});
     });
 }
 
@@ -106,6 +107,8 @@ SEASTAR_TEST_CASE(slice_two_restrictions) {
         BOOST_CHECK_EQUAL(slice_parse("c1=123 and c2 like '321'", e), std::vector{singular({I(123)})});
         BOOST_CHECK_EQUAL(slice_parse("c1=123 and c1=123", e), std::vector{singular({I(123)})});
         BOOST_CHECK_EQUAL(slice_parse("c2='abc'", e), std::vector{open_ended});
+        BOOST_CHECK_EQUAL(slice_parse("c1=0 and c1=1 and c2='a'", e), query::clustering_row_ranges{});
+        BOOST_CHECK_EQUAL(slice_parse("c1=0 and c2='a' and c1=0", e), std::vector{singular({I(0), T("a")})});
 
         BOOST_CHECK_EQUAL(slice_parse("c2='abc' and c1 in (1,2,3)", e),
                           (std::vector{
@@ -120,10 +123,16 @@ SEASTAR_TEST_CASE(slice_two_restrictions) {
                           (std::vector{
                               singular({I(1), T("x")}), singular({I(1), T("y")}),
                               singular({I(2), T("x")}), singular({I(2), T("y")})}));
+        BOOST_CHECK_EQUAL(slice_parse("c1 in (1) and c1 in (1) and c2 in ('x', 'y')", e),
+                          (std::vector{singular({I(1), T("x")}), singular({I(1), T("y")})}));
+        BOOST_CHECK_EQUAL(slice_parse("c1 in (1) and c1 in (2) and c2 in ('x')", e), query::clustering_row_ranges{});
+        BOOST_CHECK_EQUAL(slice_parse("c1 in (1) and c2='x'", e), std::vector{singular({I(1), T("x")})});
+        BOOST_CHECK_EQUAL(slice_parse("c1 in () and c2='x'", e), query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("c2 in ('x','y')", e), std::vector{open_ended});
         BOOST_CHECK_EQUAL(slice_parse("c1 in (1,2,3)", e),
                           (std::vector{singular({I(1)}), singular({I(2)}), singular({I(3)})}));
         BOOST_CHECK_EQUAL(slice_parse("c1 in (1)", e), std::vector{singular({I(1)})});
+        BOOST_CHECK_EQUAL(slice_parse("c1 in ()", e), query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("c2 like 'a' and c1 in (1,2)", e),
                           (std::vector{singular({I(1)}), singular({I(2)})}));
     });

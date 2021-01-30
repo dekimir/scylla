@@ -598,7 +598,9 @@ std::vector<query::clustering_range> statement_restrictions::get_clustering_boun
                 _clustering_prefix_restrictions[i],
                 options);
         if (auto list = std::get_if<expr::value_list>(&values)) {
-            // TODO: empty list.
+            if (list->empty()) { // Impossible condition -- no rows can possibly match.
+                return {};
+            }
             if (prefix_bounds.empty()) {
                 for (const auto v : *list) {
                     prefix_bounds.push_back({v});
