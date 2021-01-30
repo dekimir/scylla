@@ -571,24 +571,49 @@ dht::partition_range_vector statement_restrictions::get_partition_key_ranges(con
     return _partition_key_restrictions->bounds_ranges(options);
 }
 
+/// Pushes each element of b to the corresponding element of a.  Returns the result as a new vector.
+static std::vector<std::vector<bytes>> accumulate_cross_product(
+        const std::vector<std::vector<bytes>>& a, const std::vector<bytes>& b) {
+    std::vector<std::vector<bytes>> product;
+    product.reserve(a.size() * b.size());
+    for (const auto& a_element : a) {
+        for (const auto& b_element : b) {
+            std::vector<bytes> extended = a_element;
+            extended.push_back(b_element);
+            product.push_back(extended);
+        }
+    }
+    return product;
+}
+
 std::vector<query::clustering_range> statement_restrictions::get_clustering_bounds(const query_options& options) const {
     if (_clustering_prefix_restrictions.empty()) {
         return {query::clustering_range::make_open_ended_both_sides()};
     }
     // TODO: multi-column case.
-    std::vector<bytes> prefix_bounds;
+    std::vector<std::vector<bytes>> prefix_bounds;
     for (size_t i = 0; i < _clustering_prefix_restrictions.size(); ++i) {
         auto values = possible_lhs_values(
                 &_schema->clustering_column_at(i), // This should be the LHS of restrictions[i].
                 _clustering_prefix_restrictions[i],
                 options);
         if (auto list = std::get_if<expr::value_list>(&values)) {
-            prefix_bounds.push_back(list->front());
-            // TODO: multi-element list.
+            // TODO: empty list.
+            if (prefix_bounds.empty()) {
+                for (const auto v : *list) {
+                    prefix_bounds.push_back({v});
+                }
+            } else {
+                prefix_bounds = accumulate_cross_product(prefix_bounds, *list);
+            }
         }
         // TODO: value-range case.
     }
-    return {query::clustering_range::make_singular(prefix_bounds)};
+    std::vector<query::clustering_range> prefix_ranges;
+    std::transform(prefix_bounds.cbegin(), prefix_bounds.cend(),
+                   back_inserter(prefix_ranges),
+                   std::bind_front(query::clustering_range::make_singular));
+    return prefix_ranges;
 }
 
 namespace {

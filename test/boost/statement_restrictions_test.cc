@@ -82,18 +82,47 @@ SEASTAR_TEST_CASE(slice_empty_restriction) {
 SEASTAR_TEST_CASE(slice_one_restriction) {
     return do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table ks.t(p int, c text, primary key(p,c))");
+
+        BOOST_CHECK_EQUAL(slice_parse("p=1", e), std::vector{open_ended});
+
         BOOST_CHECK_EQUAL(slice_parse("c='123'", e), std::vector{singular({T("123")})});
         BOOST_CHECK_EQUAL(slice_parse("c like '123'", e), std::vector{open_ended});
-        BOOST_CHECK_EQUAL(slice_parse("p=1", e), std::vector{open_ended});
+
+        BOOST_CHECK_EQUAL(slice_parse("c in ('x','y','z')", e),
+                          (std::vector{singular({T("x")}), singular({T("y")}), singular({T("z")})}));
+        // BOOST_CHECK_EQUAL(slice_parse("c in ()", e), {});
+        BOOST_CHECK_EQUAL(slice_parse("c in ('x')", e), (std::vector{singular({T("x")})}));
     });
 }
 
 SEASTAR_TEST_CASE(slice_two_restrictions) {
     return do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table ks.t(p int, c1 int, c2 text, primary key(p,c1,c2))");
+
         BOOST_CHECK_EQUAL(slice_parse("c1=123 and c2='321'", e), std::vector{singular({I(123), T("321")})});
+        BOOST_CHECK_EQUAL(slice_parse("c1=123", e), std::vector{singular({I(123)})});
         BOOST_CHECK_EQUAL(slice_parse("c1=123 and c2 like '321'", e), std::vector{singular({I(123)})});
         BOOST_CHECK_EQUAL(slice_parse("c1=123 and c1=123", e), std::vector{singular({I(123)})});
         BOOST_CHECK_EQUAL(slice_parse("c2='abc'", e), std::vector{open_ended});
+
+        BOOST_CHECK_EQUAL(slice_parse("c2='abc' and c1 in (1,2,3)", e),
+                          (std::vector{
+                              singular({I(1), T("abc")}),
+                              singular({I(2), T("abc")}),
+                              singular({I(3), T("abc")})}));
+        BOOST_CHECK_EQUAL(slice_parse("c1 in (1,2) and c2='x'", e),
+                          (std::vector{
+                              singular({I(1), T("x")}),
+                              singular({I(2), T("x")})}));
+        BOOST_CHECK_EQUAL(slice_parse("c1 in (1,2) and c2 in ('x','y')", e),
+                          (std::vector{
+                              singular({I(1), T("x")}), singular({I(1), T("y")}),
+                              singular({I(2), T("x")}), singular({I(2), T("y")})}));
+        BOOST_CHECK_EQUAL(slice_parse("c2 in ('x','y')", e), std::vector{open_ended});
+        BOOST_CHECK_EQUAL(slice_parse("c1 in (1,2,3)", e),
+                          (std::vector{singular({I(1)}), singular({I(2)}), singular({I(3)})}));
+        BOOST_CHECK_EQUAL(slice_parse("c1 in (1)", e), std::vector{singular({I(1)})});
+        BOOST_CHECK_EQUAL(slice_parse("c2 like 'a' and c1 in (1,2)", e),
+                          (std::vector{singular({I(1)}), singular({I(2)})}));
     });
 }
