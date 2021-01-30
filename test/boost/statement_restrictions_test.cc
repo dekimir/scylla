@@ -86,12 +86,14 @@ SEASTAR_TEST_CASE(slice_one_restriction) {
         BOOST_CHECK_EQUAL(slice_parse("p=1", e), std::vector{open_ended});
 
         BOOST_CHECK_EQUAL(slice_parse("c='123'", e), std::vector{singular({T("123")})});
+        BOOST_CHECK_EQUAL(slice_parse("c='a' and c='a'", e), std::vector{singular({T("a")})});
+        BOOST_CHECK_EQUAL(slice_parse("c='a' and c='b'", e), query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("c like '123'", e), std::vector{open_ended});
 
         BOOST_CHECK_EQUAL(slice_parse("c in ('x','y','z')", e),
                           (std::vector{singular({T("x")}), singular({T("y")}), singular({T("z")})}));
-        // BOOST_CHECK_EQUAL(slice_parse("c in ()", e), {});
-        BOOST_CHECK_EQUAL(slice_parse("c in ('x')", e), (std::vector{singular({T("x")})}));
+        BOOST_CHECK_EQUAL(slice_parse("c in ()", e), query::clustering_row_ranges{});
+        BOOST_CHECK_EQUAL(slice_parse("c in ('x')", e), std::vector{singular({T("x")})});
     });
 }
 
