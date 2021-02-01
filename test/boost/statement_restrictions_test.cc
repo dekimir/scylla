@@ -79,7 +79,7 @@ SEASTAR_TEST_CASE(slice_empty_restriction) {
     });
 }
 
-SEASTAR_TEST_CASE(slice_one_restriction) {
+SEASTAR_TEST_CASE(slice_one_column) {
     return do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table ks.t(p int, c text, primary key(p,c))");
 
@@ -98,7 +98,7 @@ SEASTAR_TEST_CASE(slice_one_restriction) {
     });
 }
 
-SEASTAR_TEST_CASE(slice_two_restrictions) {
+SEASTAR_TEST_CASE(slice_two_columns) {
     return do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table ks.t(p int, c1 int, c2 text, primary key(p,c1,c2))");
 
