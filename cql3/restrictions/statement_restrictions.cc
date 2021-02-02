@@ -608,14 +608,36 @@ std::vector<query::clustering_range> statement_restrictions::get_clustering_boun
             } else {
                 prefix_bounds = accumulate_cross_product(prefix_bounds, *list);
             }
+        } else if (auto last_range = std::get_if<nonwrapping_interval<bytes>>(&values)) {
+            // Must be the last column in the prefix, since it's neither EQ nor IN.  The resulting CK ranges will all be
+            // of the same type as this range, but they'll contain values for all columns in the prefix, not just this
+            // last one.
+            std::vector<query::clustering_range> ck_ranges;
+            if (prefix_bounds.empty()) {
+                ck_ranges.push_back(last_range->transform([] (const bytes& val) { return clustering_key_prefix({val}); }));
+            } else {
+                ck_ranges.reserve(prefix_bounds.size());
+                for (auto& bnd : prefix_bounds) {
+                    ck_ranges.push_back(
+                            // Same range, but prepend all the prior columns' values.
+                            last_range->transform([&] (const bytes& val) {
+                                auto new_bnd = bnd;
+                                new_bnd.push_back(val);
+                                return clustering_key_prefix(new_bnd);
+                            }));
+                }
+            }
+            return ck_ranges;
         }
-        // TODO: value-range case.
     }
-    std::vector<query::clustering_range> prefix_ranges;
+    // All prefix columns are restricted by EQ or IN.  The resulting CK ranges are just singular ranges of corresponding
+    // prefix_bounds.
+    std::vector<query::clustering_range> ck_ranges;
+    ck_ranges.reserve(prefix_bounds.size());
     std::transform(prefix_bounds.cbegin(), prefix_bounds.cend(),
-                   back_inserter(prefix_ranges),
+                   back_inserter(ck_ranges),
                    std::bind_front(query::clustering_range::make_singular));
-    return prefix_ranges;
+    return ck_ranges;
 }
 
 namespace {

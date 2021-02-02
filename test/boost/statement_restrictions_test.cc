@@ -70,6 +70,12 @@ auto singular(std::vector<bytes> values) {
     return query::clustering_range::make_singular(clustering_key_prefix(move(values)));
 }
 
+const bool inclusive = true, exclusive = false;
+
+auto left_open(std::vector<bytes> values) {
+    return query::clustering_range::make_starting_with({clustering_key_prefix(move(values)), exclusive});
+}
+
 } // anonymous namespace
 
 SEASTAR_TEST_CASE(slice_empty_restriction) {
@@ -95,6 +101,8 @@ SEASTAR_TEST_CASE(slice_one_column) {
         BOOST_CHECK_EQUAL(slice_parse("c in ('x')", e), std::vector{singular({T("x")})});
         BOOST_CHECK_EQUAL(slice_parse("c in ()", e), query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("c in ('x','y') and c in ('a','b')", e), query::clustering_row_ranges{});
+
+        BOOST_CHECK_EQUAL(slice_parse("c>'x'", e), std::vector{left_open({T("x")})});
     });
 }
 
