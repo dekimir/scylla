@@ -158,5 +158,9 @@ SEASTAR_TEST_CASE(slice_two_columns) {
         BOOST_CHECK_EQUAL(slice_parse("c1 in ()", e), query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("c2 like 'a' and c1 in (1,2)", e),
                           (std::vector{singular({I(1)}), singular({I(2)})}));
+
+        BOOST_CHECK_EQUAL(slice_parse("c1=123 and c2>'321'", e), std::vector{left_open({I(123), T("321")})});
+        BOOST_CHECK_EQUAL(slice_parse("c1<123 and c2>'321'", e), std::vector{right_open({I(123)})});
+        BOOST_CHECK_EQUAL(slice_parse("c1>=123 and c2='321'", e), std::vector{left_closed({I(123)})});
     });
 }
