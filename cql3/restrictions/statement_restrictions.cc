@@ -632,10 +632,8 @@ std::vector<query::clustering_range> statement_restrictions::get_clustering_boun
     }
     // All prefix columns are restricted by EQ or IN.  The resulting CK ranges are just singular ranges of corresponding
     // prefix_bounds.
-    std::vector<query::clustering_range> ck_ranges;
-    ck_ranges.reserve(prefix_bounds.size());
-    std::transform(prefix_bounds.cbegin(), prefix_bounds.cend(),
-                   back_inserter(ck_ranges),
+    std::vector<query::clustering_range> ck_ranges(prefix_bounds.size());
+    std::transform(prefix_bounds.cbegin(), prefix_bounds.cend(), ck_ranges.begin(),
                    std::bind_front(query::clustering_range::make_singular));
     return ck_ranges;
 }
