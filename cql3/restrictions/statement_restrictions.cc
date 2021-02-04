@@ -586,55 +586,61 @@ static std::vector<std::vector<bytes>> accumulate_cross_product(
     return product;
 }
 
+/// Calculates clustering bounds for the multi-column case.
+static std::vector<query::clustering_range> get_multi_column_clustering_bounds(
+        const query_options& options, schema_ptr schema, const std::vector<expr::expression>& multi_column_restrictions) {
+    using namespace expr;
+    struct {
+        const query_options& options;
+        schema_ptr schema;
+        std::optional<query::clustering_range> rng = query::clustering_range::make_open_ended_both_sides();
+
+        void operator()(const conjunction& c) {
+            std::ranges::for_each(c.children, [this] (auto&& child) { std::visit(*this, child); });
+        }
+
+        void operator()(const binary_operator& binop) {
+            auto rhs = binop.rhs->bind(options);
+            if (auto tup = dynamic_pointer_cast<tuples::value>(rhs)) {
+                auto opt_values = tup->get_elements();
+                auto& lhs = std::get<std::vector<column_value>>(binop.lhs);
+                std::vector<bytes> values(lhs.size());
+                for (size_t i = 0; i < lhs.size(); ++i) {
+                    values[i] = *statements::request_validations::check_not_null(
+                            opt_values[i],
+                            "Invalid null value in condition for column %s",
+                            lhs.at(i).col->name_as_text());
+                }
+                // Note that this never returns a singular range; in its place, there will be an inclusive range
+                // from a point to itself.
+                rng = rng->intersection(
+                        to_range(binop.op, clustering_key_prefix(values)),
+                        clustering_key_prefix::tri_compare(*schema));
+            }
+        }
+
+        void operator()(bool b) {
+            if (!b) {
+                rng.reset();
+            }
+        }
+    } v{options, schema};
+    for (const auto& restr : multi_column_restrictions) {
+        std::visit(v, restr);
+    }
+    if (v.rng) {
+        return {*v.rng};
+    } else {
+        return {};
+    }
+}
+
 std::vector<query::clustering_range> statement_restrictions::get_clustering_bounds(const query_options& options) const {
     if (_clustering_prefix_restrictions.empty()) {
         return {query::clustering_range::make_open_ended_both_sides()};
     }
     if (count_if(_clustering_prefix_restrictions[0], expr::is_multi_column)) {
-        using namespace expr;
-        struct {
-            const query_options& options;
-            schema_ptr schema;
-            std::optional<query::clustering_range> rng = query::clustering_range::make_open_ended_both_sides();
-
-            void operator()(const conjunction& c) {
-                std::ranges::for_each(c.children, [this] (auto&& child) { std::visit(*this, child); });
-            }
-
-            void operator()(const binary_operator& binop) {
-                auto rhs = binop.rhs->bind(options);
-                if (auto tup = dynamic_pointer_cast<tuples::value>(rhs)) {
-                    auto opt_values = tup->get_elements();
-                    auto& lhs = std::get<std::vector<column_value>>(binop.lhs);
-                    std::vector<bytes> values(lhs.size());
-                    for (size_t i = 0; i < lhs.size(); ++i) {
-                        values[i] = *statements::request_validations::check_not_null(
-                                opt_values[i],
-                                "Invalid null value in condition for column %s",
-                                lhs.at(i).col->name_as_text());
-                    }
-                    // Note that this never returns a singular range; in its place, there will be an inclusive range
-                    // from a point to itself.
-                    rng = rng->intersection(
-                            to_range(binop.op, clustering_key_prefix(values)),
-                            clustering_key_prefix::tri_compare(*schema));
-                }
-            }
-
-            void operator()(bool b) {
-                if (!b) {
-                    rng.reset();
-                }
-            }
-        } v{options, _schema};
-        for (const auto& restr : _clustering_prefix_restrictions) {
-            std::visit(v, restr);
-        }
-        if (v.rng) {
-            return {*v.rng};
-        } else {
-            return {};
-        }
+        return get_multi_column_clustering_bounds(options, _schema, _clustering_prefix_restrictions);
     }
     std::vector<std::vector<bytes>> prefix_bounds;
     for (size_t i = 0; i < _clustering_prefix_restrictions.size(); ++i) {
