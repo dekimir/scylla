@@ -616,7 +616,7 @@ std::vector<query::clustering_range> statement_restrictions::get_clustering_boun
                     // Note that this never returns a singular range; in its place, there will be an inclusive range
                     // from a point to itself.
                     rng = rng->intersection(
-                            query::clustering_range::make_singular(clustering_key_prefix(values)), // Assume op is EQ.
+                            to_range(binop.op, clustering_key_prefix(values)),
                             clustering_key_prefix::tri_compare(*schema));
                 }
             }
