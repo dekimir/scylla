@@ -571,21 +571,6 @@ dht::partition_range_vector statement_restrictions::get_partition_key_ranges(con
     return _partition_key_restrictions->bounds_ranges(options);
 }
 
-/// Pushes each element of b to the corresponding element of a.  Returns the result as a new vector.
-static std::vector<std::vector<bytes>> accumulate_cross_product(
-        const std::vector<std::vector<bytes>>& a, const std::vector<bytes>& b) {
-    std::vector<std::vector<bytes>> product;
-    product.reserve(a.size() * b.size());
-    for (const auto& a_element : a) {
-        for (const auto& b_element : b) {
-            std::vector<bytes> extended = a_element;
-            extended.push_back(b_element);
-            product.push_back(extended);
-        }
-    }
-    return product;
-}
-
 /// Calculates clustering bounds for the multi-column case.
 static std::vector<query::clustering_range> get_multi_column_clustering_bounds(
         const query_options& options, schema_ptr schema, const std::vector<expr::expression>& multi_column_restrictions) {
@@ -633,6 +618,21 @@ static std::vector<query::clustering_range> get_multi_column_clustering_bounds(
     } else {
         return {};
     }
+}
+
+/// Pushes each element of b to the corresponding element of a.  Returns the result as a new vector.
+static std::vector<std::vector<bytes>> accumulate_cross_product(
+        const std::vector<std::vector<bytes>>& a, const std::vector<bytes>& b) {
+    std::vector<std::vector<bytes>> product;
+    product.reserve(a.size() * b.size());
+    for (const auto& a_element : a) {
+        for (const auto& b_element : b) {
+            std::vector<bytes> extended = a_element;
+            extended.push_back(b_element);
+            product.push_back(extended);
+        }
+    }
+    return product;
 }
 
 /// Calculates clustering bounds for the single-column case.
