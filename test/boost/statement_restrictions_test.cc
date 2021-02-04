@@ -78,20 +78,40 @@ auto multi_column_singular(std::vector<bytes> values) {
 
 const bool inclusive = true, exclusive = false;
 
-auto left_open(std::vector<bytes> values) {
-    return query::clustering_range::make_starting_with({clustering_key_prefix(move(values)), exclusive});
+auto left_open(std::vector<bytes> lb) {
+    return query::clustering_range::make_starting_with({clustering_key_prefix(move(lb)), exclusive});
 }
 
-auto right_open(std::vector<bytes> values) {
-    return query::clustering_range::make_ending_with({clustering_key_prefix(move(values)), exclusive});
+auto left_closed(std::vector<bytes> lb) {
+    return query::clustering_range::make_starting_with({clustering_key_prefix(move(lb)), inclusive});
 }
 
-auto left_closed(std::vector<bytes> values) {
-    return query::clustering_range::make_starting_with({clustering_key_prefix(move(values)), inclusive});
+auto left_closed(std::vector<bytes> lb, std::vector<bytes> ub) {
+    clustering_key_prefix cklb(move(lb)), ckub(move(ub));
+    return query::clustering_range({{cklb, inclusive}}, {{ckub, exclusive}});
 }
 
-auto right_closed(std::vector<bytes> values) {
-    return query::clustering_range::make_ending_with({clustering_key_prefix(move(values)), inclusive});
+auto right_open(std::vector<bytes> ub) {
+    return query::clustering_range::make_ending_with({clustering_key_prefix(move(ub)), exclusive});
+}
+
+auto right_closed(std::vector<bytes> ub) {
+    return query::clustering_range::make_ending_with({clustering_key_prefix(move(ub)), inclusive});
+}
+
+auto right_closed(std::vector<bytes> lb, std::vector<bytes> ub) {
+    clustering_key_prefix cklb(move(lb)), ckub(move(ub));
+    return query::clustering_range({{cklb, exclusive}}, {{ckub, inclusive}});
+}
+
+auto both_open(std::vector<bytes> lb, std::vector<bytes> ub) {
+    clustering_key_prefix cklb(move(lb)), ckub(move(ub));
+    return query::clustering_range({{cklb, exclusive}}, {{ckub, exclusive}});
+}
+
+auto both_closed(std::vector<bytes> lb, std::vector<bytes> ub) {
+    clustering_key_prefix cklb(move(lb)), ckub(move(ub));
+    return query::clustering_range({{cklb, inclusive}}, {{ckub, inclusive}});
 }
 
 } // anonymous namespace
@@ -177,9 +197,25 @@ SEASTAR_TEST_CASE(slice_multi_column) {
         BOOST_CHECK_EQUAL(slice_parse("(c1)=(1)", e), std::vector{multi_column_singular({I(1)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2)=(1,2)", e), std::vector{multi_column_singular({I(1), I(2)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)=(1,2,3)", e), std::vector{multi_column_singular({I(1), I(2), I(3)})});
+        // TODO: Uncomment when supported:
+        // BOOST_CHECK_EQUAL(slice_parse("(c1)=(1) and (c1)=(2)", e), query::clustering_row_ranges{});
+        // BOOST_CHECK_EQUAL(slice_parse("(c1,c2)=(1,2) and (c1,c2)>(2)", e), query::clustering_row_ranges{});
+        // BOOST_CHECK_EQUAL(slice_parse("(c1,c2)=(1,2) and (c1,c2)=(1,2)", e),
+        //                   std::vector{multi_column_singular({I(1), I(2)})});
 
         BOOST_CHECK_EQUAL(slice_parse("(c1)<(1)", e), std::vector{right_open({I(1)})});
+        // TODO: Uncomment when supported:
+        // BOOST_CHECK_EQUAL(slice_parse("(c1)<(1) and (c1)<=(3)", e), std::vector{right_open({I(1)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1)>(0) and (c1)<=(1)", e), std::vector{right_closed({I(0)}, {I(1)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>=(1,2)", e), std::vector{left_closed({I(1), I(2)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>=(1,2) and (c1)<(9)", e), std::vector{left_closed({I(1), I(2)}, {I(9)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>=(1,2) and (c1,c2)<=(11,12)", e),
+                          std::vector{both_closed({I(1), I(2)}, {I(11), I(12)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,2,3)", e), std::vector{left_open({I(1), I(2), I(3)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,2,3) and (c1,c2,c3)<(1,2,3)", e), query::clustering_row_ranges{});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,2,3) and (c1,c2,c3)<(10,20,30)", e),
+                          std::vector{both_open({I(1), I(2), I(3)}, {I(10), I(20), I(30)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,2,3) and (c1,c2)<(10,20)", e),
+                          std::vector{both_open({I(1), I(2), I(3)}, {I(10), I(20)})});
     });
 }
