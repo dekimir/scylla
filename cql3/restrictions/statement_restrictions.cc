@@ -635,18 +635,16 @@ static std::vector<query::clustering_range> get_multi_column_clustering_bounds(
     }
 }
 
-std::vector<query::clustering_range> statement_restrictions::get_clustering_bounds(const query_options& options) const {
-    if (_clustering_prefix_restrictions.empty()) {
-        return {query::clustering_range::make_open_ended_both_sides()};
-    }
-    if (count_if(_clustering_prefix_restrictions[0], expr::is_multi_column)) {
-        return get_multi_column_clustering_bounds(options, _schema, _clustering_prefix_restrictions);
-    }
+/// Calculates clustering bounds for the single-column case.
+static std::vector<query::clustering_range> get_single_column_clustering_bounds(
+        const query_options& options,
+        schema_ptr schema,
+        const std::vector<expr::expression>& single_column_restrictions) {
     std::vector<std::vector<bytes>> prefix_bounds;
-    for (size_t i = 0; i < _clustering_prefix_restrictions.size(); ++i) {
+    for (size_t i = 0; i < single_column_restrictions.size(); ++i) {
         auto values = possible_lhs_values(
-                &_schema->clustering_column_at(i), // This should be the LHS of restrictions[i].
-                _clustering_prefix_restrictions[i],
+                &schema->clustering_column_at(i), // This should be the LHS of restrictions[i].
+                single_column_restrictions[i],
                 options);
         if (auto list = std::get_if<expr::value_list>(&values)) {
             if (list->empty()) { // Impossible condition -- no rows can possibly match.
@@ -687,6 +685,17 @@ std::vector<query::clustering_range> statement_restrictions::get_clustering_boun
     std::transform(prefix_bounds.cbegin(), prefix_bounds.cend(), ck_ranges.begin(),
                    std::bind_front(query::clustering_range::make_singular));
     return ck_ranges;
+}
+
+std::vector<query::clustering_range> statement_restrictions::get_clustering_bounds(const query_options& options) const {
+    if (_clustering_prefix_restrictions.empty()) {
+        return {query::clustering_range::make_open_ended_both_sides()};
+    }
+    if (count_if(_clustering_prefix_restrictions[0], expr::is_multi_column)) {
+        return get_multi_column_clustering_bounds(options, _schema, _clustering_prefix_restrictions);
+    } else {
+        return get_single_column_clustering_bounds(options, _schema, _clustering_prefix_restrictions);
+    }
 }
 
 namespace {
