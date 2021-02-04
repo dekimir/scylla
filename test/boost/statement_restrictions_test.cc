@@ -174,6 +174,8 @@ SEASTAR_TEST_CASE(slice_two_columns) {
 SEASTAR_TEST_CASE(slice_multi_column) {
     return do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table ks.t(p int, c1 int, c2 int, c3 int, primary key(p,c1,c2,c3))");
+        BOOST_CHECK_EQUAL(slice_parse("(c1)=(1)", e), std::vector{multi_column_singular({I(1)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2)=(1,2)", e), std::vector{multi_column_singular({I(1), I(2)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)=(1,2,3)", e), std::vector{multi_column_singular({I(1), I(2), I(3)})});
     });
 }
