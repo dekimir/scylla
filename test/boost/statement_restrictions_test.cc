@@ -70,6 +70,12 @@ auto singular(std::vector<bytes> values) {
     return query::clustering_range::make_singular(clustering_key_prefix(move(values)));
 }
 
+/// Like singular(), but makes an interval that matches the slice() result for multi-column bounds.
+auto multi_column_singular(std::vector<bytes> values) {
+    clustering_key_prefix point(move(values));
+    return query::clustering_range::make(point, point);
+}
+
 const bool inclusive = true, exclusive = false;
 
 auto left_open(std::vector<bytes> values) {
@@ -162,5 +168,12 @@ SEASTAR_TEST_CASE(slice_two_columns) {
         BOOST_CHECK_EQUAL(slice_parse("c1=123 and c2>'321'", e), std::vector{left_open({I(123), T("321")})});
         BOOST_CHECK_EQUAL(slice_parse("c1<123 and c2>'321'", e), std::vector{right_open({I(123)})});
         BOOST_CHECK_EQUAL(slice_parse("c1>=123 and c2='321'", e), std::vector{left_closed({I(123)})});
+    });
+}
+
+SEASTAR_TEST_CASE(slice_multi_column) {
+    return do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(e, "create table ks.t(p int, c1 int, c2 int, c3 int, primary key(p,c1,c2,c3))");
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2)=(1,2)", e), std::vector{multi_column_singular({I(1), I(2)})});
     });
 }
