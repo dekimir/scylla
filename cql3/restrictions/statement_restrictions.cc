@@ -582,14 +582,13 @@ static std::vector<query::clustering_range> get_multi_column_clustering_bounds(
         const clustering_key_prefix::tri_compare prefix3cmp{*schema};
 
         void operator()(const binary_operator& binop) {
-            auto& lhs = std::get<std::vector<column_value>>(binop.lhs);
-            auto rhs = binop.rhs->bind(options);
-            if (auto tup = dynamic_pointer_cast<tuples::value>(rhs)) {
+            if (auto tup = dynamic_pointer_cast<tuples::value>(binop.rhs->bind(options))) {
                 if (!is_compare(binop.op)) {
                     on_internal_error(
                             rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
                 }
                 auto opt_values = tup->get_elements();
+                auto& lhs = std::get<std::vector<column_value>>(binop.lhs);
                 std::vector<bytes> values(lhs.size());
                 for (size_t i = 0; i < lhs.size(); ++i) {
                     values[i] = deref_column_value(opt_values[i], lhs.at(i).col->name_as_text());
