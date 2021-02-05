@@ -219,5 +219,11 @@ SEASTAR_TEST_CASE(slice_multi_column) {
                           std::vector{both_open({I(1), I(2), I(3)}, {I(10), I(20), I(30)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,2,3) and (c1,c2)<(10,20)", e),
                           std::vector{both_open({I(1), I(2), I(3)}, {I(10), I(20)})});
+
+        BOOST_CHECK_EQUAL(slice_parse("(c1) IN ((1))", e), std::vector{multi_column_singular({I(1)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1) IN ((1),(10))", e), (std::vector{
+                    multi_column_singular({I(1)}), multi_column_singular({I(10)})}));
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2) IN ((1,2),(10,20))", e), (std::vector{
+                    multi_column_singular({I(1), I(2)}), multi_column_singular({I(10), I(20)})}));
     });
 }

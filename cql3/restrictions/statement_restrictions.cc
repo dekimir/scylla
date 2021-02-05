@@ -577,47 +577,84 @@ static std::vector<query::clustering_range> get_multi_column_clustering_bounds(
     using namespace expr;
     struct {
         const query_options& options;
-        schema_ptr schema;
-        std::optional<query::clustering_range> rng = query::clustering_range::make_open_ended_both_sides();
+        const schema_ptr schema;
+        std::vector<query::clustering_range> ranges{query::clustering_range::make_open_ended_both_sides()};
+        const clustering_key_prefix::tri_compare prefix3cmp{*schema};
+
+        void operator()(const binary_operator& binop) {
+            auto& lhs = std::get<std::vector<column_value>>(binop.lhs);
+            auto rhs = binop.rhs->bind(options);
+            if (auto tup = dynamic_pointer_cast<tuples::value>(rhs)) {
+                if (!is_compare(binop.op)) {
+                    on_internal_error(
+                            rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
+                }
+                auto opt_values = tup->get_elements();
+                std::vector<bytes> values(lhs.size());
+                for (size_t i = 0; i < lhs.size(); ++i) {
+                    values[i] = deref_column_value(opt_values[i], lhs.at(i).col->name_as_text());
+                }
+                intersect_all(to_range(binop.op, clustering_key_prefix(values)));
+            } else if (auto dv = dynamic_pointer_cast<lists::delayed_value>(binop.rhs)) {
+                if (binop.op != oper_t::IN) {
+                    on_internal_error(
+                            rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
+                }
+                std::vector<query::clustering_range> new_ranges;
+                for (const ::shared_ptr<term>& current_tuple : dv->get_elements()) {
+                    const std::vector<bytes_opt> column_values =
+                            static_pointer_cast<tuples::value>(current_tuple->bind(options))->get_elements();
+                    // Each IN value is like a separate EQ restriction ANDed to the existing state.
+                    auto val_range = to_range(
+                            oper_t::EQ,
+                            clustering_key_prefix::from_optional_exploded(*schema, column_values));
+                    if (ranges.empty()) {
+                        new_ranges.push_back(val_range);
+                    }
+                    for (const auto& old_range : ranges) {
+                        auto intsct = old_range.intersection(val_range, prefix3cmp);
+                        if (intsct) {
+                            new_ranges.push_back(*intsct);
+                        }
+                    }
+                }
+                ranges = new_ranges;
+            }
+        }
 
         void operator()(const conjunction& c) {
             std::ranges::for_each(c.children, [this] (auto&& child) { std::visit(*this, child); });
         }
 
-        void operator()(const binary_operator& binop) {
-            auto rhs = binop.rhs->bind(options);
-            if (auto tup = dynamic_pointer_cast<tuples::value>(rhs)) {
-                auto opt_values = tup->get_elements();
-                auto& lhs = std::get<std::vector<column_value>>(binop.lhs);
-                std::vector<bytes> values(lhs.size());
-                for (size_t i = 0; i < lhs.size(); ++i) {
-                    values[i] = *statements::request_validations::check_not_null(
-                            opt_values[i],
-                            "Invalid null value in condition for column %s",
-                            lhs.at(i).col->name_as_text());
-                }
-                // Note that this never returns a singular range; in its place, there will be an inclusive range
-                // from a point to itself.
-                rng = rng->intersection(
-                        to_range(binop.op, clustering_key_prefix(values)),
-                        clustering_key_prefix::tri_compare(*schema));
+        void operator()(bool b) {
+            if (!b) {
+                ranges.clear();
             }
         }
 
-        void operator()(bool b) {
-            if (!b) {
-                rng.reset();
+        /// Intersects each range with v.  If any intersection is empty, clears ranges.
+        void intersect_all(const query::clustering_range& v) {
+            for (auto& r : ranges) {
+                // Note that this never returns a singular range; in its place, there will be an inclusive range
+                // from a point to itself.
+                auto intersection = r.intersection(v, prefix3cmp);
+                if (!intersection) {
+                    ranges.clear();
+                    break;
+                }
+                r = *intersection;
             }
+        }
+
+        static bytes deref_column_value(bytes_opt val, sstring_view name) {
+            return *statements::request_validations::check_not_null(
+                    val, "Invalid null value in condition for column %s", name);
         }
     } v{options, schema};
     for (const auto& restr : multi_column_restrictions) {
         std::visit(v, restr);
     }
-    if (v.rng) {
-        return {*v.rng};
-    } else {
-        return {};
-    }
+    return v.ranges;
 }
 
 /// Pushes each element of b to the corresponding element of a.  Returns the result as a new vector.
