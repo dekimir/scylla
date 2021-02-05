@@ -671,6 +671,11 @@ static std::vector<std::vector<bytes>> accumulate_cross_product(
     return product;
 }
 
+/// Reverses the range if the type is reversed.  Why don't we have nonwrapping_interval::reverse()??
+static query::clustering_range reverse_if_reqd(query::clustering_range r, const abstract_type& t) {
+    return t.is_reversed() ? query::clustering_range(r.end(), r.start()) : std::move(r);
+}
+
 /// Calculates clustering bounds for the single-column case.
 static std::vector<query::clustering_range> get_single_column_clustering_bounds(
         const query_options& options,
@@ -699,17 +704,22 @@ static std::vector<query::clustering_range> get_single_column_clustering_bounds(
             // last one.
             std::vector<query::clustering_range> ck_ranges;
             if (prefix_bounds.empty()) {
-                ck_ranges.push_back(last_range->transform([] (const bytes& val) { return clustering_key_prefix({val}); }));
+                ck_ranges.push_back(
+                        reverse_if_reqd(
+                                last_range->transform([] (const bytes& val) { return clustering_key_prefix({val}); }),
+                                *schema->clustering_column_at(i).type));
             } else {
                 ck_ranges.reserve(prefix_bounds.size());
                 for (auto& bnd : prefix_bounds) {
                     ck_ranges.push_back(
-                            // Same range, but prepend all the prior columns' values.
-                            last_range->transform([&] (const bytes& val) {
-                                auto new_bnd = bnd;
-                                new_bnd.push_back(val);
-                                return clustering_key_prefix(new_bnd);
-                            }));
+                            reverse_if_reqd(
+                                    // Same range, but prepend all the prior columns' values.
+                                    last_range->transform([&] (const bytes& val) {
+                                        auto new_bnd = bnd;
+                                        new_bnd.push_back(val);
+                                        return clustering_key_prefix(new_bnd);
+                                    }),
+                                    *schema->clustering_column_at(i).type));
                 }
             }
             return ck_ranges;
