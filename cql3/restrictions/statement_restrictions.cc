@@ -622,7 +622,7 @@ static std::vector<query::clustering_range> get_multi_column_clustering_bounds(
         }
 
         void operator()(const conjunction& c) {
-            std::ranges::for_each(c.children, [this] (auto&& child) { std::visit(*this, child); });
+            std::ranges::for_each(c.children, [this] (const expression& child) { std::visit(*this, child); });
         }
 
         void operator()(bool b) {
