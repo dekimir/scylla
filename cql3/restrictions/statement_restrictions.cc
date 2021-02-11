@@ -168,9 +168,7 @@ static std::vector<expr::expression> extract_clustering_prefix_restrictions(
         std::unordered_map<const column_definition*, expression> single;
 
         void operator()(const conjunction& c) {
-            for (auto& child : c.children) {
-                std::visit(*this, child);
-            }
+            std::ranges::for_each(c.children, [this] (const expression& child) { std::visit(*this, child); });
         }
 
         void operator()(const binary_operator& b) {
