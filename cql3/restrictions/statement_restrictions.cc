@@ -570,14 +570,14 @@ dht::partition_range_vector statement_restrictions::get_partition_key_ranges(con
 }
 
 static clustering_key_prefix::tri_compare get_unreversed_tri_compare(const schema& schema) {
-    std::vector<data_type> prefix_type = schema.clustering_key_prefix_type()->types();
-    for (auto& t : prefix_type) {
+    std::vector<data_type> types = schema.clustering_key_prefix_type()->types();
+    for (auto& t : types) {
         if (t->is_reversed()) {
             t = t->underlying_type();
         }
     }
     clustering_key_prefix::tri_compare unreversed_tri_compare(schema);
-    unreversed_tri_compare._t = make_lw_shared<compound_prefix>(prefix_type);
+    unreversed_tri_compare._t = make_lw_shared<compound_prefix>(types);
     return unreversed_tri_compare;
 }
 
