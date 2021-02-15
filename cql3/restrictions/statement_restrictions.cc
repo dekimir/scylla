@@ -577,7 +577,7 @@ static clustering_key_prefix::tri_compare get_unreversed_tri_compare(const schem
         }
     }
     clustering_key_prefix::tri_compare unreversed_tri_compare(schema);
-    unreversed_tri_compare._t = make_lw_shared<compound_type<allow_prefixes::yes>>(prefix_type);
+    unreversed_tri_compare._t = make_lw_shared<compound_prefix>(prefix_type);
     return unreversed_tri_compare;
 }
 
