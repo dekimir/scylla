@@ -569,6 +569,18 @@ dht::partition_range_vector statement_restrictions::get_partition_key_ranges(con
     return _partition_key_restrictions->bounds_ranges(options);
 }
 
+static clustering_key_prefix::tri_compare get_unreversed_tri_compare(const schema& schema) {
+    std::vector<data_type> prefix_type = schema.clustering_key_prefix_type()->types();
+    for (auto& t : prefix_type) {
+        if (t->is_reversed()) {
+            t = t->underlying_type();
+        }
+    }
+    clustering_key_prefix::tri_compare unreversed_tri_compare(schema);
+    unreversed_tri_compare._t = make_lw_shared<compound_type<allow_prefixes::yes>>(prefix_type);
+    return unreversed_tri_compare;
+}
+
 /// Calculates clustering bounds for the multi-column case.
 static std::vector<query::clustering_range> get_multi_column_clustering_bounds(
         const query_options& options, schema_ptr schema, const std::vector<expr::expression>& multi_column_restrictions) {
@@ -577,7 +589,7 @@ static std::vector<query::clustering_range> get_multi_column_clustering_bounds(
         const query_options& options;
         const schema_ptr schema;
         std::vector<query::clustering_range> ranges{query::clustering_range::make_open_ended_both_sides()};
-        const clustering_key_prefix::tri_compare prefix3cmp{*schema};
+        const clustering_key_prefix::tri_compare prefix3cmp = get_unreversed_tri_compare(*schema);
 
         void operator()(const binary_operator& binop) {
             if (auto tup = dynamic_pointer_cast<tuples::value>(binop.rhs->bind(options))) {
@@ -736,7 +748,28 @@ std::vector<query::clustering_range> statement_restrictions::get_clustering_boun
         return {query::clustering_range::make_open_ended_both_sides()};
     }
     if (count_if(_clustering_prefix_restrictions[0], expr::is_multi_column)) {
-        return get_multi_column_clustering_bounds(options, _schema, _clustering_prefix_restrictions);
+        bool all_natural = true, all_reverse = true;
+        for (auto& r : _clustering_prefix_restrictions) { // TODO: move to constructor, do only once.
+            using namespace expr;
+            for (auto& cv : std::get<std::vector<column_value>>(std::get<binary_operator>(r).lhs)) {
+                if (cv.col->type->is_reversed()) {
+                    all_natural = false;
+                } else {
+                    all_reverse = false;
+                }
+            }
+        }
+        if (!all_natural && !all_reverse) {
+            // TODO: implement.
+            return {query::clustering_range::make_open_ended_both_sides()};
+        }
+        auto bounds = get_multi_column_clustering_bounds(options, _schema, _clustering_prefix_restrictions);
+        if (all_reverse) {
+            for (auto& crange : bounds) {
+                crange = query::clustering_range(crange.end(), crange.start());
+            }
+        }
+        return move(bounds);
     } else {
         return get_single_column_clustering_bounds(options, _schema, _clustering_prefix_restrictions);
     }
