@@ -82,6 +82,11 @@ auto left_open(std::vector<bytes> lb) {
     return query::clustering_range::make_starting_with({clustering_key_prefix(move(lb)), exclusive});
 }
 
+auto left_open(std::vector<bytes> lb, std::vector<bytes> ub) {
+    clustering_key_prefix cklb(move(lb)), ckub(move(ub));
+    return query::clustering_range({{cklb, exclusive}}, {{ckub, inclusive}});
+}
+
 auto left_closed(std::vector<bytes> lb) {
     return query::clustering_range::make_starting_with({clustering_key_prefix(move(lb)), inclusive});
 }
@@ -93,6 +98,11 @@ auto left_closed(std::vector<bytes> lb, std::vector<bytes> ub) {
 
 auto right_open(std::vector<bytes> ub) {
     return query::clustering_range::make_ending_with({clustering_key_prefix(move(ub)), exclusive});
+}
+
+auto right_open(std::vector<bytes> lb, std::vector<bytes> ub) {
+    clustering_key_prefix cklb(move(lb)), ckub(move(ub));
+    return query::clustering_range({{cklb, inclusive}}, {{ckub, exclusive}});
 }
 
 auto right_closed(std::vector<bytes> ub) {
@@ -238,6 +248,17 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
                 "with clustering order by (c1 asc, c2 asc, c3 desc, c4 desc)");
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>(1,1) and (c1,c2)<(9,9)", e, "t1"), (std::vector{
                     both_open({I(1), I(1)}, {I(9), I(9)})}));
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2,c3)<(9,9,9)", e, "t1"), (std::vector{
+                    // 1<c1<9
+                    both_open({I(1)}, {I(9)}),
+                    // or (c1=1 and c2>1)
+                    left_open({I(1), I(1)}, {I(1)}),
+                    // or (c1=1 and c2=1 and c3>1)
+                    right_open({I(1), I(1)}, {I(1), I(1), I(1)}),
+                    // or (c1=9 and c2<9)
+                    right_open({I(9)}, {I(9), I(9)}),
+                    // or (c1=9 and c2=9 and c3<9)
+                    left_open({I(9), I(9), I(9)}, {I(9), I(9)})}));
 
         cquery_nofail(
                 e,

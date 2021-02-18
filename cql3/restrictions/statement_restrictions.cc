@@ -743,6 +743,54 @@ static std::vector<query::clustering_range> get_single_column_clustering_bounds(
     return ck_ranges;
 }
 
+using opt_bound = std::optional<query::clustering_range::bound>;
+
+static opt_bound make_mixed_order_bound_for_prefix_len(
+        size_t len, const std::vector<bytes>& whole_bound, bool whole_bound_is_inclusive) {
+    if (len > whole_bound.size()) {
+        return opt_bound();
+    } else {
+        // Couldn't get std::ranges::subrange(whole_bound, len) to compile :(
+        std::vector<bytes> partial_bound(whole_bound.cbegin(), whole_bound.cbegin() + len);
+        return query::clustering_range::bound(
+                clustering_key_prefix(partial_bound),
+                len == whole_bound.size() && whole_bound_is_inclusive);
+    }
+}
+
+static std::vector<query::clustering_range> equivalent(
+        const query::clustering_range& mcrange, const schema& schema) {
+    const auto& tuple_lb = mcrange.start();
+    const auto tuple_lb_bytes = tuple_lb ? tuple_lb->value().explode(schema) : std::vector<bytes>{};
+    const auto& tuple_ub = mcrange.end();
+    const auto tuple_ub_bytes = tuple_ub ? tuple_ub->value().explode(schema) : std::vector<bytes>{};
+
+    std::vector<query::clustering_range> ranges;
+    // First range is special: it has both bounds.
+    opt_bound lb1 = make_mixed_order_bound_for_prefix_len(1, tuple_lb_bytes, tuple_lb->is_inclusive());
+    opt_bound ub1 = make_mixed_order_bound_for_prefix_len(1, tuple_ub_bytes, tuple_ub->is_inclusive());
+    auto range1 = schema.clustering_column_at(0).type->is_reversed() ?
+            query::clustering_range(ub1, lb1) : query::clustering_range(lb1, ub1);
+    ranges.push_back(std::move(range1));
+
+    for (size_t i = 2; i <= tuple_lb_bytes.size(); ++i) {
+        opt_bound lb = make_mixed_order_bound_for_prefix_len(i, tuple_lb_bytes, tuple_lb->is_inclusive());
+        auto range = schema.clustering_column_at(i-1).type->is_reversed() ?
+                query::clustering_range({}, lb) : query::clustering_range(lb, {});
+        ranges.push_back(std::move(range));
+    }
+
+    for (size_t i = 2; i <= tuple_ub_bytes.size(); ++i) {
+        opt_bound ub = make_mixed_order_bound_for_prefix_len(i, tuple_ub_bytes, tuple_ub->is_inclusive());
+        // Different from the lb case!
+        auto range = schema.clustering_column_at(i-1).type->is_reversed() ?
+                query::clustering_range(ub, {}) : query::clustering_range({}, ub);
+        ranges.push_back(std::move(range));
+    }
+
+    return ranges;
+}
+
 std::vector<query::clustering_range> statement_restrictions::get_clustering_bounds(const query_options& options) const {
     if (_clustering_prefix_restrictions.empty()) {
         return {query::clustering_range::make_open_ended_both_sides()};
@@ -759,17 +807,21 @@ std::vector<query::clustering_range> statement_restrictions::get_clustering_boun
                 }
             }
         }
-        if (!all_natural && !all_reverse) {
-            // TODO: implement.
-            return {query::clustering_range::make_open_ended_both_sides()};
-        }
         auto bounds = get_multi_column_clustering_bounds(options, _schema, _clustering_prefix_restrictions);
+        if (!all_natural && !all_reverse) {
+            std::vector<query::clustering_range> bounds_in_clustering_order;
+            for (const auto& b : bounds) {
+                const auto eqv = equivalent(b, *_schema);
+                bounds_in_clustering_order.insert(bounds_in_clustering_order.end(), eqv.cbegin(), eqv.cend());
+            }
+            return bounds_in_clustering_order;
+        }
         if (all_reverse) {
             for (auto& crange : bounds) {
                 crange = query::clustering_range(crange.end(), crange.start());
             }
         }
-        return move(bounds);
+        return bounds;
     } else {
         return get_single_column_clustering_bounds(options, _schema, _clustering_prefix_restrictions);
     }
