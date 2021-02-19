@@ -581,6 +581,31 @@ static clustering_key_prefix::tri_compare get_unreversed_tri_compare(const schem
     return unreversed_tri_compare;
 }
 
+template<std::ranges::range Range>
+std::vector<query::clustering_range> intersect_in_values(
+        Range in_values,
+        const std::vector<query::clustering_range>& existing_ranges,
+        const schema& schema,
+        const clustering_key_prefix::tri_compare& prefix3cmp) {
+    std::vector<query::clustering_range> new_ranges;
+    for (const auto& current_tuple : in_values) {
+        // Each IN value is like a separate EQ restriction ANDed to the existing state.
+        auto current_range = to_range(
+                expr::oper_t::EQ,
+                clustering_key_prefix::from_optional_exploded(schema, current_tuple));
+        if (existing_ranges.empty()) {
+            new_ranges.push_back(current_range);
+        }
+        for (const auto& r : existing_ranges) {
+            auto intsct = r.intersection(current_range, prefix3cmp);
+            if (intsct) {
+                new_ranges.push_back(*intsct);
+            }
+        }
+    }
+    return new_ranges;
+}
+
 /// Calculates clustering bounds for the multi-column case.
 static std::vector<query::clustering_range> get_multi_column_clustering_bounds(
         const query_options& options, schema_ptr schema, const std::vector<expr::expression>& multi_column_restrictions) {
@@ -609,25 +634,21 @@ static std::vector<query::clustering_range> get_multi_column_clustering_bounds(
                     on_internal_error(
                             rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
                 }
-                std::vector<query::clustering_range> new_ranges;
-                for (const ::shared_ptr<term>& current_tuple : dv->get_elements()) {
-                    const std::vector<bytes_opt> column_values =
-                            static_pointer_cast<tuples::value>(current_tuple->bind(options))->get_elements();
-                    // Each IN value is like a separate EQ restriction ANDed to the existing state.
-                    auto val_range = to_range(
-                            oper_t::EQ,
-                            clustering_key_prefix::from_optional_exploded(*schema, column_values));
-                    if (ranges.empty()) {
-                        new_ranges.push_back(val_range);
-                    }
-                    for (const auto& old_range : ranges) {
-                        auto intsct = old_range.intersection(val_range, prefix3cmp);
-                        if (intsct) {
-                            new_ranges.push_back(*intsct);
-                        }
-                    }
+                ranges = intersect_in_values(
+                        dv->get_elements() | transformed(
+                                [&] (const ::shared_ptr<term>& t) {
+                                    return static_pointer_cast<tuples::value>(t->bind(options))->get_elements();
+                                }),
+                        ranges, *schema, prefix3cmp);
+            } else if (auto mkr = dynamic_pointer_cast<tuples::in_marker>(binop.rhs)) {
+                // This is `(a,b) IN ?`.  RHS elements are themselves tuples, represented as vector<bytes_opt>.
+                if (binop.op != oper_t::IN) {
+                    on_internal_error(
+                            rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
                 }
-                ranges = new_ranges;
+                ranges = intersect_in_values(
+                        static_pointer_cast<tuples::in_value>(mkr->bind(options))->get_split_values(),
+                        ranges, *schema, prefix3cmp);
             }
         }
 
