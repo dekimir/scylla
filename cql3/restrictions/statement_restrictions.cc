@@ -569,7 +569,11 @@ dht::partition_range_vector statement_restrictions::get_partition_key_ranges(con
     return _partition_key_restrictions->bounds_ranges(options);
 }
 
-static clustering_key_prefix::tri_compare get_unreversed_tri_compare(const schema& schema) {
+namespace {
+
+using namespace expr;
+
+clustering_key_prefix::tri_compare get_unreversed_tri_compare(const schema& schema) {
     std::vector<data_type> types = schema.clustering_key_prefix_type()->types();
     for (auto& t : types) {
         if (t->is_reversed()) {
@@ -581,114 +585,108 @@ static clustering_key_prefix::tri_compare get_unreversed_tri_compare(const schem
     return unreversed_tri_compare;
 }
 
-template<std::ranges::range Range>
-std::vector<query::clustering_range> intersect_in_values(
-        Range in_values,
-        const std::vector<query::clustering_range>& existing_ranges,
-        const schema& schema,
-        const clustering_key_prefix::tri_compare& prefix3cmp) {
-    std::vector<query::clustering_range> new_ranges;
-    for (const auto& current_tuple : in_values) {
-        // Each IN value is like a separate EQ restriction ANDed to the existing state.
-        auto current_range = to_range(
-                expr::oper_t::EQ,
-                clustering_key_prefix::from_optional_exploded(schema, current_tuple));
-        if (existing_ranges.empty()) {
-            new_ranges.push_back(current_range);
-        }
-        for (const auto& r : existing_ranges) {
-            auto intsct = r.intersection(current_range, prefix3cmp);
-            if (intsct) {
-                new_ranges.push_back(*intsct);
+struct multi_column_expression_processor {
+    const query_options& options;
+    const schema_ptr schema;
+    std::vector<query::clustering_range> ranges{query::clustering_range::make_open_ended_both_sides()};
+    const clustering_key_prefix::tri_compare prefix3cmp = get_unreversed_tri_compare(*schema);
+
+    void operator()(const binary_operator& binop) {
+        if (auto tup = dynamic_pointer_cast<tuples::value>(binop.rhs->bind(options))) {
+            if (!is_compare(binop.op)) {
+                on_internal_error(
+                        rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
             }
+            auto opt_values = tup->get_elements();
+            auto& lhs = std::get<std::vector<column_value>>(binop.lhs);
+            std::vector<bytes> values(lhs.size());
+            for (size_t i = 0; i < lhs.size(); ++i) {
+                values[i] = deref_column_value(opt_values[i], lhs.at(i).col->name_as_text());
+            }
+            intersect_all(to_range(binop.op, clustering_key_prefix(values)));
+        } else if (auto dv = dynamic_pointer_cast<lists::delayed_value>(binop.rhs)) {
+            if (binop.op != oper_t::IN) {
+                on_internal_error(
+                        rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
+            }
+            process_in_values(
+                    dv->get_elements() | transformed(
+                            [&] (const ::shared_ptr<term>& t) {
+                                return static_pointer_cast<tuples::value>(t->bind(options))->get_elements();
+                            }));
+        } else if (auto mkr = dynamic_pointer_cast<tuples::in_marker>(binop.rhs)) {
+            // This is `(a,b) IN ?`.  RHS elements are themselves tuples, represented as vector<bytes_opt>.
+            if (binop.op != oper_t::IN) {
+                on_internal_error(
+                        rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
+            }
+            process_in_values(
+                    static_pointer_cast<tuples::in_value>(mkr->bind(options))->get_split_values());
         }
     }
-    return new_ranges;
-}
+
+    void operator()(const conjunction& c) {
+        std::ranges::for_each(c.children, [this] (const expression& child) { std::visit(*this, child); });
+    }
+
+    void operator()(bool b) {
+        if (!b) {
+            ranges.clear();
+        }
+    }
+
+    /// Intersects each range with v.  If any intersection is empty, clears ranges.
+    void intersect_all(const query::clustering_range& v) {
+        for (auto& r : ranges) {
+            // Note that this never returns a singular range; in its place, there will be an inclusive range
+            // from a point to itself.
+            auto intersection = r.intersection(v, prefix3cmp);
+            if (!intersection) {
+                ranges.clear();
+                break;
+            }
+            r = *intersection;
+        }
+    }
+
+    template<std::ranges::range Range>
+    void process_in_values(Range in_values) {
+        std::vector<query::clustering_range> new_ranges;
+        for (const auto& current_tuple : in_values) {
+            // Each IN value is like a separate EQ restriction ANDed to the existing state.
+            auto current_range = to_range(
+                    oper_t::EQ, clustering_key_prefix::from_optional_exploded(*schema, current_tuple));
+            for (const auto& r : ranges) {
+                auto intsct = r.intersection(current_range, prefix3cmp);
+                if (intsct) {
+                    new_ranges.push_back(*intsct);
+                }
+            }
+        }
+        ranges = new_ranges;
+    }
+
+    static bytes deref_column_value(bytes_opt val, sstring_view name) {
+        return *statements::request_validations::check_not_null(
+                val, "Invalid null value in condition for column %s", name);
+    }
+};
 
 /// Calculates clustering bounds for the multi-column case.
-static std::vector<query::clustering_range> get_multi_column_clustering_bounds(
-        const query_options& options, schema_ptr schema, const std::vector<expr::expression>& multi_column_restrictions) {
+std::vector<query::clustering_range> get_multi_column_clustering_bounds(
+        const query_options& options,
+        schema_ptr schema,
+        const std::vector<expression>& multi_column_restrictions) {
     using namespace expr;
-    struct {
-        const query_options& options;
-        const schema_ptr schema;
-        std::vector<query::clustering_range> ranges{query::clustering_range::make_open_ended_both_sides()};
-        const clustering_key_prefix::tri_compare prefix3cmp = get_unreversed_tri_compare(*schema);
-
-        void operator()(const binary_operator& binop) {
-            if (auto tup = dynamic_pointer_cast<tuples::value>(binop.rhs->bind(options))) {
-                if (!is_compare(binop.op)) {
-                    on_internal_error(
-                            rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
-                }
-                auto opt_values = tup->get_elements();
-                auto& lhs = std::get<std::vector<column_value>>(binop.lhs);
-                std::vector<bytes> values(lhs.size());
-                for (size_t i = 0; i < lhs.size(); ++i) {
-                    values[i] = deref_column_value(opt_values[i], lhs.at(i).col->name_as_text());
-                }
-                intersect_all(to_range(binop.op, clustering_key_prefix(values)));
-            } else if (auto dv = dynamic_pointer_cast<lists::delayed_value>(binop.rhs)) {
-                if (binop.op != oper_t::IN) {
-                    on_internal_error(
-                            rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
-                }
-                ranges = intersect_in_values(
-                        dv->get_elements() | transformed(
-                                [&] (const ::shared_ptr<term>& t) {
-                                    return static_pointer_cast<tuples::value>(t->bind(options))->get_elements();
-                                }),
-                        ranges, *schema, prefix3cmp);
-            } else if (auto mkr = dynamic_pointer_cast<tuples::in_marker>(binop.rhs)) {
-                // This is `(a,b) IN ?`.  RHS elements are themselves tuples, represented as vector<bytes_opt>.
-                if (binop.op != oper_t::IN) {
-                    on_internal_error(
-                            rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
-                }
-                ranges = intersect_in_values(
-                        static_pointer_cast<tuples::in_value>(mkr->bind(options))->get_split_values(),
-                        ranges, *schema, prefix3cmp);
-            }
-        }
-
-        void operator()(const conjunction& c) {
-            std::ranges::for_each(c.children, [this] (const expression& child) { std::visit(*this, child); });
-        }
-
-        void operator()(bool b) {
-            if (!b) {
-                ranges.clear();
-            }
-        }
-
-        /// Intersects each range with v.  If any intersection is empty, clears ranges.
-        void intersect_all(const query::clustering_range& v) {
-            for (auto& r : ranges) {
-                // Note that this never returns a singular range; in its place, there will be an inclusive range
-                // from a point to itself.
-                auto intersection = r.intersection(v, prefix3cmp);
-                if (!intersection) {
-                    ranges.clear();
-                    break;
-                }
-                r = *intersection;
-            }
-        }
-
-        static bytes deref_column_value(bytes_opt val, sstring_view name) {
-            return *statements::request_validations::check_not_null(
-                    val, "Invalid null value in condition for column %s", name);
-        }
-    } v{options, schema};
+    multi_column_expression_processor proc{options, schema};
     for (const auto& restr : multi_column_restrictions) {
-        std::visit(v, restr);
+        std::visit(proc, restr);
     }
-    return v.ranges;
+    return proc.ranges;
 }
 
 /// Pushes each element of b to the corresponding element of a.  Returns the result as a new vector.
-static std::vector<std::vector<bytes>> accumulate_cross_product(
+std::vector<std::vector<bytes>> accumulate_cross_product(
         const std::vector<std::vector<bytes>>& a, const std::vector<bytes>& b) {
     std::vector<std::vector<bytes>> product;
     product.reserve(a.size() * b.size());
@@ -703,22 +701,22 @@ static std::vector<std::vector<bytes>> accumulate_cross_product(
 }
 
 /// Reverses the range if the type is reversed.  Why don't we have nonwrapping_interval::reverse()??
-static query::clustering_range reverse_if_reqd(query::clustering_range r, const abstract_type& t) {
+query::clustering_range reverse_if_reqd(query::clustering_range r, const abstract_type& t) {
     return t.is_reversed() ? query::clustering_range(r.end(), r.start()) : std::move(r);
 }
 
 /// Calculates clustering bounds for the single-column case.
-static std::vector<query::clustering_range> get_single_column_clustering_bounds(
+std::vector<query::clustering_range> get_single_column_clustering_bounds(
         const query_options& options,
         schema_ptr schema,
-        const std::vector<expr::expression>& single_column_restrictions) {
+        const std::vector<expression>& single_column_restrictions) {
     std::vector<std::vector<bytes>> prefix_bounds;
     for (size_t i = 0; i < single_column_restrictions.size(); ++i) {
         auto values = possible_lhs_values(
                 &schema->clustering_column_at(i), // This should be the LHS of restrictions[i].
                 single_column_restrictions[i],
                 options);
-        if (auto list = std::get_if<expr::value_list>(&values)) {
+        if (auto list = std::get_if<value_list>(&values)) {
             if (list->empty()) { // Impossible condition -- no rows can possibly match.
                 return {};
             }
@@ -766,7 +764,7 @@ static std::vector<query::clustering_range> get_single_column_clustering_bounds(
 
 using opt_bound = std::optional<query::clustering_range::bound>;
 
-static opt_bound make_mixed_order_bound_for_prefix_len(
+opt_bound make_mixed_order_bound_for_prefix_len(
         size_t len, const std::vector<bytes>& whole_bound, bool whole_bound_is_inclusive) {
     if (len > whole_bound.size()) {
         return opt_bound();
@@ -779,7 +777,7 @@ static opt_bound make_mixed_order_bound_for_prefix_len(
     }
 }
 
-static std::vector<query::clustering_range> equivalent(
+std::vector<query::clustering_range> equivalent(
         const query::clustering_range& mcrange, const schema& schema) {
     const auto& tuple_lb = mcrange.start();
     const auto tuple_lb_bytes = tuple_lb ? tuple_lb->value().explode(schema) : std::vector<bytes>{};
@@ -820,6 +818,8 @@ static std::vector<query::clustering_range> equivalent(
 
     return ranges;
 }
+
+} // anonymous namespace
 
 std::vector<query::clustering_range> statement_restrictions::get_clustering_bounds(const query_options& options) const {
     if (_clustering_prefix_restrictions.empty()) {
