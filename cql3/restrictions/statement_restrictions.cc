@@ -652,7 +652,12 @@ struct multi_column_expression_processor {
     template<std::ranges::range Range>
     void process_in_values(Range in_values) {
         std::vector<query::clustering_range> new_ranges;
+        std::set<std::vector<bytes_opt>> tuples_seen;
         for (const auto& current_tuple : in_values) {
+            if (tuples_seen.contains(current_tuple)) {
+                continue; // Storage proxy doesn't accept repeated identical ranges.
+            }
+            tuples_seen.insert(current_tuple);
             // Each IN value is like a separate EQ restriction ANDed to the existing state.
             auto current_range = to_range(
                     oper_t::EQ, clustering_key_prefix::from_optional_exploded(*schema, current_tuple));
