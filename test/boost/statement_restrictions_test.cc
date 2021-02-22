@@ -260,6 +260,14 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
                     // or (c1=9 and c2=9 and c3<9)
                     left_open({I(9), I(9), I(9)}, {I(9), I(9)})}));
 
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)=(1,1,1)", e, "t1"), std::vector{
+                both_closed({I(1), I(1), I(1)}, {I(1), I(1), I(1)})});
+        // TODO: Uncomment when supported.
+        // BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)=(1,1,1) and (c1,c2,c3)=(1,1,1)", e, "t1"), std::vector{
+        //         both_closed({I(1), I(1), I(1)}, {I(1), I(1), I(1)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<=(1,1,1)", e, "t1"), std::vector{
+                both_closed({I(1), I(1), I(1)}, {I(1), I(1), I(1)})});
+
         cquery_nofail(
                 e,
                 "create table t2(p int, c1 int, c2 int, c3 int, primary key(p,c1,c2,c3)) "

@@ -785,8 +785,11 @@ opt_bound make_mixed_order_bound_for_prefix_len(
 std::vector<query::clustering_range> equivalent(
         const query::clustering_range& mcrange, const schema& schema) {
     const auto& tuple_lb = mcrange.start();
-    const auto tuple_lb_bytes = tuple_lb ? tuple_lb->value().explode(schema) : std::vector<bytes>{};
     const auto& tuple_ub = mcrange.end();
+    if (tuple_lb == tuple_ub && (!tuple_lb || tuple_lb->is_inclusive())) {
+        return {mcrange};
+    }
+    const auto tuple_lb_bytes = tuple_lb ? tuple_lb->value().explode(schema) : std::vector<bytes>{};
     const auto tuple_ub_bytes = tuple_ub ? tuple_ub->value().explode(schema) : std::vector<bytes>{};
 
     std::vector<query::clustering_range> ranges;
