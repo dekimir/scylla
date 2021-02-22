@@ -690,8 +690,8 @@ std::vector<query::clustering_range> get_multi_column_clustering_bounds(
     return proc.ranges;
 }
 
-/// Pushes each element of b to the corresponding element of a.  Returns the result as a new vector.
-std::vector<std::vector<bytes>> accumulate_cross_product(
+/// For each element of a, creates b.size() new elements, each of which equals a's element extended by b's element.
+std::vector<std::vector<bytes>> accumulate_cartesian_product(
         const std::vector<std::vector<bytes>>& a, const std::vector<bytes>& b) {
     std::vector<std::vector<bytes>> product;
     product.reserve(a.size() * b.size());
@@ -710,11 +710,20 @@ query::clustering_range reverse_if_reqd(query::clustering_range r, const abstrac
     return t.is_reversed() ? query::clustering_range(r.end(), r.start()) : std::move(r);
 }
 
+void error_if_exceeds(size_t size, size_t limit) {
+    if (size > limit) {
+        throw std::runtime_error(
+                fmt::format("clustering-key cartesian product size {} is greater than maximum {}", size, limit));
+    }
+}
+
 /// Calculates clustering bounds for the single-column case.
 std::vector<query::clustering_range> get_single_column_clustering_bounds(
         const query_options& options,
         schema_ptr schema,
         const std::vector<expression>& single_column_restrictions) {
+    const size_t size_limit =
+            options.get_cql_config().restrictions.clustering_key_restrictions_max_cartesian_product_size;
     std::vector<std::vector<bytes>> prefix_bounds;
     for (size_t i = 0; i < single_column_restrictions.size(); ++i) {
         auto values = possible_lhs_values(
@@ -726,11 +735,13 @@ std::vector<query::clustering_range> get_single_column_clustering_bounds(
                 return {};
             }
             if (prefix_bounds.empty()) {
+                error_if_exceeds(list->size(), size_limit);
                 for (const auto v : *list) {
                     prefix_bounds.push_back({v});
                 }
             } else {
-                prefix_bounds = accumulate_cross_product(prefix_bounds, *list);
+                prefix_bounds = accumulate_cartesian_product(prefix_bounds, *list);
+                error_if_exceeds(prefix_bounds.size(), size_limit);
             }
         } else if (auto last_range = std::get_if<nonwrapping_interval<bytes>>(&values)) {
             // Must be the last column in the prefix, since it's neither EQ nor IN.  The resulting CK ranges will all be
