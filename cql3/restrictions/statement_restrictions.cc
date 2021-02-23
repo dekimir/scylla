@@ -717,6 +717,8 @@ void error_if_exceeds(size_t size, size_t limit) {
     }
 }
 
+static constexpr bool inclusive = true;
+
 /// Calculates clustering bounds for the single-column case.
 std::vector<query::clustering_range> get_single_column_clustering_bounds(
         const query_options& options,
@@ -744,27 +746,36 @@ std::vector<query::clustering_range> get_single_column_clustering_bounds(
                 error_if_exceeds(prefix_bounds.size(), size_limit);
             }
         } else if (auto last_range = std::get_if<nonwrapping_interval<bytes>>(&values)) {
-            // Must be the last column in the prefix, since it's neither EQ nor IN.  The resulting CK ranges will all be
-            // of the same type as this range, but they'll contain values for all columns in the prefix, not just this
-            // last one.
+            // Must be the last column in the prefix, since it's neither EQ nor IN.
             std::vector<query::clustering_range> ck_ranges;
             if (prefix_bounds.empty()) {
+                // This is the first and last range; just turn it into a clustering_key_prefix.
                 ck_ranges.push_back(
                         reverse_if_reqd(
                                 last_range->transform([] (const bytes& val) { return clustering_key_prefix({val}); }),
                                 *schema->clustering_column_at(i).type));
             } else {
+                // Prior clustering columns are equality-restricted (either via = or IN), producing one or more
+                // prefix_bounds elements.  Now we will turn each such element into a CK range dictated by those
+                // equalities and this inequality represented by last_range.  Each CK range's upper/lower bound is
+                // formed by extending the prefix_bounds element with the corresponding last_range bound, if it
+                // exists; if it doesn't, the CK range bound is just the prefix_bounds element, inclusive.
+                //
+                // For example, the expression `c1=1 AND c2=2 AND c3>3` makes lower CK bound (1,2,3) exclusive and
+                // upper CK bound (1,2) inclusive.
                 ck_ranges.reserve(prefix_bounds.size());
-                for (auto& bnd : prefix_bounds) {
-                    ck_ranges.push_back(
-                            reverse_if_reqd(
-                                    // Same range, but prepend all the prior columns' values.
-                                    last_range->transform([&] (const bytes& val) {
-                                        auto new_bnd = bnd;
-                                        new_bnd.push_back(val);
-                                        return clustering_key_prefix(new_bnd);
-                                    }),
-                                    *schema->clustering_column_at(i).type));
+                const auto extra_lb = last_range->start(), extra_ub = last_range->end();
+                for (auto& b : prefix_bounds) {
+                    auto new_lb = b, new_ub = b;
+                    if (extra_lb) {
+                        new_lb.push_back(extra_lb->value());
+                    }
+                    if (extra_ub) {
+                        new_ub.push_back(extra_ub->value());
+                    }
+                    query::clustering_range::bound new_start(new_lb, extra_lb ? extra_lb->is_inclusive() : inclusive),
+                            new_end(new_ub, extra_ub ? extra_ub->is_inclusive() : inclusive);
+                    ck_ranges.push_back(reverse_if_reqd({new_start, new_end}, *schema->clustering_column_at(i).type));
                 }
             }
             return ck_ranges;
@@ -811,7 +822,6 @@ std::vector<query::clustering_range> equivalent(
             query::clustering_range(ub1, lb1) : query::clustering_range(lb1, ub1);
     ranges.push_back(std::move(range1));
 
-    static const bool inclusive = true;
     for (size_t i = 2; i <= tuple_lb_bytes.size(); ++i) {
         opt_bound lb = make_mixed_order_bound_for_prefix_len(i, tuple_lb_bytes, tuple_lb->is_inclusive());
         opt_bound ub = make_mixed_order_bound_for_prefix_len(i - 1, tuple_lb_bytes, /*irrelevant:*/true);
