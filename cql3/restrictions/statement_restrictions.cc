@@ -573,23 +573,121 @@ namespace {
 
 using namespace expr;
 
-clustering_key_prefix::tri_compare get_unreversed_tri_compare(const schema& schema) {
-    std::vector<data_type> types = schema.clustering_key_prefix_type()->types();
+clustering_key_prefix::prefix_equal_tri_compare get_unreversed_tri_compare(const schema& schema) {
+    clustering_key_prefix::prefix_equal_tri_compare unreversed_tri_compare(schema);
+    std::vector<data_type> types = unreversed_tri_compare.prefix_type->types();
     for (auto& t : types) {
         if (t->is_reversed()) {
             t = t->underlying_type();
         }
     }
-    clustering_key_prefix::tri_compare unreversed_tri_compare(schema);
-    unreversed_tri_compare._t = make_lw_shared<compound_prefix>(types);
+    unreversed_tri_compare.prefix_type = make_lw_shared<compound_type<allow_prefixes::yes>>(types);
     return unreversed_tri_compare;
+}
+
+bool starts_before_start(
+        const query::clustering_range& r1,
+        const query::clustering_range& r2,
+        const clustering_key_prefix::prefix_equal_tri_compare& cmp) {
+    if (!r2.start()) {
+        return false; // r2 start is -inf, nothing is before that.
+    }
+    if (!r1.start()) {
+        return true; // r1 start is -inf, while r2 start is finite.
+    }
+    const auto diff = cmp(r1.start()->value(), r2.start()->value());
+    if (diff < 0) { // r1 start is strictly before r2 start.
+        return true;
+    }
+    if (diff > 0) { // r1 start is strictly after r2 start.
+        return false;
+    }
+    const auto len1 = r1.start()->value().representation().size();
+    const auto len2 = r2.start()->value().representation().size();
+    if (len1 == len2) {
+        // The values truly are equal.
+        return r1.start()->is_inclusive() && !r2.start()->is_inclusive();
+    }
+    // One value is a prefix of the other.
+    return (len1 < len2) && r1.start()->is_inclusive();
+}
+
+bool starts_before_end(
+        const query::clustering_range& r1,
+        const query::clustering_range& r2,
+        const clustering_key_prefix::prefix_equal_tri_compare& cmp) {
+    if (!r1.start()) {
+        return true; // r1 start is -inf, must be before r2 end.
+    }
+    if (!r2.end()) {
+        return true; // r2 end is +inf, everything is before it.
+    }
+    const auto diff = cmp(r1.start()->value(), r2.end()->value());
+    if (diff < 0) { // r1 start is strictly before r2 end.
+        return true;
+    }
+    if (diff > 0) { // r1 start is strictly after r2 end.
+        return false;
+    }
+    const auto len1 = r1.start()->value().representation().size();
+    const auto len2 = r2.end()->value().representation().size();
+    if (len1 == len2) {
+        // The values truly are equal.
+        return r1.start()->is_inclusive() && r2.end()->is_inclusive();
+    }
+    // One value is a prefix of the other.
+    return r1.start()->is_inclusive() || r2.end()->is_inclusive();
+}
+
+bool ends_before_end(
+        const query::clustering_range& r1,
+        const query::clustering_range& r2,
+        const clustering_key_prefix::prefix_equal_tri_compare& cmp) {
+    if (!r1.end()) {
+        return false; // r1 end is +inf, which is after everything.
+    }
+    if (!r2.end()) {
+        return true; // r2 end is +inf, while r1 end is finite.
+    }
+    const auto diff = cmp(r1.end()->value(), r2.end()->value());
+    if (diff < 0) { // r1 end is strictly before r2 end.
+        return true;
+    }
+    if (diff > 0) { // r1 end is strictly after r2 end.
+        return false;
+    }
+    const auto len1 = r1.end()->value().representation().size();
+    const auto len2 = r2.end()->value().representation().size();
+    if (len1 == len2) {
+        // The values truly are equal.
+        return !r1.end()->is_inclusive() || r2.end()->is_inclusive();
+    }
+    // One value is a prefix of the other.
+    return (len2 < len1) && r2.end()->is_inclusive();
+}
+
+/// Correct clustering_range intersection.  See #8157.
+std::optional<query::clustering_range> intersection(
+        const query::clustering_range& r1,
+        const query::clustering_range& r2,
+        const clustering_key_prefix::prefix_equal_tri_compare& cmp) {
+    // Assume r1's start is to the left of r2's start.
+    if (starts_before_start(r2, r1, cmp)) {
+        return intersection(r2, r1, cmp);
+    }
+    if (starts_before_end(r2, r1, cmp)) {
+        const auto& intersection_start = r2.start();
+        const auto& intersection_end = ends_before_end(r1, r2, cmp) ? r1.end() : r2.end();
+        return query::clustering_range(intersection_start, intersection_end);
+    }
+    return {};
 }
 
 struct multi_column_expression_processor {
     const query_options& options;
     const schema_ptr schema;
     std::vector<query::clustering_range> ranges{query::clustering_range::make_open_ended_both_sides()};
-    const clustering_key_prefix::tri_compare prefix3cmp = get_unreversed_tri_compare(*schema);
+    const clustering_key_prefix::prefix_equal_tri_compare prefix3cmp = get_unreversed_tri_compare(*schema);
 
     void operator()(const binary_operator& binop) {
         if (auto tup = dynamic_pointer_cast<tuples::value>(binop.rhs->bind(options))) {
@@ -640,12 +738,12 @@ struct multi_column_expression_processor {
         for (auto& r : ranges) {
             // Note that this never returns a singular range; in its place, there will be an inclusive range
             // from a point to itself.
-            auto intersection = r.intersection(v, prefix3cmp);
-            if (!intersection) {
+            auto intrs = intersection(r, v, prefix3cmp);
+            if (!intrs) {
                 ranges.clear();
                 break;
             }
-            r = *intersection;
+            r = *intrs;
         }
     }
 
