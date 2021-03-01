@@ -760,9 +760,9 @@ struct multi_column_expression_processor {
             auto current_range = to_range(
                     oper_t::EQ, clustering_key_prefix::from_optional_exploded(*schema, current_tuple));
             for (const auto& r : ranges) {
-                auto intsct = r.intersection(current_range, prefix3cmp);
-                if (intsct) {
-                    new_ranges.push_back(*intsct);
+                auto intrs = intersection(r, current_range, prefix3cmp);
+                if (intrs) {
+                    new_ranges.push_back(*intrs);
                 }
             }
         }
