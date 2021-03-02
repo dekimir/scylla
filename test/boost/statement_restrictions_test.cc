@@ -265,6 +265,48 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
                     // or (c1=9 and c2=9 and c3<9)
                     left_open({I(9), I(9), I(9)}, {I(9), I(9)})}));
 
+        // Common initial values in lower/upper bound:
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2,c3)<(1,9,9)", e, "t1"), (std::vector{
+                    // c1=1 and c2>1 and c2<9
+                    both_open({I(1), I(1)}, {I(1), I(9)}),
+                    // or c1=1 and c2=1 and c3>1
+                    left_closed({I(1), I(1)}, {I(1), I(1), I(1)}),
+                    // or c1=1 and c2=9 and c3<9
+                    right_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<(1,9,9)", e, "t1"), (std::vector{
+                    // c1=1 and c2>1 and c2<9
+                    both_open({I(1), I(1)}, {I(1), I(9)}),
+                    // or c1=1 and c2=1 and c3>=1
+                    both_closed({I(1), I(1)}, {I(1), I(1), I(1)}),
+                    // or c1=1 and c2=9 and c3<9
+                    right_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2,c3)<=(1,9,9)", e, "t1"), (std::vector{
+                    // c1=1 and c2>1 and c2<9
+                    both_open({I(1), I(1)}, {I(1), I(9)}),
+                    // or c1=1 and c2=1 and c3>1
+                    left_closed({I(1), I(1)}, {I(1), I(1), I(1)}),
+                    // or c1=1 and c2=9 and c3<=9
+                    both_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<=(1,9,9)", e, "t1"), (std::vector{
+                    // c1=1 and c2>1 and c2<9
+                    both_open({I(1), I(1)}, {I(1), I(9)}),
+                    // or c1=1 and c2=1 and c3>=1
+                    both_closed({I(1), I(1)}, {I(1), I(1), I(1)}),
+                    // or c1=1 and c2=9 and c3<=9
+                    both_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2,c3)<(1,1,9)", e, "t1"), std::vector{
+                    // c1=1 and c2=1 and 9>c3>1
+                    both_open({I(1), I(1), I(9)}, {I(1), I(1), I(1)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2,c3)<(1,1,1)", e, "t1"),
+                          query::clustering_row_ranges{});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2,c3)<=(1,1,1)", e, "t1"),
+                          query::clustering_row_ranges{});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<(1,1,1)", e, "t1"),
+                          query::clustering_row_ranges{});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<=(1,1,1)", e, "t1"), std::vector{
+                both_closed({I(1), I(1), I(1)}, {I(1), I(1), I(1)})});
+
+        // Equality:
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)=(1,1,1)", e, "t1"), std::vector{
                 both_closed({I(1), I(1), I(1)}, {I(1), I(1), I(1)})});
         // TODO: Uncomment when supported.

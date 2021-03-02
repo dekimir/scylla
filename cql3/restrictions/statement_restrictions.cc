@@ -912,33 +912,42 @@ std::vector<query::clustering_range> equivalent(
     const auto tuple_lb_bytes = tuple_lb ? tuple_lb->value().explode(schema) : std::vector<bytes>{};
     const auto tuple_ub_bytes = tuple_ub ? tuple_ub->value().explode(schema) : std::vector<bytes>{};
 
+    size_t common_prefix_len = 0;
+    // Skip equal values; they don't contribute to equivalent-range generation.
+    while (common_prefix_len < tuple_lb_bytes.size() && common_prefix_len < tuple_ub_bytes.size() &&
+           tuple_lb_bytes[common_prefix_len] == tuple_ub_bytes[common_prefix_len]) {
+        ++common_prefix_len;
+    }
+
     std::vector<query::clustering_range> ranges;
     // First range is special: it has both bounds.
-    opt_bound lb1 = make_mixed_order_bound_for_prefix_len(1, tuple_lb_bytes, tuple_lb->is_inclusive());
-    opt_bound ub1 = make_mixed_order_bound_for_prefix_len(1, tuple_ub_bytes, tuple_ub->is_inclusive());
-    auto range1 = schema.clustering_column_at(0).type->is_reversed() ?
+    opt_bound lb1 = make_mixed_order_bound_for_prefix_len(
+            common_prefix_len + 1, tuple_lb_bytes, tuple_lb->is_inclusive());
+    opt_bound ub1 = make_mixed_order_bound_for_prefix_len(
+            common_prefix_len + 1, tuple_ub_bytes, tuple_ub->is_inclusive());
+    auto range1 = schema.clustering_column_at(common_prefix_len).type->is_reversed() ?
             query::clustering_range(ub1, lb1) : query::clustering_range(lb1, ub1);
     ranges.push_back(std::move(range1));
 
-    for (size_t i = 2; i <= tuple_lb_bytes.size(); ++i) {
-        opt_bound lb = make_mixed_order_bound_for_prefix_len(i, tuple_lb_bytes, tuple_lb->is_inclusive());
-        opt_bound ub = make_mixed_order_bound_for_prefix_len(i - 1, tuple_lb_bytes, /*irrelevant:*/true);
+    for (size_t p = common_prefix_len + 2; p <= tuple_lb_bytes.size(); ++p) {
+        opt_bound lb = make_mixed_order_bound_for_prefix_len(p, tuple_lb_bytes, tuple_lb->is_inclusive());
+        opt_bound ub = make_mixed_order_bound_for_prefix_len(p - 1, tuple_lb_bytes, /*irrelevant:*/true);
         if (ub) {
             ub = query::clustering_range::bound(ub->value(), inclusive);
         }
-        auto range = schema.clustering_column_at(i - 1).type->is_reversed() ?
+        auto range = schema.clustering_column_at(p - 1).type->is_reversed() ?
                 query::clustering_range(ub, lb) : query::clustering_range(lb, ub);
         ranges.push_back(std::move(range));
     }
 
-    for (size_t i = 2; i <= tuple_ub_bytes.size(); ++i) {
+    for (size_t p = common_prefix_len + 2; p <= tuple_ub_bytes.size(); ++p) {
         // Note the difference from the tuple_lb_bytes case above!
-        opt_bound ub = make_mixed_order_bound_for_prefix_len(i, tuple_ub_bytes, tuple_ub->is_inclusive());
-        opt_bound lb = make_mixed_order_bound_for_prefix_len(i - 1, tuple_ub_bytes, /*irrelevant:*/true);
+        opt_bound ub = make_mixed_order_bound_for_prefix_len(p, tuple_ub_bytes, tuple_ub->is_inclusive());
+        opt_bound lb = make_mixed_order_bound_for_prefix_len(p - 1, tuple_ub_bytes, /*irrelevant:*/true);
         if (lb) {
             lb = query::clustering_range::bound(lb->value(), inclusive);
         }
-        auto range = schema.clustering_column_at(i - 1).type->is_reversed() ?
+        auto range = schema.clustering_column_at(p - 1).type->is_reversed() ?
                 query::clustering_range(ub, lb) : query::clustering_range(lb, ub);
         ranges.push_back(std::move(range));
     }
