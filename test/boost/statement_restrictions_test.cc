@@ -278,21 +278,21 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
                     right_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<(1,9,9)", e, "t1"), (std::vector{
                     // c1=1 and c2>1 and c2<9
-                    right_open({I(1), I(1)}, {I(1), I(9)}),
+                    both_open({I(1), I(1)}, {I(1), I(9)}),
                     // or c1=1 and c2=1 and c3>=1
                     both_closed({I(1), I(1)}, {I(1), I(1), I(1)}),
                     // or c1=1 and c2=9 and c3<9
                     right_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2,c3)<=(1,9,9)", e, "t1"), (std::vector{
                     // c1=1 and c2>1 and c2<9
-                    left_open({I(1), I(1)}, {I(1), I(9)}),
+                    both_open({I(1), I(1)}, {I(1), I(9)}),
                     // or c1=1 and c2=1 and c3>1
                     left_closed({I(1), I(1)}, {I(1), I(1), I(1)}),
                     // or c1=1 and c2=9 and c3<=9
                     both_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<=(1,9,9)", e, "t1"), (std::vector{
                     // c1=1 and c2>1 and c2<9
-                    both_closed({I(1), I(1)}, {I(1), I(9)}),
+                    both_open({I(1), I(1)}, {I(1), I(9)}),
                     // or c1=1 and c2=1 and c3>=1
                     both_closed({I(1), I(1)}, {I(1), I(1), I(1)}),
                     // or c1=1 and c2=9 and c3<=9
@@ -328,7 +328,18 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
                 e,
                 "create table t2(p int, c1 int, c2 int, c3 int, primary key(p,c1,c2,c3)) "
                 "with clustering order by (c1 desc, c2 desc, c3 asc)");
-        BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>(1,1) and (c1,c2)<(9,9)", e, "t2"), (std::vector{
-                    both_open({I(9), I(9)}, {I(1), I(1)})}));
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>(1,1) and (c1,c2)<(9,9)", e, "t2"), std::vector{
+                    both_open({I(9), I(9)}, {I(1), I(1)})});
+
+        // Alternating desc and asc:
+        cquery_nofail(
+                e,
+                "create table t3 (p int, a int, b int, c int, d int, PRIMARY KEY (p, a, b, c, d)) "
+                "with clustering order by (a desc, b asc, c desc, d asc);");
+        BOOST_CHECK_EQUAL(slice_parse("(a,b,c,d)>=(0,1,2,3) and (a,b)<=(0,1)", e, "t3"), (std::vector{
+                    // a=0 and b=1 and c>2
+                    left_closed({I(0), I(1)}, {I(0), I(1), I(2)}),
+                    // or a=0 and b=1 and c=2 and d>=3
+                    both_closed({I(0), I(1), I(2), I(3)}, {I(0), I(1), I(2)})}));
     });
 }

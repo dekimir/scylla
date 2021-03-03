@@ -903,7 +903,9 @@ opt_bound make_mixed_order_bound_for_prefix_len(
     // Couldn't get std::ranges::subrange(whole_bound, len) to compile :(
     std::vector<bytes> partial_bound(
             whole_bound.cbegin(), whole_bound.cbegin() + std::min(len, whole_bound.size()));
-    return query::clustering_range::bound(clustering_key_prefix(move(partial_bound)), whole_bound_is_inclusive);
+    return query::clustering_range::bound(
+            clustering_key_prefix(move(partial_bound)),
+            len >= whole_bound.size() && whole_bound_is_inclusive);
 }
 
 std::vector<query::clustering_range> equivalent(
