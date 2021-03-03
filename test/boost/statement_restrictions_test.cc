@@ -247,12 +247,17 @@ SEASTAR_TEST_CASE(slice_multi_column) {
 
 SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
     return do_with_cql_env_thread([](cql_test_env& e) {
+        // First two columns ascending:
         cquery_nofail(
                 e,
                 "create table t1(p int, c1 int, c2 int, c3 int, c4 int, primary key(p,c1,c2,c3,c4)) "
                 "with clustering order by (c1 asc, c2 asc, c3 desc, c4 desc)");
+
+        // Not mixed order:
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>(1,1) and (c1,c2)<(9,9)", e, "t1"), (std::vector{
                     both_open({I(1), I(1)}, {I(9), I(9)})}));
+
+        // Same upper/lower bound lengths:
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2,c3)<(9,9,9)", e, "t1"), (std::vector{
                     // 1<c1<9
                     both_open({I(1)}, {I(9)}),
@@ -315,6 +320,7 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<=(1,1,1)", e, "t1"), std::vector{
                 both_closed({I(1), I(1), I(1)}, {I(1), I(1), I(1)})});
 
+        // First two columns descending:
         cquery_nofail(
                 e,
                 "create table t2(p int, c1 int, c2 int, c3 int, primary key(p,c1,c2,c3)) "
