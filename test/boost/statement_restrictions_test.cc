@@ -82,7 +82,7 @@ auto left_open(std::vector<bytes> lb) {
     return query::clustering_range::make_starting_with({clustering_key_prefix(move(lb)), exclusive});
 }
 
-auto left_open(std::vector<bytes> lb, std::vector<bytes> ub) {
+auto left_open_right_closed(std::vector<bytes> lb, std::vector<bytes> ub) {
     clustering_key_prefix cklb(move(lb)), ckub(move(ub));
     return query::clustering_range({{cklb, exclusive}}, {{ckub, inclusive}});
 }
@@ -91,7 +91,7 @@ auto left_closed(std::vector<bytes> lb) {
     return query::clustering_range::make_starting_with({clustering_key_prefix(move(lb)), inclusive});
 }
 
-auto left_closed(std::vector<bytes> lb, std::vector<bytes> ub) {
+auto left_closed_right_open(std::vector<bytes> lb, std::vector<bytes> ub) {
     clustering_key_prefix cklb(move(lb)), ckub(move(ub));
     return query::clustering_range({{cklb, inclusive}}, {{ckub, exclusive}});
 }
@@ -100,18 +100,8 @@ auto right_open(std::vector<bytes> ub) {
     return query::clustering_range::make_ending_with({clustering_key_prefix(move(ub)), exclusive});
 }
 
-auto right_open(std::vector<bytes> lb, std::vector<bytes> ub) {
-    clustering_key_prefix cklb(move(lb)), ckub(move(ub));
-    return query::clustering_range({{cklb, inclusive}}, {{ckub, exclusive}});
-}
-
 auto right_closed(std::vector<bytes> ub) {
     return query::clustering_range::make_ending_with({clustering_key_prefix(move(ub)), inclusive});
-}
-
-auto right_closed(std::vector<bytes> lb, std::vector<bytes> ub) {
-    clustering_key_prefix cklb(move(lb)), ckub(move(ub));
-    return query::clustering_range({{cklb, exclusive}}, {{ckub, inclusive}});
 }
 
 auto both_open(std::vector<bytes> lb, std::vector<bytes> ub) {
@@ -198,7 +188,7 @@ SEASTAR_TEST_CASE(slice_two_columns) {
                           (std::vector{singular({I(1)}), singular({I(2)})}));
 
         BOOST_CHECK_EQUAL(slice_parse("c1=123 and c2>'321'", e), std::vector{
-                left_open({I(123), T("321")}, {I(123)})});
+                left_open_right_closed({I(123), T("321")}, {I(123)})});
         BOOST_CHECK_EQUAL(slice_parse("c1<123 and c2>'321'", e), std::vector{right_open({I(123)})});
         BOOST_CHECK_EQUAL(slice_parse("c1>=123 and c2='321'", e), std::vector{left_closed({I(123)})});
     });
@@ -219,9 +209,11 @@ SEASTAR_TEST_CASE(slice_multi_column) {
         BOOST_CHECK_EQUAL(slice_parse("(c1)<(1)", e), std::vector{right_open({I(1)})});
         // TODO: Uncomment when supported:
         // BOOST_CHECK_EQUAL(slice_parse("(c1)<(1) and (c1)<=(3)", e), std::vector{right_open({I(1)})});
-        BOOST_CHECK_EQUAL(slice_parse("(c1)>(0) and (c1)<=(1)", e), std::vector{right_closed({I(0)}, {I(1)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1)>(0) and (c1)<=(1)", e), std::vector{
+                left_open_right_closed({I(0)}, {I(1)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>=(1,2)", e), std::vector{left_closed({I(1), I(2)})});
-        BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>=(1,2) and (c1)<(9)", e), std::vector{left_closed({I(1), I(2)}, {I(9)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>=(1,2) and (c1)<(9)", e), std::vector{
+                left_closed_right_open({I(1), I(2)}, {I(9)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>=(1,2) and (c1,c2)<=(11,12)", e),
                           std::vector{both_closed({I(1), I(2)}, {I(11), I(12)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,2,3)", e), std::vector{left_open({I(1), I(2), I(3)})});
@@ -260,34 +252,34 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
                     // 1<c1<9
                     both_open({I(1)}, {I(9)}),
                     // or (c1=1 and c2>1)
-                    left_open({I(1), I(1)}, {I(1)}),
+                    left_open_right_closed({I(1), I(1)}, {I(1)}),
                     // or (c1=1 and c2=1 and c3>1)
-                    right_open({I(1), I(1)}, {I(1), I(1), I(1)}),
+                    left_closed_right_open({I(1), I(1)}, {I(1), I(1), I(1)}),
                     // or (c1=9 and c2<9)
-                    right_open({I(9)}, {I(9), I(9)}),
+                    left_closed_right_open({I(9)}, {I(9), I(9)}),
                     // or (c1=9 and c2=9 and c3<9)
-                    left_open({I(9), I(9), I(9)}, {I(9), I(9)})}));
+                    left_open_right_closed({I(9), I(9), I(9)}, {I(9), I(9)})}));
 
         // Common initial values in lower/upper bound:
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2,c3)<(1,9,9)", e, "t1"), (std::vector{
                     // c1=1 and c2>1 and c2<9
                     both_open({I(1), I(1)}, {I(1), I(9)}),
                     // or c1=1 and c2=1 and c3>1
-                    left_closed({I(1), I(1)}, {I(1), I(1), I(1)}),
+                    left_closed_right_open({I(1), I(1)}, {I(1), I(1), I(1)}),
                     // or c1=1 and c2=9 and c3<9
-                    right_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
+                    left_open_right_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<(1,9,9)", e, "t1"), (std::vector{
                     // c1=1 and c2>1 and c2<9
                     both_open({I(1), I(1)}, {I(1), I(9)}),
                     // or c1=1 and c2=1 and c3>=1
                     both_closed({I(1), I(1)}, {I(1), I(1), I(1)}),
                     // or c1=1 and c2=9 and c3<9
-                    right_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
+                    left_open_right_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2,c3)<=(1,9,9)", e, "t1"), (std::vector{
                     // c1=1 and c2>1 and c2<9
                     both_open({I(1), I(1)}, {I(1), I(9)}),
                     // or c1=1 and c2=1 and c3>1
-                    left_closed({I(1), I(1)}, {I(1), I(1), I(1)}),
+                    left_closed_right_open({I(1), I(1)}, {I(1), I(1), I(1)}),
                     // or c1=1 and c2=9 and c3<=9
                     both_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<=(1,9,9)", e, "t1"), (std::vector{
@@ -312,7 +304,7 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2)<(1,1)", e, "t1"), query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2)<=(1,1)", e, "t1"), std::vector{
                 // c1=1 and c2=1 and c3>1
-                left_closed({I(1), I(1)}, {I(1), I(1), I(1)})});
+                left_closed_right_open({I(1), I(1)}, {I(1), I(1), I(1)})});
 
         // Equality:
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)=(1,1,1)", e, "t1"), std::vector{
@@ -338,7 +330,7 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
                 "with clustering order by (a desc, b asc, c desc, d asc);");
         BOOST_CHECK_EQUAL(slice_parse("(a,b,c,d)>=(0,1,2,3) and (a,b)<=(0,1)", e, "t3"), (std::vector{
                     // a=0 and b=1 and c>2
-                    left_closed({I(0), I(1)}, {I(0), I(1), I(2)}),
+                    left_closed_right_open({I(0), I(1)}, {I(0), I(1), I(2)}),
                     // or a=0 and b=1 and c=2 and d>=3
                     both_closed({I(0), I(1), I(2), I(3)}, {I(0), I(1), I(2)})}));
         BOOST_CHECK_EQUAL(slice_parse("(a,b)>=(0,1)", e, "t3"), (std::vector{
