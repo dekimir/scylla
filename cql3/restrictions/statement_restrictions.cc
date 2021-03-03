@@ -900,6 +900,9 @@ using opt_bound = std::optional<query::clustering_range::bound>;
 
 opt_bound make_mixed_order_bound_for_prefix_len(
         size_t len, const std::vector<bytes>& whole_bound, bool whole_bound_is_inclusive) {
+    if (whole_bound.empty()) {
+        return {};
+    }
     // Couldn't get std::ranges::subrange(whole_bound, len) to compile :(
     std::vector<bytes> partial_bound(
             whole_bound.cbegin(), whole_bound.cbegin() + std::min(len, whole_bound.size()));

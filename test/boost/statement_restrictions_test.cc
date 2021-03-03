@@ -341,5 +341,10 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
                     left_closed({I(0), I(1)}, {I(0), I(1), I(2)}),
                     // or a=0 and b=1 and c=2 and d>=3
                     both_closed({I(0), I(1), I(2), I(3)}, {I(0), I(1), I(2)})}));
+        BOOST_CHECK_EQUAL(slice_parse("(a,b)>=(0,1)", e, "t3"), (std::vector{
+                    // a>0
+                    right_open({I(0)}),
+                    // or a=0 and b>=1
+                    both_closed({I(0), I(1)}, {I(0)})}));
     });
 }
