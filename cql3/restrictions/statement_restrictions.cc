@@ -604,12 +604,15 @@ bool starts_before_start(
     }
     const auto len1 = r1.start()->value().representation().size();
     const auto len2 = r2.start()->value().representation().size();
-    if (len1 == len2) {
-        // The values truly are equal.
+    if (len1 == len2) { // The values truly are equal.
         return r1.start()->is_inclusive() && !r2.start()->is_inclusive();
+    } else if (len1 < len2) { // r1 start is a prefix of r2 start.
+        // (a)>=(1) starts before (a,b)>=(1,1), but (a)>(1) doesn't.
+        return r1.start()->is_inclusive();
+    } else { // r2 start is a prefix of r1 start.
+        // (a,b)>=(1,1) starts before (a)>(1) but after (a)>=(1).
+        return r2.start()->is_inclusive();
     }
-    // One value is a prefix of the other.
-    return (len1 < len2) && r1.start()->is_inclusive();
 }
 
 bool starts_before_end(
@@ -631,12 +634,15 @@ bool starts_before_end(
     }
     const auto len1 = r1.start()->value().representation().size();
     const auto len2 = r2.end()->value().representation().size();
-    if (len1 == len2) {
-        // The values truly are equal.
+    if (len1 == len2) { // The values truly are equal.
         return r1.start()->is_inclusive() && r2.end()->is_inclusive();
+    } else if (len1 < len2) { // r1 start is a prefix of r2 end.
+        // a>=(1) starts before (a,b)<=(1,1) ends, but (a)>(1) doesn't.
+        return r1.start()->is_inclusive();
+    } else { // r2 end is a prefix of r1 start.
+        // (a,b)>=(1,1) starts before (a)<=(1) ends but after (a)<(1) ends.
+        return r2.end()->is_inclusive();
     }
-    // One value is a prefix of the other.
-    return r1.start()->is_inclusive() || r2.end()->is_inclusive();
 }
 
 bool ends_before_end(
@@ -658,12 +664,15 @@ bool ends_before_end(
     }
     const auto len1 = r1.end()->value().representation().size();
     const auto len2 = r2.end()->value().representation().size();
-    if (len1 == len2) {
-        // The values truly are equal.
+    if (len1 == len2) { // The values truly are equal.
         return !r1.end()->is_inclusive() || r2.end()->is_inclusive();
+    } else if (len1 < len2) { // r1 end is a prefix of r2 end.
+        // (a)<(1) ends before (a,b)<=(1,1), but (a)<=(1) doesn't.
+        return !r1.end()->is_inclusive();
+    } else { // r2 end is a prefix of r1 end.
+        // (a,b)<=(1,1) ends before (a)<=(1) but after (a)<(1).
+        return r2.end()->is_inclusive();
     }
-    // One value is a prefix of the other.
-    return (len2 < len1) && r2.end()->is_inclusive();
 }
 
 /// Correct clustering_range intersection.  See #8157.

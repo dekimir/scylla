@@ -230,10 +230,8 @@ SEASTAR_TEST_CASE(slice_multi_column) {
                           std::vector{both_open({I(1), I(2), I(3)}, {I(10), I(20), I(30)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,2,3) and (c1,c2)<(10,20)", e),
                           std::vector{both_open({I(1), I(2), I(3)}, {I(10), I(20)})});
-        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,2,3) and (c1,c2)<(1,2)", e),
-                          std::vector{left_closed({I(1), I(2), I(3)}, {I(1), I(2)})});
-        BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>(1,2) and (c1,c2,c3)<=(1,2,3)", e),
-                          std::vector{right_closed({I(1), I(2)}, {I(1), I(2), I(3)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,2,3) and (c1,c2)<(1,2)", e), query::clustering_row_ranges{});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>(1,2) and (c1,c2,c3)<=(1,2,3)", e), query::clustering_row_ranges{});
 
         BOOST_CHECK_EQUAL(slice_parse("(c1) IN ((1))", e), std::vector{multi_column_singular({I(1)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1) IN ((1),(10))", e), (std::vector{
