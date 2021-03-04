@@ -338,5 +338,7 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
                     right_open({I(0)}),
                     // or a=0 and b>=1
                     both_closed({I(0), I(1)}, {I(0)})}));
+        BOOST_CHECK_EQUAL(slice_parse("(a,b)>=SCYLLA_CLUSTERING_BOUND(0,1)", e, "t3"), std::vector{
+                left_closed({I(0), I(1)})});
     });
 }
