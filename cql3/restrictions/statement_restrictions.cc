@@ -702,7 +702,7 @@ struct multi_column_expression_processor {
         if (auto tup = dynamic_pointer_cast<tuples::value>(binop.rhs->bind(options))) {
             if (!is_compare(binop.op)) {
                 on_internal_error(
-                        rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
+                        rlogger, format("multi_column_expression_processor: unexpected atom {}", binop));
             }
             auto opt_values = tup->get_elements();
             auto& lhs = std::get<std::vector<column_value>>(binop.lhs);
@@ -714,7 +714,7 @@ struct multi_column_expression_processor {
         } else if (auto dv = dynamic_pointer_cast<lists::delayed_value>(binop.rhs)) {
             if (binop.op != oper_t::IN) {
                 on_internal_error(
-                        rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
+                        rlogger, format("multi_column_expression_processor: unexpected atom {}", binop));
             }
             process_in_values(
                     dv->get_elements() | transformed(
@@ -725,7 +725,7 @@ struct multi_column_expression_processor {
             // This is `(a,b) IN ?`.  RHS elements are themselves tuples, represented as vector<bytes_opt>.
             if (binop.op != oper_t::IN) {
                 on_internal_error(
-                        rlogger, format("get_multi_column_clustering_bounds: unexpected atom {}", binop));
+                        rlogger, format("multi_column_expression_processor: unexpected atom {}", binop));
             }
             process_in_values(
                     static_pointer_cast<tuples::in_value>(mkr->bind(options))->get_split_values());
