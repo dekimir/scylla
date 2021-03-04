@@ -60,7 +60,7 @@ namespace cql3 {
  */
 class multi_column_relation final : public relation {
 public:
-    using mode = restrictions::multi_column_restriction::slice::mode;
+    using mode = expr::comparison_order;
 private:
     std::vector<shared_ptr<column_identifier::raw>> _entities;
     shared_ptr<term::multi_column_raw> _values_or_marker;

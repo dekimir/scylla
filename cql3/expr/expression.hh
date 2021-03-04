@@ -73,11 +73,30 @@ struct token {};
 
 enum class oper_t { EQ, NEQ, LT, LTE, GTE, GT, IN, CONTAINS, CONTAINS_KEY, IS_NOT, LIKE };
 
+/**
+ * SCYLLA_CLUSTERING_BOUND support.
+ *
+ * "normal" -   clustering bounds are interpreted as value bounds,
+ *              based on column ordering. For tables with mixed sort order
+ *              clustering, this means we need to do clever reconstruction
+ *              of bounds into single column restrictions and switch bounds.
+ *
+ * "scylla_clustering_bound" - simply bypasses this. sstableloader will create
+ *                             these, where the (a, b, c) bounds of the expression
+ *                             is actually raw clustering bounds. For us, it just
+ *                             means we can skip transforming things.
+ */
+enum class comparison_order : char {
+    normal,
+    scylla_clustering_bound,
+};
+
 /// Operator restriction: LHS op RHS.
 struct binary_operator {
     std::variant<column_value, std::vector<column_value>, token> lhs;
     oper_t op;
     ::shared_ptr<term> rhs;
+    comparison_order order = comparison_order::normal;
 };
 
 /// A conjunction of restrictions.

@@ -964,6 +964,33 @@ std::vector<query::clustering_range> equivalent(
     return ranges;
 }
 
+bool is_clustering_order(const binary_operator& op) {
+    return op.order == comparison_order::scylla_clustering_bound;
+}
+
+/// Extracts raw multi-column bounds from exprs; last one wins.
+query::clustering_range range_from_raw_bounds(
+        const std::vector<expression>& exprs, const query_options& options, const schema& schema) {
+    opt_bound lb, ub;
+    for (const auto& e : exprs) {
+        if (auto b = find_atom(e, is_clustering_order)) {
+            const auto tup = dynamic_pointer_cast<tuples::value>(b->rhs->bind(options));
+            if (!tup) {
+                on_internal_error(rlogger, format("range_from_raw_bounds: unexpected expression {}", *b));
+            }
+            const auto r = to_range(
+                    b->op, clustering_key_prefix::from_optional_exploded(schema, tup->get_elements()));
+            if (r.start()) {
+                lb = r.start();
+            }
+            if (r.end()) {
+                ub = r.end();
+            }
+        }
+    }
+    return {lb, ub};
+}
+
 } // anonymous namespace
 
 std::vector<query::clustering_range> statement_restrictions::get_clustering_bounds(const query_options& options) const {
@@ -974,7 +1001,11 @@ std::vector<query::clustering_range> statement_restrictions::get_clustering_boun
         bool all_natural = true, all_reverse = true;
         for (auto& r : _clustering_prefix_restrictions) { // TODO: move to constructor, do only once.
             using namespace expr;
-            for (auto& cv : std::get<std::vector<column_value>>(std::get<binary_operator>(r).lhs)) {
+            const auto& binop = std::get<binary_operator>(r);
+            if (is_clustering_order(binop)) {
+                return {range_from_raw_bounds(_clustering_prefix_restrictions, options, *_schema)};
+            }
+            for (auto& cv : std::get<std::vector<column_value>>(binop.lhs)) {
                 if (cv.col->type->is_reversed()) {
                     all_natural = false;
                 } else {

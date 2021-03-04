@@ -376,26 +376,8 @@ protected:
 };
 
 class multi_column_restriction::slice final : public multi_column_restriction {
-public:
-    /**
-     * SCYLLA_CLUSTERING_BOUND support.
-     * 
-     * "normal" -   clustering bounds are interpreted as value bounds, 
-     *              based on column ordering. For tables with mixed sort order
-     *              clustering, this means we need to do clever reconstruction
-     *              of bounds into single column restrictions and switch bounds.
-     * 
-     * "scylla_clustering_bound" - simply bypasses this. sstableloader will create
-     *                             these, where the (a, b, c) bounds of the expression
-     *                             is actually raw clustering bounds. For us, it just
-     *                             means we can skip transforming things.
-     */
-    enum class mode : char {
-        normal,
-        scylla_clustering_bound,
-    };
-private:
     using restriction_shared_ptr = ::shared_ptr<clustering_key_restrictions>;
+    using mode = expr::comparison_order;
     term_slice _slice;
     mode _mode;
 
@@ -411,7 +393,8 @@ public:
         expression = expr::binary_operator{
             std::vector<expr::column_value>(defs.cbegin(), defs.cend()),
             expr::pick_operator(bound, inclusive),
-            std::move(term)};
+            std::move(term),
+            m};
     }
 
     virtual bool is_supported_by(const secondary_index::index& index) const override {
