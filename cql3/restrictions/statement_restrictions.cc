@@ -994,16 +994,12 @@ std::vector<query::clustering_range> get_equivalent_ranges(
     return ranges;
 }
 
-bool is_clustering_order(const binary_operator& op) {
-    return op.order == comparison_order::clustering;
-}
-
 /// Extracts raw multi-column bounds from exprs; last one wins.
 query::clustering_range range_from_raw_bounds(
         const std::vector<expression>& exprs, const query_options& options, const schema& schema) {
     opt_bound lb, ub;
     for (const auto& e : exprs) {
-        if (auto b = find_atom(e, is_clustering_order)) {
+        if (auto b = find_clustering_order(e)) {
             const auto tup = dynamic_pointer_cast<tuples::value>(b->rhs->bind(options));
             if (!tup) {
                 on_internal_error(rlogger, format("range_from_raw_bounds: unexpected expression {}", *b));

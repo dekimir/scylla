@@ -251,6 +251,14 @@ inline bool has_slice_or_needs_filtering(const expression& e) {
     return find_atom(e, [] (const binary_operator& o) { return is_slice(o.op) || needs_filtering(o.op); });
 }
 
+inline bool is_clustering_order(const binary_operator& op) {
+    return op.order == comparison_order::clustering;
+}
+
+inline auto find_clustering_order(const expression& e) {
+    return find_atom(e, is_clustering_order);
+}
+
 /// True iff binary_operator involves a collection.
 extern bool is_on_collection(const binary_operator&);
 
