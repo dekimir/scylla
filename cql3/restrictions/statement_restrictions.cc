@@ -688,7 +688,8 @@ std::optional<query::clustering_range> intersection(
     return query::clustering_range(intersection_start, intersection_end);
 }
 
-struct multi_column_expression_processor {
+/// An expression visitor that translates multi-column atoms into clustering ranges.
+struct multi_column_range_accumulator {
     const query_options& options;
     const schema_ptr schema;
     std::vector<query::clustering_range> ranges{query::clustering_range::make_open_ended_both_sides()};
@@ -698,7 +699,7 @@ struct multi_column_expression_processor {
         if (auto tup = dynamic_pointer_cast<tuples::value>(binop.rhs->bind(options))) {
             if (!is_compare(binop.op)) {
                 on_internal_error(
-                        rlogger, format("multi_column_expression_processor: unexpected atom {}", binop));
+                        rlogger, format("multi_column_range_accumulator: unexpected atom {}", binop));
             }
             auto opt_values = tup->get_elements();
             auto& lhs = std::get<std::vector<column_value>>(binop.lhs);
@@ -710,7 +711,7 @@ struct multi_column_expression_processor {
         } else if (auto dv = dynamic_pointer_cast<lists::delayed_value>(binop.rhs)) {
             if (binop.op != oper_t::IN) {
                 on_internal_error(
-                        rlogger, format("multi_column_expression_processor: unexpected atom {}", binop));
+                        rlogger, format("multi_column_range_accumulator: unexpected atom {}", binop));
             }
             process_in_values(
                     dv->get_elements() | transformed(
@@ -721,7 +722,7 @@ struct multi_column_expression_processor {
             // This is `(a,b) IN ?`.  RHS elements are themselves tuples, represented as vector<bytes_opt>.
             if (binop.op != oper_t::IN) {
                 on_internal_error(
-                        rlogger, format("multi_column_expression_processor: unexpected atom {}", binop));
+                        rlogger, format("multi_column_range_accumulator: unexpected atom {}", binop));
             }
             process_in_values(
                     static_pointer_cast<tuples::in_value>(mkr->bind(options))->get_split_values());
@@ -785,11 +786,11 @@ std::vector<query::clustering_range> get_multi_column_clustering_bounds(
         const query_options& options,
         schema_ptr schema,
         const std::vector<expression>& multi_column_restrictions) {
-    multi_column_expression_processor proc{options, schema};
+    multi_column_range_accumulator acc{options, schema};
     for (const auto& restr : multi_column_restrictions) {
-        std::visit(proc, restr);
+        std::visit(acc, restr);
     }
-    return proc.ranges;
+    return acc.ranges;
 }
 
 /// For each element of a, creates b.size() new elements, each of which equals a's element extended by b's element.
