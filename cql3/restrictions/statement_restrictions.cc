@@ -1005,7 +1005,7 @@ query::clustering_range range_from_raw_bounds(
         if (auto b = find_clustering_order(e)) {
             const auto tup = dynamic_pointer_cast<tuples::value>(b->rhs->bind(options));
             if (!tup) {
-                on_internal_error(rlogger, format("range_from_raw_bounds: unexpected expression {}", *b));
+                on_internal_error(rlogger, format("range_from_raw_bounds: unexpected atom {}", *b));
             }
             const auto r = to_range(
                     b->op, clustering_key_prefix::from_optional_exploded(schema, tup->get_elements()));
