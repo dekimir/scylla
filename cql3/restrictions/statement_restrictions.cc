@@ -672,6 +672,9 @@ bool ends_before_end(
 }
 
 /// Correct clustering_range intersection.  See #8157.
+///
+/// Note that this never returns a singular range; in its place, there will be an inclusive range from a point to
+/// itself.
 std::optional<query::clustering_range> intersection(
         const query::clustering_range& r1,
         const query::clustering_range& r2,
@@ -742,8 +745,6 @@ struct multi_column_range_accumulator {
     /// Intersects each range with v.  If any intersection is empty, clears ranges.
     void intersect_all(const query::clustering_range& v) {
         for (auto& r : ranges) {
-            // Note that this never returns a singular range; in its place, there will be an inclusive range
-            // from a point to itself.
             auto intrs = intersection(r, v, prefix3cmp);
             if (!intrs) {
                 ranges.clear();
