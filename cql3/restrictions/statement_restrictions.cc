@@ -680,12 +680,12 @@ std::optional<query::clustering_range> intersection(
     if (starts_before_start(r2, r1, cmp)) {
         return intersection(r2, r1, cmp);
     }
-    if (starts_before_end(r2, r1, cmp)) {
-        const auto& intersection_start = r2.start();
-        const auto& intersection_end = ends_before_end(r1, r2, cmp) ? r1.end() : r2.end();
-        return query::clustering_range(intersection_start, intersection_end);
+    if (!starts_before_end(r2, r1, cmp)) {
+        return {};
     }
-    return {};
+    const auto& intersection_start = r2.start();
+    const auto& intersection_end = ends_before_end(r1, r2, cmp) ? r1.end() : r2.end();
+    return query::clustering_range(intersection_start, intersection_end);
 }
 
 struct multi_column_expression_processor {
