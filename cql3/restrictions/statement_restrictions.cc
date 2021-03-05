@@ -709,10 +709,7 @@ struct multi_column_range_accumulator {
             }
             intersect_all(to_range(binop.op, clustering_key_prefix(values)));
         } else if (auto dv = dynamic_pointer_cast<lists::delayed_value>(binop.rhs)) {
-            if (binop.op != oper_t::IN) {
-                on_internal_error(
-                        rlogger, format("multi_column_range_accumulator: unexpected atom {}", binop));
-            }
+            must_be_in_operator(binop);
             process_in_values(
                     dv->get_elements() | transformed(
                             [&] (const ::shared_ptr<term>& t) {
@@ -720,10 +717,7 @@ struct multi_column_range_accumulator {
                             }));
         } else if (auto mkr = dynamic_pointer_cast<tuples::in_marker>(binop.rhs)) {
             // This is `(a,b) IN ?`.  RHS elements are themselves tuples, represented as vector<bytes_opt>.
-            if (binop.op != oper_t::IN) {
-                on_internal_error(
-                        rlogger, format("multi_column_range_accumulator: unexpected atom {}", binop));
-            }
+            must_be_in_operator(binop);
             process_in_values(
                     static_pointer_cast<tuples::in_value>(mkr->bind(options))->get_split_values());
         }
@@ -736,6 +730,12 @@ struct multi_column_range_accumulator {
     void operator()(bool b) {
         if (!b) {
             ranges.clear();
+        }
+    }
+
+    static void must_be_in_operator(const binary_operator& binop) {
+        if (binop.op != oper_t::IN) {
+            on_internal_error(rlogger, format("multi_column_range_accumulator: unexpected atom {}", binop));
         }
     }
 
