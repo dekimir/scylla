@@ -567,15 +567,15 @@ namespace {
 using namespace expr;
 
 clustering_key_prefix::prefix_equal_tri_compare get_unreversed_tri_compare(const schema& schema) {
-    clustering_key_prefix::prefix_equal_tri_compare unreversed_tri_compare(schema);
-    std::vector<data_type> types = unreversed_tri_compare.prefix_type->types();
+    clustering_key_prefix::prefix_equal_tri_compare cmp(schema);
+    std::vector<data_type> types = cmp.prefix_type->types();
     for (auto& t : types) {
         if (t->is_reversed()) {
             t = t->underlying_type();
         }
     }
-    unreversed_tri_compare.prefix_type = make_lw_shared<compound_type<allow_prefixes::yes>>(types);
-    return unreversed_tri_compare;
+    cmp.prefix_type = make_lw_shared<compound_type<allow_prefixes::yes>>(types);
+    return cmp;
 }
 
 /// True iff r1 start is before r2 start.
