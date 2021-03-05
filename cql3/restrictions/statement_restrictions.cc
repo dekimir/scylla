@@ -940,35 +940,35 @@ opt_bound make_mixed_order_bound_for_prefix_len(
 ///
 /// For more examples of this range translation, please see the statement_restrictions unit tests.
 std::vector<query::clustering_range> get_equivalent_ranges(
-        const query::clustering_range& mcrange, const schema& schema) {
-    const auto& tuple_lb = mcrange.start();
-    const auto& tuple_ub = mcrange.end();
-    if (tuple_lb == tuple_ub && (!tuple_lb || tuple_lb->is_inclusive())) {
-        return {mcrange};
+        const query::clustering_range& cql_order_range, const schema& schema) {
+    const auto& cql_lb = cql_order_range.start();
+    const auto& cql_ub = cql_order_range.end();
+    if (cql_lb == cql_ub && (!cql_lb || cql_lb->is_inclusive())) {
+        return {cql_order_range};
     }
-    const auto tuple_lb_bytes = tuple_lb ? tuple_lb->value().explode(schema) : std::vector<bytes>{};
-    const auto tuple_ub_bytes = tuple_ub ? tuple_ub->value().explode(schema) : std::vector<bytes>{};
+    const auto cql_lb_bytes = cql_lb ? cql_lb->value().explode(schema) : std::vector<bytes>{};
+    const auto cql_ub_bytes = cql_ub ? cql_ub->value().explode(schema) : std::vector<bytes>{};
 
     size_t common_prefix_len = 0;
     // Skip equal values; they don't contribute to equivalent-range generation.
-    while (common_prefix_len < tuple_lb_bytes.size() && common_prefix_len < tuple_ub_bytes.size() &&
-           tuple_lb_bytes[common_prefix_len] == tuple_ub_bytes[common_prefix_len]) {
+    while (common_prefix_len < cql_lb_bytes.size() && common_prefix_len < cql_ub_bytes.size() &&
+           cql_lb_bytes[common_prefix_len] == cql_ub_bytes[common_prefix_len]) {
         ++common_prefix_len;
     }
 
     std::vector<query::clustering_range> ranges;
     // First range is special: it has both bounds.
     opt_bound lb1 = make_mixed_order_bound_for_prefix_len(
-            common_prefix_len + 1, tuple_lb_bytes, tuple_lb->is_inclusive());
+            common_prefix_len + 1, cql_lb_bytes, cql_lb->is_inclusive());
     opt_bound ub1 = make_mixed_order_bound_for_prefix_len(
-            common_prefix_len + 1, tuple_ub_bytes, tuple_ub->is_inclusive());
+            common_prefix_len + 1, cql_ub_bytes, cql_ub->is_inclusive());
     auto range1 = schema.clustering_column_at(common_prefix_len).type->is_reversed() ?
             query::clustering_range(ub1, lb1) : query::clustering_range(lb1, ub1);
     ranges.push_back(std::move(range1));
 
-    for (size_t p = common_prefix_len + 2; p <= tuple_lb_bytes.size(); ++p) {
-        opt_bound lb = make_mixed_order_bound_for_prefix_len(p, tuple_lb_bytes, tuple_lb->is_inclusive());
-        opt_bound ub = make_mixed_order_bound_for_prefix_len(p - 1, tuple_lb_bytes, /*irrelevant:*/true);
+    for (size_t p = common_prefix_len + 2; p <= cql_lb_bytes.size(); ++p) {
+        opt_bound lb = make_mixed_order_bound_for_prefix_len(p, cql_lb_bytes, cql_lb->is_inclusive());
+        opt_bound ub = make_mixed_order_bound_for_prefix_len(p - 1, cql_lb_bytes, /*irrelevant:*/true);
         if (ub) {
             ub = query::clustering_range::bound(ub->value(), inclusive);
         }
@@ -977,10 +977,10 @@ std::vector<query::clustering_range> get_equivalent_ranges(
         ranges.push_back(std::move(range));
     }
 
-    for (size_t p = common_prefix_len + 2; p <= tuple_ub_bytes.size(); ++p) {
-        // Note the difference from the tuple_lb_bytes case above!
-        opt_bound ub = make_mixed_order_bound_for_prefix_len(p, tuple_ub_bytes, tuple_ub->is_inclusive());
-        opt_bound lb = make_mixed_order_bound_for_prefix_len(p - 1, tuple_ub_bytes, /*irrelevant:*/true);
+    for (size_t p = common_prefix_len + 2; p <= cql_ub_bytes.size(); ++p) {
+        // Note the difference from the cql_lb_bytes case above!
+        opt_bound ub = make_mixed_order_bound_for_prefix_len(p, cql_ub_bytes, cql_ub->is_inclusive());
+        opt_bound lb = make_mixed_order_bound_for_prefix_len(p - 1, cql_ub_bytes, /*irrelevant:*/true);
         if (lb) {
             lb = query::clustering_range::bound(lb->value(), inclusive);
         }
