@@ -958,7 +958,7 @@ std::vector<query::clustering_range> equivalent(
 }
 
 bool is_clustering_order(const binary_operator& op) {
-    return op.order == comparison_order::scylla_clustering_bound;
+    return op.order == comparison_order::clustering;
 }
 
 /// Extracts raw multi-column bounds from exprs; last one wins.
@@ -991,7 +991,7 @@ std::vector<query::clustering_range> statement_restrictions::get_clustering_boun
         return {query::clustering_range::make_open_ended_both_sides()};
     }
     if (count_if(_clustering_prefix_restrictions[0], expr::is_multi_column)) {
-        bool all_natural = true, all_reverse = true;
+        bool all_natural = true, all_reverse = true; ///< Whether column types are reversed or natural.
         for (auto& r : _clustering_prefix_restrictions) { // TODO: move to constructor, do only once.
             using namespace expr;
             const auto& binop = std::get<binary_operator>(r);
