@@ -785,7 +785,6 @@ std::vector<query::clustering_range> get_multi_column_clustering_bounds(
         const query_options& options,
         schema_ptr schema,
         const std::vector<expression>& multi_column_restrictions) {
-    using namespace expr;
     multi_column_expression_processor proc{options, schema};
     for (const auto& restr : multi_column_restrictions) {
         std::visit(proc, restr);
