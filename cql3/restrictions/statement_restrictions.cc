@@ -817,7 +817,7 @@ void error_if_exceeds(size_t size, size_t limit) {
     }
 }
 
-static constexpr bool inclusive = true;
+constexpr bool inclusive = true;
 
 /// Calculates clustering bounds for the single-column case.
 std::vector<query::clustering_range> get_single_column_clustering_bounds(

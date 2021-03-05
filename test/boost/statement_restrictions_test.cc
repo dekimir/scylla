@@ -76,7 +76,7 @@ auto multi_column_singular(std::vector<bytes> values) {
     return query::clustering_range::make(point, point);
 }
 
-const bool inclusive = true, exclusive = false;
+constexpr bool inclusive = true, exclusive = false;
 
 auto left_open(std::vector<bytes> lb) {
     return query::clustering_range::make_starting_with({clustering_key_prefix(move(lb)), exclusive});
