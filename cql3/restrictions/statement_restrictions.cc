@@ -904,7 +904,42 @@ opt_bound make_mixed_order_bound_for_prefix_len(
             len >= whole_bound.size() && whole_bound_is_inclusive);
 }
 
-std::vector<query::clustering_range> equivalent(
+/// Given a multi-column range in CQL order, breaks it into an equivalent union of clustering-order ranges.  Returns
+/// those ranges as vector elements.
+///
+/// A difference between CQL order and clustering order means that the right-hand side of a clustering-key comparison is
+/// not necessarily a single (lower or upper) bound on the clustering key in storage.  Eg, `WITH CLUSTERING ORDER BY (a
+/// ASC, b DESC)` indicates that "a less than 5" means "a comes before 5 in storage", but "b less than 5" means "b comes
+/// AFTER 5 in storage".  Therefore the CQL expression (a,b)<(5,5) cannot be executed by fetching a single range from
+/// the storage layer -- the right-hand side is not a single upper bound from the storage layer's perspective.
+///
+/// When translating the WHERE clause into clustering ranges to fetch, it's natural to first calculate the CQL-order
+/// ranges: comparisons define ranges, the AND operator intersects them, the IN operator makes a Cartesian product.  The
+/// result of this is a union of ranges in CQL order that define the clustering slice to fetch.  And if the clustering
+/// order is the same as the CQL order, these ranges can be sent to the storage proxy directly to fetch the correct
+/// result.  But if the two orders differ, there is some work to be done first.  This is simple enough for ranges that
+/// only vary a single column -- see reverse_if_reqd().  Multi-column ranges are more complicated; they are translated
+/// into an equivalent union of clustering-order ranges by get_equivalent_ranges().
+///
+/// Continuing the above example, we can translate the CQL expression (a,b)<(5,5) into a union of several ranges that
+/// are continuous in storage.  We begin by observing that (a,b)<(5,5) is the same as a<5 OR (a=5 AND b<5).  This is a
+/// union of two ranges: the range corresponding to a<5, plus the range corresponding to (a=5 AND b<5).  Note that both
+/// of these ranges are continuous in storage because they only vary a single column:
+///
+///  * a<5 is a range from -inf to clustering_key_prefix(5) exclusive
+///
+///  * (a=5 AND b<5) is a range from clustering_key_prefix(5,5) exclusive to clustering_key_prefix(5) inclusive; note
+///    the clustering order between those start/end bounds
+///
+/// Here is an illustration of those two ranges in storage, with rows represented vertically and clustering-ordered left
+/// to right:
+///
+///        a: 4 4 4 4 4 4 5 5 5 5 5 5 5 5 6 6 6 6 6
+///        b: 5 4 3 2 1 0 7 6 5 4 3 2 1 0 5 4 3 2 1
+/// 1st range ^^^^^^^^^^^       ^^^^^^^^^ 2nd range
+///
+/// For more examples of this range translation, please see the statement_restrictions unit tests.
+std::vector<query::clustering_range> get_equivalent_ranges(
         const query::clustering_range& mcrange, const schema& schema) {
     const auto& tuple_lb = mcrange.start();
     const auto& tuple_ub = mcrange.end();
@@ -1010,7 +1045,7 @@ std::vector<query::clustering_range> statement_restrictions::get_clustering_boun
         if (!all_natural && !all_reverse) {
             std::vector<query::clustering_range> bounds_in_clustering_order;
             for (const auto& b : bounds) {
-                const auto eqv = equivalent(b, *_schema);
+                const auto eqv = get_equivalent_ranges(b, *_schema);
                 bounds_in_clustering_order.insert(bounds_in_clustering_order.end(), eqv.cbegin(), eqv.cend());
             }
             return bounds_in_clustering_order;
