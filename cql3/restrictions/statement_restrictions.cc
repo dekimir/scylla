@@ -797,7 +797,13 @@ std::vector<query::clustering_range> get_multi_column_clustering_bounds(
 
 /// For each element of a, creates b.size() new elements, each of which equals a's element extended by b's element.
 std::vector<std::vector<bytes>> accumulate_cartesian_product(
-        const std::vector<std::vector<bytes>>& a, const std::vector<bytes>& b) {
+        std::vector<std::vector<bytes>>&& a, const std::vector<bytes>& b) {
+    if (b.size() == 1) { // Don't need multiple copies of a's elements; just extend them in place.
+        for (auto& a_element : a) {
+            a_element.push_back(b[0]);
+        }
+        return move(a);
+    }
     std::vector<std::vector<bytes>> product;
     product.reserve(a.size() * b.size());
     for (const auto& a_element : a) {
@@ -847,7 +853,7 @@ std::vector<query::clustering_range> get_single_column_clustering_bounds(
                     prefix_bounds.push_back({v});
                 }
             } else {
-                prefix_bounds = accumulate_cartesian_product(prefix_bounds, *list);
+                prefix_bounds = accumulate_cartesian_product(move(prefix_bounds), *list);
                 error_if_exceeds(prefix_bounds.size(), size_limit);
             }
         } else if (auto last_range = std::get_if<nonwrapping_interval<bytes>>(&values)) {
