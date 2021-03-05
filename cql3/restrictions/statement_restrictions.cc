@@ -578,6 +578,7 @@ clustering_key_prefix::prefix_equal_tri_compare get_unreversed_tri_compare(const
     return unreversed_tri_compare;
 }
 
+/// True iff r1 start is before r2 start.
 bool starts_before_start(
         const query::clustering_range& r1,
         const query::clustering_range& r2,
@@ -608,6 +609,7 @@ bool starts_before_start(
     }
 }
 
+/// True iff r1 start is before r2 end.
 bool starts_before_end(
         const query::clustering_range& r1,
         const query::clustering_range& r2,
@@ -638,6 +640,7 @@ bool starts_before_end(
     }
 }
 
+/// True if r1 end is before r2 end.
 bool ends_before_end(
         const query::clustering_range& r1,
         const query::clustering_range& r2,
