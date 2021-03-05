@@ -891,17 +891,19 @@ std::vector<query::clustering_range> get_single_column_clustering_bounds(
 
 using opt_bound = std::optional<query::clustering_range::bound>;
 
-opt_bound make_mixed_order_bound_for_prefix_len(
-        size_t len, const std::vector<bytes>& whole_bound, bool whole_bound_is_inclusive) {
+/// Makes a partial bound out of whole_bound's prefix.  If the partial bound is strictly shorter than the whole, it is
+/// exclusive.  Otherwise, it matches the whole_bound's inclusivity.
+opt_bound make_prefix_bound(
+        size_t prefix_len, const std::vector<bytes>& whole_bound, bool whole_bound_is_inclusive) {
     if (whole_bound.empty()) {
         return {};
     }
-    // Couldn't get std::ranges::subrange(whole_bound, len) to compile :(
+    // Couldn't get std::ranges::subrange(whole_bound, prefix_len) to compile :(
     std::vector<bytes> partial_bound(
-            whole_bound.cbegin(), whole_bound.cbegin() + std::min(len, whole_bound.size()));
+            whole_bound.cbegin(), whole_bound.cbegin() + std::min(prefix_len, whole_bound.size()));
     return query::clustering_range::bound(
             clustering_key_prefix(move(partial_bound)),
-            len >= whole_bound.size() && whole_bound_is_inclusive);
+            prefix_len >= whole_bound.size() && whole_bound_is_inclusive);
 }
 
 /// Given a multi-column range in CQL order, breaks it into an equivalent union of clustering-order ranges.  Returns
@@ -958,17 +960,17 @@ std::vector<query::clustering_range> get_equivalent_ranges(
 
     std::vector<query::clustering_range> ranges;
     // First range is special: it has both bounds.
-    opt_bound lb1 = make_mixed_order_bound_for_prefix_len(
+    opt_bound lb1 = make_prefix_bound(
             common_prefix_len + 1, cql_lb_bytes, cql_lb->is_inclusive());
-    opt_bound ub1 = make_mixed_order_bound_for_prefix_len(
+    opt_bound ub1 = make_prefix_bound(
             common_prefix_len + 1, cql_ub_bytes, cql_ub->is_inclusive());
     auto range1 = schema.clustering_column_at(common_prefix_len).type->is_reversed() ?
             query::clustering_range(ub1, lb1) : query::clustering_range(lb1, ub1);
     ranges.push_back(std::move(range1));
 
     for (size_t p = common_prefix_len + 2; p <= cql_lb_bytes.size(); ++p) {
-        opt_bound lb = make_mixed_order_bound_for_prefix_len(p, cql_lb_bytes, cql_lb->is_inclusive());
-        opt_bound ub = make_mixed_order_bound_for_prefix_len(p - 1, cql_lb_bytes, /*irrelevant:*/true);
+        opt_bound lb = make_prefix_bound(p, cql_lb_bytes, cql_lb->is_inclusive());
+        opt_bound ub = make_prefix_bound(p - 1, cql_lb_bytes, /*irrelevant:*/true);
         if (ub) {
             ub = query::clustering_range::bound(ub->value(), inclusive);
         }
@@ -979,8 +981,8 @@ std::vector<query::clustering_range> get_equivalent_ranges(
 
     for (size_t p = common_prefix_len + 2; p <= cql_ub_bytes.size(); ++p) {
         // Note the difference from the cql_lb_bytes case above!
-        opt_bound ub = make_mixed_order_bound_for_prefix_len(p, cql_ub_bytes, cql_ub->is_inclusive());
-        opt_bound lb = make_mixed_order_bound_for_prefix_len(p - 1, cql_ub_bytes, /*irrelevant:*/true);
+        opt_bound ub = make_prefix_bound(p, cql_ub_bytes, cql_ub->is_inclusive());
+        opt_bound lb = make_prefix_bound(p - 1, cql_ub_bytes, /*irrelevant:*/true);
         if (lb) {
             lb = query::clustering_range::bound(lb->value(), inclusive);
         }
