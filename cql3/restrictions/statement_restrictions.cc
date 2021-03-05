@@ -884,8 +884,8 @@ std::vector<query::clustering_range> get_single_column_clustering_bounds(
                     if (extra_ub) {
                         new_ub.push_back(extra_ub->value());
                     }
-                    query::clustering_range::bound new_start(new_lb, extra_lb ? extra_lb->is_inclusive() : inclusive),
-                            new_end(new_ub, extra_ub ? extra_ub->is_inclusive() : inclusive);
+                    query::clustering_range::bound new_start(new_lb, extra_lb ? extra_lb->is_inclusive() : inclusive);
+                    query::clustering_range::bound new_end  (new_ub, extra_ub ? extra_ub->is_inclusive() : inclusive);
                     ck_ranges.push_back(reverse_if_reqd({new_start, new_end}, *schema->clustering_column_at(i).type));
                 }
             }
