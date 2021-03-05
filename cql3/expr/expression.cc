@@ -607,22 +607,6 @@ value_list get_IN_values(const ::shared_ptr<term>& t, size_t k, const query_opti
 
 static constexpr bool inclusive = true, exclusive = false;
 
-/// A range of all X such that X op val.
-nonwrapping_range<bytes> to_range(oper_t op, const bytes& val) {
-    switch (op) {
-    case oper_t::GT:
-        return nonwrapping_range<bytes>::make_starting_with(interval_bound(val, exclusive));
-    case oper_t::GTE:
-        return nonwrapping_range<bytes>::make_starting_with(interval_bound(val, inclusive));
-    case oper_t::LT:
-        return nonwrapping_range<bytes>::make_ending_with(interval_bound(val, exclusive));
-    case oper_t::LTE:
-        return nonwrapping_range<bytes>::make_ending_with(interval_bound(val, inclusive));
-    default:
-        throw std::logic_error(format("to_range: unknown comparison operator {}", op));
-    }
-}
-
 } // anonymous namespace
 
 expression make_conjunction(expression a, expression b) {
