@@ -755,6 +755,7 @@ struct multi_column_range_accumulator {
     }
 
     template<std::ranges::range Range>
+    requires std::convertible_to<typename Range::value_type::value_type, bytes_opt>
     void process_in_values(Range in_values) {
         std::vector<query::clustering_range> new_ranges;
         std::set<std::vector<bytes_opt>> tuples_seen;
