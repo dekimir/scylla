@@ -672,9 +672,6 @@ bool ends_before_end(
 }
 
 /// Correct clustering_range intersection.  See #8157.
-///
-/// Note that this never returns a singular range; in its place, there will be an inclusive range from a point to
-/// itself.
 std::optional<query::clustering_range> intersection(
         const query::clustering_range& r1,
         const query::clustering_range& r2,
@@ -688,6 +685,9 @@ std::optional<query::clustering_range> intersection(
     }
     const auto& intersection_start = r2.start();
     const auto& intersection_end = ends_before_end(r1, r2, cmp) ? r1.end() : r2.end();
+    if (intersection_start == intersection_end && intersection_end.has_value()) {
+        return query::clustering_range::make_singular(intersection_end->value());
+    }
     return query::clustering_range(intersection_start, intersection_end);
 }
 

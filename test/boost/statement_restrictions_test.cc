@@ -70,12 +70,6 @@ auto singular(std::vector<bytes> values) {
     return query::clustering_range::make_singular(clustering_key_prefix(move(values)));
 }
 
-/// Like singular(), but makes an interval that matches the slice() result for multi-column bounds.
-auto multi_column_singular(std::vector<bytes> values) {
-    clustering_key_prefix point(move(values));
-    return query::clustering_range::make(point, point);
-}
-
 constexpr bool inclusive = true, exclusive = false;
 
 auto left_open(std::vector<bytes> lb) {
@@ -197,14 +191,14 @@ SEASTAR_TEST_CASE(slice_two_columns) {
 SEASTAR_TEST_CASE(slice_multi_column) {
     return do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table ks.t(p int, c1 int, c2 int, c3 int, primary key(p,c1,c2,c3))");
-        BOOST_CHECK_EQUAL(slice_parse("(c1)=(1)", e), std::vector{multi_column_singular({I(1)})});
-        BOOST_CHECK_EQUAL(slice_parse("(c1,c2)=(1,2)", e), std::vector{multi_column_singular({I(1), I(2)})});
-        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)=(1,2,3)", e), std::vector{multi_column_singular({I(1), I(2), I(3)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1)=(1)", e), std::vector{singular({I(1)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2)=(1,2)", e), std::vector{singular({I(1), I(2)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)=(1,2,3)", e), std::vector{singular({I(1), I(2), I(3)})});
         // TODO: Uncomment when supported:
         // BOOST_CHECK_EQUAL(slice_parse("(c1)=(1) and (c1)=(2)", e), query::clustering_row_ranges{});
         // BOOST_CHECK_EQUAL(slice_parse("(c1,c2)=(1,2) and (c1,c2)>(2)", e), query::clustering_row_ranges{});
         // BOOST_CHECK_EQUAL(slice_parse("(c1,c2)=(1,2) and (c1,c2)=(1,2)", e),
-        //                   std::vector{multi_column_singular({I(1), I(2)})});
+        //                   std::vector{singular({I(1), I(2)})});
 
         BOOST_CHECK_EQUAL(slice_parse("(c1)<(1)", e), std::vector{right_open({I(1)})});
         // TODO: Uncomment when supported:
@@ -225,13 +219,13 @@ SEASTAR_TEST_CASE(slice_multi_column) {
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,2,3) and (c1,c2)<(1,2)", e), query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2)>(1,2) and (c1,c2,c3)<=(1,2,3)", e), query::clustering_row_ranges{});
 
-        BOOST_CHECK_EQUAL(slice_parse("(c1) IN ((1))", e), std::vector{multi_column_singular({I(1)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1) IN ((1))", e), std::vector{singular({I(1)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1) IN ((1),(10))", e), (std::vector{
-                    multi_column_singular({I(1)}), multi_column_singular({I(10)})}));
+                    singular({I(1)}), singular({I(10)})}));
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2) IN ((1,2),(10,20))", e), (std::vector{
-                    multi_column_singular({I(1), I(2)}), multi_column_singular({I(10), I(20)})}));
+                    singular({I(1), I(2)}), singular({I(10), I(20)})}));
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3) IN ((1,2,3),(10,20,30))", e), (std::vector{
-                    multi_column_singular({I(1), I(2), I(3)}), multi_column_singular({I(10), I(20), I(30)})}));
+                    singular({I(1), I(2), I(3)}), singular({I(10), I(20), I(30)})}));
     });
 }
 
@@ -299,7 +293,7 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<(1,1,1)", e, "t1"),
                           query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<=(1,1,1)", e, "t1"), std::vector{
-                both_closed({I(1), I(1), I(1)}, {I(1), I(1), I(1)})});
+                singular({I(1), I(1), I(1)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2)<(1,1)", e, "t1"), query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2)<(1,1)", e, "t1"), query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2)<=(1,1)", e, "t1"), std::vector{
@@ -307,13 +301,12 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
                 left_closed_right_open({I(1), I(1)}, {I(1), I(1), I(1)})});
 
         // Equality:
-        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)=(1,1,1)", e, "t1"), std::vector{
-                both_closed({I(1), I(1), I(1)}, {I(1), I(1), I(1)})});
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)=(1,1,1)", e, "t1"), std::vector{singular({I(1), I(1), I(1)})});
         // TODO: Uncomment when supported.
         // BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)=(1,1,1) and (c1,c2,c3)=(1,1,1)", e, "t1"), std::vector{
-        //         both_closed({I(1), I(1), I(1)}, {I(1), I(1), I(1)})});
+        //         singular({I(1), I(1), I(1)})});
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>=(1,1,1) and (c1,c2,c3)<=(1,1,1)", e, "t1"), std::vector{
-                both_closed({I(1), I(1), I(1)}, {I(1), I(1), I(1)})});
+                singular({I(1), I(1), I(1)})});
 
         // First two columns descending:
         cquery_nofail(
