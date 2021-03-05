@@ -224,13 +224,6 @@ statement_restrictions::statement_restrictions(database& db,
         bool allow_filtering)
     : statement_restrictions(schema, allow_filtering)
 {
-    /*
-     * WHERE clause. For a given entity, rules are: - EQ relation conflicts with anything else (including a 2nd EQ)
-     * - Can't have more than one LT(E) relation (resp. GT(E) relation) - IN relation are restricted to row keys
-     * (for now) and conflicts with anything else (we could allow two IN for the same entity but that doesn't seem
-     * very useful) - The value_alias cannot be restricted in any way (we don't support wide rows with indexed value
-     * in CQL so far)
-     */
     if (!where_clause.empty()) {
         for (auto&& relation : where_clause) {
             if (relation->get_operator() == cql3::expr::oper_t::IS_NOT) {
