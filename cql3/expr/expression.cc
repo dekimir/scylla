@@ -644,6 +644,27 @@ std::vector<bytes_opt> first_multicolumn_bound(
     }
 }
 
+template<typename T>
+nonwrapping_range<T> to_range(oper_t op, const T& val) {
+    static constexpr bool inclusive = true, exclusive = false;
+    switch (op) {
+    case oper_t::EQ:
+        return nonwrapping_range<T>::make_singular(val);
+    case oper_t::GT:
+        return nonwrapping_range<T>::make_starting_with(interval_bound(val, exclusive));
+    case oper_t::GTE:
+        return nonwrapping_range<T>::make_starting_with(interval_bound(val, inclusive));
+    case oper_t::LT:
+        return nonwrapping_range<T>::make_ending_with(interval_bound(val, exclusive));
+    case oper_t::LTE:
+        return nonwrapping_range<T>::make_ending_with(interval_bound(val, inclusive));
+    default:
+        throw std::logic_error(format("to_range: unknown comparison operator {}", op));
+    }
+}
+
+template nonwrapping_range<clustering_key_prefix> to_range(oper_t, const clustering_key_prefix&);
+
 value_set possible_lhs_values(const column_definition* cdef, const expression& expr, const query_options& options) {
     const auto type = cdef ? get_value_comparator(cdef) : long_type.get();
     return std::visit(overloaded_functor{
