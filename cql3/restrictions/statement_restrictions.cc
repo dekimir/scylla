@@ -661,7 +661,7 @@ bool ends_before_end(
     const auto len1 = r1.end()->value().representation().size();
     const auto len2 = r2.end()->value().representation().size();
     if (len1 == len2) { // The values truly are equal.
-        return !r1.end()->is_inclusive() || r2.end()->is_inclusive();
+        return !r1.end()->is_inclusive() && r2.end()->is_inclusive();
     } else if (len1 < len2) { // r1 end is a prefix of r2 end.
         // (a)<(1) ends before (a,b)<=(1,1), but (a)<=(1) doesn't.
         return !r1.end()->is_inclusive();
