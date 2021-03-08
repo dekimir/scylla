@@ -699,12 +699,8 @@ struct multi_column_range_accumulator {
     const clustering_key_prefix::prefix_equal_tri_compare prefix3cmp = get_unreversed_tri_compare(*schema);
 
     void operator()(const binary_operator& binop) {
-        if (auto tup = dynamic_pointer_cast<tuples::value>(binop.rhs->bind(options))) {
-            if (!is_compare(binop.op)) {
-                on_internal_error(
-                        rlogger, format("multi_column_range_accumulator: unexpected atom {}", binop));
-            }
-            auto opt_values = tup->get_elements();
+        if (is_compare(binop.op)) {
+            auto opt_values = dynamic_pointer_cast<tuples::value>(binop.rhs->bind(options))->get_elements();
             auto& lhs = std::get<std::vector<column_value>>(binop.lhs);
             std::vector<bytes> values(lhs.size());
             for (size_t i = 0; i < lhs.size(); ++i) {
@@ -713,18 +709,23 @@ struct multi_column_range_accumulator {
                         "Invalid null value in condition for column %s", lhs.at(i).col->name_as_text());
             }
             intersect_all(to_range(binop.op, clustering_key_prefix(values)));
-        } else if (auto dv = dynamic_pointer_cast<lists::delayed_value>(binop.rhs)) {
-            must_be_in_operator(binop);
-            process_in_values(
-                    dv->get_elements() | transformed(
-                            [&] (const ::shared_ptr<term>& t) {
-                                return static_pointer_cast<tuples::value>(t->bind(options))->get_elements();
-                            }));
-        } else if (auto mkr = dynamic_pointer_cast<tuples::in_marker>(binop.rhs)) {
-            // This is `(a,b) IN ?`.  RHS elements are themselves tuples, represented as vector<bytes_opt>.
-            must_be_in_operator(binop);
-            process_in_values(
-                    static_pointer_cast<tuples::in_value>(mkr->bind(options))->get_split_values());
+        } else if (binop.op == oper_t::IN) {
+            if (auto dv = dynamic_pointer_cast<lists::delayed_value>(binop.rhs)) {
+                process_in_values(
+                        dv->get_elements() | transformed(
+                                [&] (const ::shared_ptr<term>& t) {
+                                    return static_pointer_cast<tuples::value>(t->bind(options))->get_elements();
+                                }));
+            } else if (auto mkr = dynamic_pointer_cast<tuples::in_marker>(binop.rhs)) {
+                // This is `(a,b) IN ?`.  RHS elements are themselves tuples, represented as vector<bytes_opt>.
+                process_in_values(
+                        static_pointer_cast<tuples::in_value>(mkr->bind(options))->get_split_values());
+            }
+            else {
+                on_internal_error(rlogger, format("multi_column_range_accumulator: unexpected atom {}", binop));
+            }
+        } else {
+            on_internal_error(rlogger, format("multi_column_range_accumulator: unexpected atom {}", binop));
         }
     }
 
@@ -735,12 +736,6 @@ struct multi_column_range_accumulator {
     void operator()(bool b) {
         if (!b) {
             ranges.clear();
-        }
-    }
-
-    static void must_be_in_operator(const binary_operator& binop) {
-        if (binop.op != oper_t::IN) {
-            on_internal_error(rlogger, format("multi_column_range_accumulator: unexpected atom {}", binop));
         }
     }
 
