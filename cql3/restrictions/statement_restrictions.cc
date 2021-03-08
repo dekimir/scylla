@@ -578,7 +578,7 @@ clustering_key_prefix::prefix_equal_tri_compare get_unreversed_tri_compare(const
     return cmp;
 }
 
-/// True iff r1 start is before r2 start.
+/// True iff r1 start is strictly before r2 start.
 bool starts_before_start(
         const query::clustering_range& r1,
         const query::clustering_range& r2,
@@ -609,8 +609,8 @@ bool starts_before_start(
     }
 }
 
-/// True iff r1 start is before r2 end.
-bool starts_before_end(
+/// True iff r1 start is before (or identical as) r2 end.
+bool starts_before_or_at_end(
         const query::clustering_range& r1,
         const query::clustering_range& r2,
         const clustering_key_prefix::prefix_equal_tri_compare& cmp) {
@@ -640,7 +640,7 @@ bool starts_before_end(
     }
 }
 
-/// True if r1 end is before r2 end.
+/// True if r1 end is strictly before r2 end.
 bool ends_before_end(
         const query::clustering_range& r1,
         const query::clustering_range& r2,
@@ -680,7 +680,7 @@ std::optional<query::clustering_range> intersection(
     if (starts_before_start(r2, r1, cmp)) {
         return intersection(r2, r1, cmp);
     }
-    if (!starts_before_end(r2, r1, cmp)) {
+    if (!starts_before_or_at_end(r2, r1, cmp)) {
         return {};
     }
     const auto& intersection_start = r2.start();
