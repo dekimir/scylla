@@ -708,7 +708,9 @@ struct multi_column_range_accumulator {
             auto& lhs = std::get<std::vector<column_value>>(binop.lhs);
             std::vector<bytes> values(lhs.size());
             for (size_t i = 0; i < lhs.size(); ++i) {
-                values[i] = deref_column_value(opt_values[i], lhs.at(i).col->name_as_text());
+                values[i] = *statements::request_validations::check_not_null(
+                        opt_values[i],
+                        "Invalid null value in condition for column %s", lhs.at(i).col->name_as_text());
             }
             intersect_all(to_range(binop.op, clustering_key_prefix(values)));
         } else if (auto dv = dynamic_pointer_cast<lists::delayed_value>(binop.rhs)) {
@@ -778,11 +780,6 @@ struct multi_column_range_accumulator {
             }
         }
         ranges = new_ranges;
-    }
-
-    static bytes deref_column_value(bytes_opt val, sstring_view name) {
-        return *statements::request_validations::check_not_null(
-                val, "Invalid null value in condition for column %s", name);
     }
 };
 
