@@ -34,6 +34,7 @@
 #include "multi_column_restriction.hh"
 #include "token_restriction.hh"
 #include "database.hh"
+#include "cartesian_product.hh"
 
 #include "cql3/constants.hh"
 #include "cql3/lists.hh"
@@ -790,27 +791,6 @@ std::vector<query::clustering_range> get_multi_column_clustering_bounds(
     return acc.ranges;
 }
 
-/// For each element of a, creates b.size() new elements, each of which equals a's element extended by b's element.
-std::vector<std::vector<bytes>> accumulate_cartesian_product(
-        std::vector<std::vector<bytes>>&& a, const std::vector<bytes>& b) {
-    if (b.size() == 1) { // Don't need multiple copies of a's elements; just extend them in place.
-        for (auto& a_element : a) {
-            a_element.push_back(b[0]);
-        }
-        return move(a);
-    }
-    std::vector<std::vector<bytes>> product;
-    product.reserve(a.size() * b.size());
-    for (const auto& a_element : a) {
-        for (const auto& b_element : b) {
-            std::vector<bytes> extended = a_element;
-            extended.push_back(b_element);
-            product.push_back(extended);
-        }
-    }
-    return product;
-}
-
 /// Reverses the range if the type is reversed.  Why don't we have nonwrapping_interval::reverse()??
 query::clustering_range reverse_if_reqd(query::clustering_range r, const abstract_type& t) {
     return t.is_reversed() ? query::clustering_range(r.end(), r.start()) : std::move(r);
@@ -832,7 +812,8 @@ std::vector<query::clustering_range> get_single_column_clustering_bounds(
         const std::vector<expression>& single_column_restrictions) {
     const size_t size_limit =
             options.get_cql_config().restrictions.clustering_key_restrictions_max_cartesian_product_size;
-    std::vector<std::vector<bytes>> prefix_bounds;
+    size_t product_size = 1;
+    std::vector<std::vector<bytes>> prior_column_values; // Equality values of columns seen so far.
     for (size_t i = 0; i < single_column_restrictions.size(); ++i) {
         auto values = possible_lhs_values(
                 &schema->clustering_column_at(i), // This should be the LHS of restrictions[i].
@@ -842,19 +823,13 @@ std::vector<query::clustering_range> get_single_column_clustering_bounds(
             if (list->empty()) { // Impossible condition -- no rows can possibly match.
                 return {};
             }
-            if (prefix_bounds.empty()) {
-                error_if_exceeds(list->size(), size_limit);
-                for (const auto v : *list) {
-                    prefix_bounds.push_back({v});
-                }
-            } else {
-                prefix_bounds = accumulate_cartesian_product(move(prefix_bounds), *list);
-                error_if_exceeds(prefix_bounds.size(), size_limit);
-            }
+            prior_column_values.push_back(*list);
+            product_size *= list->size();
+            error_if_exceeds(product_size, size_limit);
         } else if (auto last_range = std::get_if<nonwrapping_interval<bytes>>(&values)) {
             // Must be the last column in the prefix, since it's neither EQ nor IN.
             std::vector<query::clustering_range> ck_ranges;
-            if (prefix_bounds.empty()) {
+            if (prior_column_values.empty()) {
                 // This is the first and last range; just turn it into a clustering_key_prefix.
                 ck_ranges.push_back(
                         reverse_if_reqd(
@@ -862,16 +837,16 @@ std::vector<query::clustering_range> get_single_column_clustering_bounds(
                                 *schema->clustering_column_at(i).type));
             } else {
                 // Prior clustering columns are equality-restricted (either via = or IN), producing one or more
-                // prefix_bounds elements.  Now we will turn each such element into a CK range dictated by those
+                // prior_column_values elements.  Now we will turn each such element into a CK range dictated by those
                 // equalities and this inequality represented by last_range.  Each CK range's upper/lower bound is
-                // formed by extending the prefix_bounds element with the corresponding last_range bound, if it
-                // exists; if it doesn't, the CK range bound is just the prefix_bounds element, inclusive.
+                // formed by extending the Cartesian-product element with the corresponding last_range bound, if it
+                // exists; if it doesn't, the CK range bound is just the Cartesian-product element, inclusive.
                 //
                 // For example, the expression `c1=1 AND c2=2 AND c3>3` makes lower CK bound (1,2,3) exclusive and
                 // upper CK bound (1,2) inclusive.
-                ck_ranges.reserve(prefix_bounds.size());
+                ck_ranges.reserve(product_size);
                 const auto extra_lb = last_range->start(), extra_ub = last_range->end();
-                for (auto& b : prefix_bounds) {
+                for (auto& b : cartesian_product(prior_column_values)) {
                     auto new_lb = b, new_ub = b;
                     if (extra_lb) {
                         new_lb.push_back(extra_lb->value());
@@ -888,10 +863,10 @@ std::vector<query::clustering_range> get_single_column_clustering_bounds(
         }
     }
     // All prefix columns are restricted by EQ or IN.  The resulting CK ranges are just singular ranges of corresponding
-    // prefix_bounds.
-    std::vector<query::clustering_range> ck_ranges(prefix_bounds.size());
-    std::transform(prefix_bounds.cbegin(), prefix_bounds.cend(), ck_ranges.begin(),
-                   std::bind_front(query::clustering_range::make_singular));
+    // prior_column_values.
+    std::vector<query::clustering_range> ck_ranges(product_size);
+    cartesian_product cp(prior_column_values);
+    std::transform(cp.begin(), cp.end(), ck_ranges.begin(), std::bind_front(query::clustering_range::make_singular));
     return ck_ranges;
 }
 
