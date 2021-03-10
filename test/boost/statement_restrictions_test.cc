@@ -135,6 +135,8 @@ SEASTAR_TEST_CASE(slice_one_column) {
         BOOST_CHECK_EQUAL(slice_parse("c in ('x','y') and c in ('a','b')", e), query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("c in ('x','y') and c='z'", e), query::clustering_row_ranges{});
         BOOST_CHECK_EQUAL(slice_parse("c in ('x','y') and c='x'", e), std::vector{singular({T("x")})});
+        BOOST_CHECK_EQUAL(slice_parse("c in ('a','b','c','b','a')", e), std::vector({
+                    singular({T("a")}), singular({T("b")}), singular({T("c")})}));
 
         BOOST_CHECK_EQUAL(slice_parse("c>'x'", e), std::vector{left_open({T("x")})});
         BOOST_CHECK_EQUAL(slice_parse("c>='x'", e), std::vector{left_closed({T("x")})});
@@ -224,6 +226,8 @@ SEASTAR_TEST_CASE(slice_multi_column) {
                     singular({I(1)}), singular({I(10)})}));
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2) IN ((1,2),(10,20))", e), (std::vector{
                     singular({I(1), I(2)}), singular({I(10), I(20)})}));
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2) IN ((10,20),(1,2))", e), (std::vector{
+                    singular({I(1), I(2)}), singular({I(10), I(20)})}));
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3) IN ((1,2,3),(10,20,30))", e), (std::vector{
                     singular({I(1), I(2), I(3)}), singular({I(10), I(20), I(30)})}));
     });
@@ -283,6 +287,11 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
                     both_closed({I(1), I(1)}, {I(1), I(1), I(1)}),
                     // or c1=1 and c2=9 and c3<=9
                     both_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
+        // Same result for same inequalities in different order:
+        BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)<=(1,9,9) and (c1,c2,c3)>=(1,1,1)", e, "t1"), (std::vector{
+                    both_open({I(1), I(1)}, {I(1), I(9)}),
+                    both_closed({I(1), I(1)}, {I(1), I(1), I(1)}),
+                    both_closed({I(1), I(9), I(9)}, {I(1), I(9)})}));
         BOOST_CHECK_EQUAL(slice_parse("(c1,c2,c3)>(1,1,1) and (c1,c2,c3)<(1,1,9)", e, "t1"), std::vector{
                 // c1=1 and c2=1 and 9>c3>1
                 both_open({I(1), I(1), I(9)}, {I(1), I(1), I(1)})});
@@ -333,5 +342,20 @@ SEASTAR_TEST_CASE(slice_multi_column_mixed_order) {
                     both_closed({I(0), I(1)}, {I(0)})}));
         BOOST_CHECK_EQUAL(slice_parse("(a,b)>=SCYLLA_CLUSTERING_BOUND(0,1)", e, "t3"), std::vector{
                 left_closed({I(0), I(1)})});
+    });
+}
+
+SEASTAR_TEST_CASE(slice_single_column_mixed_order) {
+    return do_with_cql_env_thread([](cql_test_env& e) {
+        cquery_nofail(
+                e,
+                "create table t (p int, a int, b int, c int, d int, PRIMARY KEY (p, a, b, c, d)) "
+                "with clustering order by (a desc, b asc, c desc, d asc);");
+        BOOST_CHECK_EQUAL(slice_parse("a in (1,2,3,2,1)", e), (std::vector{
+                    singular({I(3)}), singular({I(2)}), singular({I(1)})}));
+        BOOST_CHECK_EQUAL(slice_parse("a in (1,2,3,2,1) and b in (1,2,1)", e), (std::vector{
+                    singular({I(3), I(1)}), singular({I(3), I(2)}),
+                    singular({I(2), I(1)}), singular({I(2), I(2)}),
+                    singular({I(1), I(1)}), singular({I(1), I(2)})}));
     });
 }
