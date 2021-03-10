@@ -827,6 +827,10 @@ public:
     }
 
     friend std::ostream& operator<<(std::ostream& out, const clustering_key_prefix& ckp);
+
+    bool operator==(const clustering_key_prefix& that) const {
+        return this->_bytes == that._bytes;
+    }
 };
 
 std::ostream& operator<<(std::ostream& out, const clustering_key_prefix::with_schema_wrapper& pk);
