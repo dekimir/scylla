@@ -692,6 +692,23 @@ std::optional<query::clustering_range> intersection(
     return query::clustering_range(intersection_start, intersection_end);
 }
 
+struct range_less {
+    const class schema& s;
+    clustering_key_prefix::less_compare cmp = clustering_key_prefix::less_compare(s);
+    bool operator()(const query::clustering_range& x, const query::clustering_range& y) const {
+        if (!x.start() && !y.start()) {
+            return false;
+        }
+        if (!x.start()) {
+            return true;
+        }
+        if (!y.start()) {
+            return false;
+        }
+        return cmp(x.start()->value(), y.start()->value());
+    }
+};
+
 /// An expression visitor that translates multi-column atoms into clustering ranges.
 struct multi_column_range_accumulator {
     const query_options& options;
@@ -758,24 +775,19 @@ struct multi_column_range_accumulator {
         if (ranges.empty()) {
             return; // Shortcircuit an easy case.
         }
-        std::vector<query::clustering_range> new_ranges;
-        std::set<std::vector<bytes_opt>> tuples_seen;
+        std::set<query::clustering_range, range_less> new_ranges(range_less{*schema});
         for (const auto& current_tuple : in_values) {
-            if (tuples_seen.contains(current_tuple)) {
-                continue; // Storage proxy doesn't accept repeated identical ranges.
-            }
-            tuples_seen.insert(current_tuple);
             // Each IN value is like a separate EQ restriction ANDed to the existing state.
             auto current_range = to_range(
                     oper_t::EQ, clustering_key_prefix::from_optional_exploded(*schema, current_tuple));
             for (const auto& r : ranges) {
                 auto intrs = intersection(r, current_range, prefix3cmp);
                 if (intrs) {
-                    new_ranges.push_back(*intrs);
+                    new_ranges.insert(*intrs);
                 }
             }
         }
-        ranges = new_ranges;
+        ranges.assign(new_ranges.cbegin(), new_ranges.cend());
     }
 };
 
@@ -859,6 +871,7 @@ std::vector<query::clustering_range> get_single_column_clustering_bounds(
                     ck_ranges.push_back(reverse_if_reqd({new_start, new_end}, *schema->clustering_column_at(i).type));
                 }
             }
+            sort(ck_ranges.begin(), ck_ranges.end(), range_less{*schema});
             return ck_ranges;
         }
     }
@@ -867,6 +880,7 @@ std::vector<query::clustering_range> get_single_column_clustering_bounds(
     std::vector<query::clustering_range> ck_ranges(product_size);
     cartesian_product cp(prior_column_values);
     std::transform(cp.begin(), cp.end(), ck_ranges.begin(), std::bind_front(query::clustering_range::make_singular));
+    sort(ck_ranges.begin(), ck_ranges.end(), range_less{*schema});
     return ck_ranges;
 }
 
