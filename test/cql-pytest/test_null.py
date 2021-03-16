@@ -64,12 +64,17 @@ def test_insert_null_key(cql, table1):
     with pytest.raises(InvalidRequest, match='null value'):
         cql.execute(stmt, [None, s])
 
-def test_in_tuple_bound_to_null(cql, table1):
-    '''Tests handling of "c in ?" where ? is bound to null.'''
+def test_primary_key_in_null(cql, table1):
+    '''Tests handling of "key_column in ?" where ? is bound to null.'''
     s = random_string()
     cql.execute(f"INSERT INTO {table1} (p,c) VALUES ('{s}', '{s}')")
     with pytest.raises(InvalidRequest, match='null value'):
         cql.execute(cql.prepare(f"SELECT p FROM {table1} WHERE p IN ?"), [None])
-    # This fails on Cassandra: [Invalid query] message="IN predicates on non-primary-key columns (v) is not yet supported"
+
+# Cassandra says "IN predicates on non-primary-key columns (v) is not yet supported".
+def test_regular_column_in_null(scylla_only, cql, table1):
+    '''Tests handling of "regular_column in ?" where ? is bound to null.'''
+    s = random_string()
+    cql.execute(f"INSERT INTO {table1} (p,c) VALUES ('{s}', '{s}')")
     with pytest.raises(InvalidRequest, match='null value'):
         cql.execute(cql.prepare(f"SELECT v FROM {table1} WHERE v IN ? ALLOW FILTERING"), [None])
