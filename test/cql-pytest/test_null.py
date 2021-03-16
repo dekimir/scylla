@@ -70,6 +70,8 @@ def test_primary_key_in_null(cql, table1):
     cql.execute(f"INSERT INTO {table1} (p,c) VALUES ('{s}', '{s}')")
     with pytest.raises(InvalidRequest, match='null value'):
         cql.execute(cql.prepare(f"SELECT p FROM {table1} WHERE p IN ?"), [None])
+    with pytest.raises(InvalidRequest, match='Invalid null value for IN restriction'):
+        cql.execute(cql.prepare(f"SELECT p FROM {table1} WHERE p='{s}' AND (c) IN ?"), [None])
 
 # Cassandra says "IN predicates on non-primary-key columns (v) is not yet supported".
 def test_regular_column_in_null(scylla_only, cql, table1):
