@@ -630,7 +630,8 @@ dht::partition_range_vector partition_ranges_from_token(const expr::expression& 
 /// Turns a partition-key value into a partition_range. \p pk must have elements for all partition columns.
 dht::partition_range range_from_bytes(const schema& schema, const std::vector<bytes>& pk) {
     const auto k = partition_key::from_exploded(pk);
-    const query::ring_position pos(dht::get_token(schema, k), k);
+    const auto tok = dht::get_token(schema, k);
+    const query::ring_position pos(std::move(tok), std::move(k));
     return dht::partition_range::make_singular(std::move(pos));
 }
 
