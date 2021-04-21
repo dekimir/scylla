@@ -662,7 +662,9 @@ dht::partition_range_vector partition_ranges_from_singles(
                     error_if_exceeds(product_size, size_limit);
                     column_values[schema.position(*cv->col)] = *lst;
                 } else {
-                    throw invalid_request("use token!");
+                    throw exceptions::invalid_request_exception(
+                            "Only EQ and IN relation are supported on the partition key "
+                            "(unless you use the token() function or allow filtering)");
                 }
             }
         }
