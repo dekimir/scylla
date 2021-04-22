@@ -611,24 +611,25 @@ dht::partition_range_vector partition_ranges_from_token(const expr::expression& 
         return {};
     }
     const auto bounds = expr::to_range(values);
-    const auto start_token = bounds.start() ? dht::token::from_bytes(bounds.start()->value())
+    const auto start_token = bounds.start() ? bounds.start()->value().with_linearized([] (bytes_view bv) { return dht::token::from_bytes(bv); })
             : dht::minimum_token();
-    auto end_token = bounds.end() ? dht::token::from_bytes(bounds.end()->value()) : dht::maximum_token();
+    auto end_token = bounds.end() ? bounds.end()->value().with_linearized([] (bytes_view bv) { return dht::token::from_bytes(bv); })
+            : dht::maximum_token();
     const bool include_start = bounds.start() && bounds.start()->is_inclusive();
     const auto include_end = bounds.end() && bounds.end()->is_inclusive();
 
     auto start = dht::partition_range::bound(include_start
-                       ? dht::ring_position::starting_at(start_token)
-                       : dht::ring_position::ending_at(start_token));
+                                             ? dht::ring_position::starting_at(start_token)
+                                             : dht::ring_position::ending_at(start_token));
     auto end = dht::partition_range::bound(include_end
-                     ? dht::ring_position::ending_at(end_token)
-                     : dht::ring_position::starting_at(end_token));
+                                           ? dht::ring_position::ending_at(end_token)
+                                           : dht::ring_position::starting_at(end_token));
 
     return {{std::move(start), std::move(end)}};
 }
 
 /// Turns a partition-key value into a partition_range. \p pk must have elements for all partition columns.
-dht::partition_range range_from_bytes(const schema& schema, const std::vector<bytes>& pk) {
+dht::partition_range range_from_bytes(const schema& schema, const std::vector<managed_bytes>& pk) {
     const auto k = partition_key::from_exploded(pk);
     const auto tok = dht::get_token(schema, k);
     const query::ring_position pos(std::move(tok), std::move(k));
@@ -648,7 +649,7 @@ dht::partition_range_vector partition_ranges_from_singles(
     const size_t size_limit =
             options.get_cql_config().restrictions.partition_key_restrictions_max_cartesian_product_size;
     // Each element is a vector of that column's possible values:
-    std::vector<std::vector<bytes>> column_values(schema.partition_key_size());
+    std::vector<std::vector<managed_bytes>> column_values(schema.partition_key_size());
     size_t product_size = 1;
     for (const auto& e : expressions) {
         if (const auto arbitrary_binop = find_atom(e, [] (const binary_operator&) { return true; })) {
@@ -660,7 +661,7 @@ dht::partition_range_vector partition_ranges_from_singles(
                     }
                     product_size *= lst->size();
                     error_if_exceeds(product_size, size_limit);
-                    column_values[schema.position(*cv->col)] = *lst;
+                    column_values[schema.position(*cv->col)] = move(*lst);
                 } else {
                     throw exceptions::invalid_request_exception(
                             "Only EQ and IN relation are supported on the partition key "
