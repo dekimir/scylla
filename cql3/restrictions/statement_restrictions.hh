@@ -469,6 +469,11 @@ public:
      * @return clustering key restrictions split into single column restrictions (e.g. for filtering support).
      */
     const single_column_restrictions::restrictions_map& get_single_column_clustering_key_restrictions() const;
+
+    /// Calculates clustering ranges for querying a global-index table.
+    std::vector<query::clustering_range> get_global_index_clustering_ranges(
+            const query_options& options, const schema& idx_tbl_schema,
+            const column_definition& indexed_column) const;
 };
 
 }

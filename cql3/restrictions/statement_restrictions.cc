@@ -1340,5 +1340,59 @@ const single_column_restrictions::restrictions_map& statement_restrictions::get_
     return single_restrictions->restrictions();
 }
 
+std::vector<query::clustering_range> statement_restrictions::get_global_index_clustering_ranges(
+        const query_options& options,
+        const schema& idx_tbl_schema,
+        const column_definition& indexed_column) const {
+    if (!_partition_range_is_simple) {
+        on_internal_error(rlogger, "get_global_index_clustering_ranges: complex partition key");
+    }
+    // This assumes that a base-table partition column cannot be the indexed column:
+    std::vector<expression> idx_tbl_ck_prefix(1 + _schema->partition_key_size());
+    idx_tbl_ck_prefix.reserve(idx_tbl_schema.clustering_key_size());
+    std::vector<managed_bytes> pk_value(_schema->partition_key_size());
+    for (const auto& e : _partition_range_restrictions) {
+        const auto col = std::get<column_value>(*find(e, oper_t::EQ)->lhs).col;
+        const auto vals = std::get<value_list>(possible_lhs_values(col, e, options));
+        if (vals.empty()) { // Case of C=1 AND C=2.
+            return {};
+        }
+        const auto pos = _schema->position(*col);
+        pk_value[pos] = std::move(vals[0]);
+        idx_tbl_ck_prefix[pos + 1] = replace_column_def(e, &idx_tbl_schema.clustering_column_at(pos + 1));
+    }
+    std::vector<bytes> pkv_linearized(pk_value.size());
+    std::transform(pk_value.cbegin(), pk_value.cend(), pkv_linearized.begin(),
+                   [] (const managed_bytes& mb) { return to_bytes(mb); });
+    auto& token_column = idx_tbl_schema.clustering_column_at(0);
+    bytes_opt token_bytes = token_column.get_computation().compute_value(
+            *_schema, pkv_linearized, clustering_row(clustering_key_prefix::make_empty()));
+    if (!token_bytes) {
+        on_internal_error(rlogger,
+                          format("null value for token column in indexing table {}",
+                                 token_column.name_as_text()));
+    }
+    idx_tbl_ck_prefix[0] = binary_operator(
+            column_value(&token_column),
+            oper_t::EQ,
+            ::make_shared<constants::value>(raw_value::make_value(*token_bytes)));
+    for (const auto& e : _clustering_prefix_restrictions) {
+        if (find_atom(_clustering_prefix_restrictions[0], expr::is_multi_column)) {
+            // TODO: We could handle single-element tuples, eg. `(c)>=(123)`.
+            break;
+        }
+        const auto any_binop = find_atom(e, [] (auto&&) { return true; });
+        if (!any_binop) {
+            break;
+        }
+        const auto col = std::get<column_value>(*any_binop->lhs).col;
+        if (*col == indexed_column) {
+            continue;
+        }
+        idx_tbl_ck_prefix.push_back(replace_column_def(e, idx_tbl_schema.get_column_definition(col->name())));
+    }
+    return get_single_column_clustering_bounds(options, idx_tbl_schema, idx_tbl_ck_prefix);
+}
+
 } // namespace restrictions
 } // namespace cql3
