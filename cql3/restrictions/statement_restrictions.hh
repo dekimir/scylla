@@ -121,6 +121,11 @@ private:
     /// 5. if multi-column, then each element is a binary_operator
     std::vector<expr::expression> _clustering_prefix_restrictions;
 
+    /// Like _clustering_prefix_restrictions, but for the indexing table (if this is an index-reading statement).
+    ///
+    /// Elements are single-column binary operators.  The first element's RHS is a dummy value.
+    std::optional<std::vector<expr::expression>> _idx_tbl_ck_prefix;
+
     /// Parts of _where defining the partition range.
     ///
     /// If the partition range is dictated by token restrictions, this is a single element that holds all the
@@ -470,10 +475,13 @@ public:
      */
     const single_column_restrictions::restrictions_map& get_single_column_clustering_key_restrictions() const;
 
+    /// Prepares internal data for evaluating index-table queries.  Must be called before
+    /// get_global_index_clustering_ranges().
+    void prepare_indexed(const schema& idx_tbl_schema, bool is_local);
+
     /// Calculates clustering ranges for querying a global-index table.
     std::vector<query::clustering_range> get_global_index_clustering_ranges(
-            const query_options& options, const schema& idx_tbl_schema,
-            const column_definition& indexed_column) const;
+            const query_options& options, const schema& idx_tbl_schema) const;
 };
 
 }

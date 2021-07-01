@@ -861,6 +861,7 @@ indexed_table_select_statement::prepare(database& db,
     const auto& im = index_opt->metadata();
     sstring index_table_name = im.name() + "_index";
     schema_ptr view_schema = db.find_schema(schema->ks_name(), index_table_name);
+    restrictions->prepare_indexed(*view_schema, im.local());
 
     return ::make_shared<cql3::statements::indexed_table_select_statement>(
             schema,
@@ -1166,9 +1167,8 @@ query::partition_slice indexed_table_select_statement::get_partition_slice_for_g
                     ::make_shared<cql3::constants::value>(cql3::raw_value::make_value(token_value))};
             clustering_restrictions->merge_with(token_restriction);
 
-            const auto indexed_column = _view_schema->get_column_definition(to_bytes(_index.target_column()));
             partition_slice_builder.with_ranges(
-                    _restrictions->get_global_index_clustering_ranges(options, *_view_schema, *indexed_column));
+                    _restrictions->get_global_index_clustering_ranges(options, *_view_schema));
         }
     }
 
