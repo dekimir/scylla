@@ -1346,7 +1346,7 @@ void statement_restrictions::prepare_indexed(const schema& idx_tbl_schema, bool 
     }
     // This assumes that a base-table partition column cannot be the indexed column:
     _idx_tbl_ck_prefix = std::vector<expr::expression>(1 + _schema->partition_key_size());
-    _idx_tbl_ck_prefix->reserve(idx_tbl_schema.clustering_key_size());
+    _idx_tbl_ck_prefix->reserve(_idx_tbl_ck_prefix->size() + idx_tbl_schema.clustering_key_size());
     for (const auto& e : _partition_range_restrictions) {
         const auto col = std::get<column_value>(*find(e, oper_t::EQ)->lhs).col;
         const auto pos = _schema->position(*col) + 1;
