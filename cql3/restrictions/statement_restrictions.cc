@@ -1344,7 +1344,8 @@ void statement_restrictions::prepare_indexed(const schema& idx_tbl_schema, bool 
     if (is_local || !_partition_range_is_simple) {
         return;
     }
-    // This assumes that a base-table partition column cannot be the indexed column:
+    // If we're here, it means the index cannot be on a partition column: process_partition_key_restrictions()
+    // avoids indexing when _partition_range_is_simple.
     _idx_tbl_ck_prefix = std::vector<expr::expression>(1 + _schema->partition_key_size());
     _idx_tbl_ck_prefix->reserve(_idx_tbl_ck_prefix->size() + idx_tbl_schema.clustering_key_size());
     for (const auto& e : _partition_range_restrictions) {
