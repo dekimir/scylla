@@ -1345,7 +1345,7 @@ void statement_restrictions::prepare_indexed(const schema& idx_tbl_schema, bool 
         return;
     }
     // If we're here, it means the index cannot be on a partition column: process_partition_key_restrictions()
-    // avoids indexing when _partition_range_is_simple.
+    // avoids indexing when _partition_range_is_simple.  See _idx_tbl_ck_prefix blurb for its composition.
     _idx_tbl_ck_prefix = std::vector<expr::expression>(1 + _schema->partition_key_size());
     _idx_tbl_ck_prefix->reserve(_idx_tbl_ck_prefix->size() + idx_tbl_schema.clustering_key_size());
     for (const auto& e : _partition_range_restrictions) {
@@ -1369,8 +1369,9 @@ void statement_restrictions::prepare_indexed(const schema& idx_tbl_schema, bool 
         }
         _idx_tbl_ck_prefix->push_back(replace_column_def(e, idx_tbl_schema.get_column_definition(col->name())));
     }
+    auto token_column = &idx_tbl_schema.clustering_column_at(0);
     (*_idx_tbl_ck_prefix)[0] = binary_operator(
-            column_value(&idx_tbl_schema.clustering_column_at(0)),
+            column_value(token_column),
             oper_t::EQ,
             // TODO: This should be a unique marker whose value we set at execution time.  There is currently no
             // handy mechanism for doing that in query_options.

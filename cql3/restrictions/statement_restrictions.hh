@@ -122,6 +122,8 @@ private:
     std::vector<expr::expression> _clustering_prefix_restrictions;
 
     /// Like _clustering_prefix_restrictions, but for the indexing table (if this is an index-reading statement).
+    /// Recall that the index-table CK is (token, PK, CK) of the base table for a global index and (indexed column,
+    /// CK) for a local index.
     ///
     /// Elements are single-column binary operators.  The first element's RHS is a dummy value.
     std::optional<std::vector<expr::expression>> _idx_tbl_ck_prefix;
