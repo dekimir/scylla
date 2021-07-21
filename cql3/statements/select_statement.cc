@@ -1645,10 +1645,16 @@ void select_statement::check_needs_filtering(const restrictions::statement_restr
 {
     // non-key-range non-indexed queries cannot involve filtering underneath
     if (!_parameters->allow_filtering() && (restrictions.is_key_range() || restrictions.uses_secondary_indexing())) {
+        const auto& ck_restrictions = *restrictions.get_clustering_columns_restrictions();
+        const auto& pk_restrictions = *restrictions.get_partition_key_restrictions();
         // We will potentially filter data if either:
         //  - Have more than one IndexExpression
         //  - Have no index expression and the column filter is not the identity
-        if (restrictions.need_filtering()) {
+        if (restrictions.need_filtering()
+            // See #7608.
+            || ((pk_restrictions.empty() || has_token(pk_restrictions.expression))
+                && !ck_restrictions.empty() && !find_atom(ck_restrictions.expression, expr::is_multi_column)
+                && !restrictions.uses_secondary_indexing())) {
             throw exceptions::invalid_request_exception(
                 "Cannot execute this query as it might involve data filtering and "
                     "thus may have unpredictable performance. If you want to execute "

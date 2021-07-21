@@ -242,10 +242,10 @@ SEASTAR_THREAD_TEST_CASE(regular_col_slice_reversed) {
     do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table t (p int, c int, primary key(p, c)) with clustering order by (c desc)");
         cquery_nofail(e, "insert into t(p,c) values (1,11)");
-        require_rows(e, "select c from t where c>10", {{I(11)}});
+        require_rows(e, "select c from t where c>10 allow filtering", {{I(11)}});
         cquery_nofail(e, "insert into t(p,c) values (1,12)");
-        require_rows(e, "select c from t where c>10", {{I(11)}, {I(12)}});
-        require_rows(e, "select c from t where c<100", {{I(11)}, {I(12)}});
+        require_rows(e, "select c from t where c>10 allow filtering", {{I(11)}, {I(12)}});
+        require_rows(e, "select c from t where c<100 allow filtering", {{I(11)}, {I(12)}});
     }).get();
 }
 
@@ -311,7 +311,7 @@ SEASTAR_THREAD_TEST_CASE(null_rhs) {
         require_rows(e, "select * from t where pk1=0 and pk2=null", {});
         BOOST_REQUIRE_EXCEPTION(q("select * from t where pk1=0 and pk2=0 and (ck1,ck2)>=(0,null)"),
                                 ire, message_contains(expect));
-        require_rows(e, "select * from t where ck1=null", {});
+        require_rows(e, "select * from t where ck1=null allow filtering", {});
         require_rows(e, "select * from t where r=null and ck1=null allow filtering", {});
         require_rows(e, "select * from t where pk1=0 and pk2=0 and ck1<null", {});
         require_rows(e, "select * from t where r>null and ck1<null allow filtering", {});
@@ -645,17 +645,17 @@ SEASTAR_THREAD_TEST_CASE(scalar_in) {
         cquery_nofail(e, "create table t (p int, c int, r float, s text static, primary key (p, c))");
         require_rows(e, "select c from t where c in (11,12,13) allow filtering", {});
         cquery_nofail(e, "insert into t(p,c) values (1,11)");
-        require_rows(e, "select c from t where c in (11,12,13)", {{I(11)}});
+        require_rows(e, "select c from t where c in (11,12,13) allow filtering", {{I(11)}});
         cquery_nofail(e, "insert into t(p,c,r) values (1,11,21)");
         cquery_nofail(e, "insert into t(p,c,r) values (2,12,22)");
         cquery_nofail(e, "insert into t(p,c,r) values (3,13,23)");
         cquery_nofail(e, "insert into t(p,c,r) values (4,14,24)");
         cquery_nofail(e, "insert into t(p,c,r,s) values (4,15,24,'34')");
         cquery_nofail(e, "insert into t(p,c,r,s) values (5,15,25,'35')");
-        require_rows(e, "select c from t where c in (11,12,13)", {{I(11)}, {I(12)}, {I(13)}});
-        require_rows(e, "select c from t where c in (11)", {{I(11)}});
-        require_rows(e, "select c from t where c in (999)", {});
-        require_rows(e, "select c from t where c in (11,999)", {{I(11)}});
+        require_rows(e, "select c from t where c in (11,12,13) allow filtering", {{I(11)}, {I(12)}, {I(13)}});
+        require_rows(e, "select c from t where c in (11) allow filtering", {{I(11)}});
+        require_rows(e, "select c from t where c in (999) allow filtering", {});
+        require_rows(e, "select c from t where c in (11,999) allow filtering", {{I(11)}});
         require_rows(e, "select c from t where c in (11,12,13) and r in (21,24) allow filtering", {{I(11), F(21)}});
         require_rows(e, "select c from t where c in (11,12,13) and r in (21,22) allow filtering",
                          {{I(11), F(21)}, {I(12), F(22)}});
@@ -695,25 +695,25 @@ SEASTAR_THREAD_TEST_CASE(list_in) {
         cquery_nofail(e, "insert into t (p, c) values ([4], [41,42,43])");
         cquery_nofail(e, "insert into t (p, c) values ([4], [])");
         cquery_nofail(e, "insert into t (p, c) values ([5], [51,52,53])");
-        require_rows(e, "select c from t where c in ([11,12],[11,13])", {});
-        require_rows(e, "select c from t where c in ([11,12,13],[11,13,12])", {{LI({11,12,13})}});
-        require_rows(e, "select c from t where c in ([11,12,13],[11,13,12],[41,42,43])",
+        require_rows(e, "select c from t where c in ([11,12],[11,13]) allow filtering", {});
+        require_rows(e, "select c from t where c in ([11,12,13],[11,13,12]) allow filtering", {{LI({11,12,13})}});
+        require_rows(e, "select c from t where c in ([11,12,13],[11,13,12],[41,42,43]) allow filtering",
                          {{LI({11,12,13})}, {LI({41,42,43})}});
         require_rows(e, "select c from t where p in ([1],[2],[4]) and c in ([11,12,13], [41,42,43])",
                          {{LI({11,12,13})}, {LI({41,42,43})}});
-        require_rows(e, "select c from t where c in ([],[11,13,12])", {{LI({})}});
+        require_rows(e, "select c from t where c in ([],[11,13,12]) allow filtering", {{LI({})}});
     }).get();
 }
 
 SEASTAR_THREAD_TEST_CASE(set_in) {
     do_with_cql_env_thread([](cql_test_env& e) {
         cquery_nofail(e, "create table t (p frozen<set<int>>, c frozen<set<int>>, r text, primary key (p, c))");
-        require_rows(e, "select * from t where c in ({222})", {});
+        require_rows(e, "select * from t where c in ({222}) allow filtering", {});
         cquery_nofail(e, "insert into t (p, c) values ({1,11}, {21,201})");
         cquery_nofail(e, "insert into t (p, c, r) values ({1,11}, {22,202}, '2')");
-        require_rows(e, "select * from t where c in ({222}, {21})", {});
-        require_rows(e, "select c from t where c in ({222}, {21,201})", {{SI({21, 201})}});
-        require_rows(e, "select c from t where c in ({22,202}, {21,201})", {{SI({21, 201})}, {SI({22, 202})}});
+        require_rows(e, "select * from t where c in ({222}, {21}) allow filtering", {});
+        require_rows(e, "select c from t where c in ({222}, {21,201}) allow filtering", {{SI({21, 201})}});
+        require_rows(e, "select c from t where c in ({22,202}, {21,201}) allow filtering", {{SI({21, 201})}, {SI({22, 202})}});
         require_rows(e, "select c from t where c in ({222}, {21,201}) and r='' allow filtering", {});
         require_rows(e, "select c from t where c in ({222}, {21,201}) and r='x' allow filtering", {});
         require_rows(e, "select c from t where c in ({22,202}, {21,201}) and r='2' allow filtering",
@@ -728,13 +728,13 @@ SEASTAR_THREAD_TEST_CASE(map_in) {
         cquery_nofail(e, "create table t (p frozen<map<int,int>>, c frozen<map<int,int>>, r int, primary key(p, c))");
         cquery_nofail(e, "insert into t (p, c) values ({1:1}, {10:10})");
         cquery_nofail(e, "insert into t (p, c, r) values ({1:1}, {10:10,11:11}, 12)");
-        require_rows(e, "select * from t where c in ({10:11},{10:11},{11:11})", {});
+        require_rows(e, "select * from t where c in ({10:11},{10:11},{11:11}) allow filtering", {});
         const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
         const auto c1a = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{10, 10}})));
-        require_rows(e, "select c from t where c in ({10:11}, {10:10}, {11:11})", {{c1a}});
+        require_rows(e, "select c from t where c in ({10:11}, {10:10}, {11:11}) allow filtering", {{c1a}});
         const auto c1b = my_map_type->decompose(
                 make_map_value(my_map_type, map_type_impl::native_type({{10, 10}, {11, 11}})));
-        require_rows(e, "select c from t where c in ({10:11}, {10:10}, {10:10,11:11})",
+        require_rows(e, "select c from t where c in ({10:11}, {10:10}, {10:10,11:11}) allow filtering",
                          {{c1a}, {c1b}});
         require_rows(e, "select c from t where c in ({10:11}, {10:10}, {10:10,11:11}) and r=12 allow filtering",
                          {{c1b, I(12)}});
@@ -851,8 +851,8 @@ SEASTAR_THREAD_TEST_CASE(multi_eq_on_primary) {
         cquery_nofail(e, "insert into t (p, c) values (3, 13);");
         require_rows(e, "select p from t where p=1 and p=1", {{I(1)}});
         require_rows(e, "select p from t where p=1 and p=2", {});
-        require_rows(e, "select c from t where c=11 and c=11", {{I(11)}});
-        require_rows(e, "select c from t where c=11 and c=999", {});
+        require_rows(e, "select c from t where c=11 and c=11 allow filtering", {{I(11)}});
+        require_rows(e, "select c from t where c=11 and c=999 allow filtering", {});
 
         cquery_nofail(e, "create table t2 (pk1 int, pk2 int, ck1 int, ck2 int, primary key ((pk1, pk2), ck1, ck2))");
         cquery_nofail(e, "insert into t2 (pk1, pk2, ck1, ck2) values (1, 12, 21, 22);");
